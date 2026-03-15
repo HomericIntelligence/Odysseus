@@ -1,0 +1,69 @@
+# ===========================================================================
+# Infrastructure
+# ===========================================================================
+
+# DO NOT MODIFY: ai-maestro is an upstream external dependency.
+# Integrate via its REST API and webhooks only. Never push to this submodule.
+[submodule "infrastructure/ai-maestro"]
+    path = infrastructure/ai-maestro
+    url = https://github.com/homeric-intelligence/ai-maestro.git
+
+[submodule "infrastructure/AchaeanFleet"]
+    path = infrastructure/AchaeanFleet
+    url = https://github.com/homeric-intelligence/AchaeanFleet.git
+
+[submodule "infrastructure/ProjectArgus"]
+    path = infrastructure/ProjectArgus
+    url = https://github.com/homeric-intelligence/ProjectArgus.git
+
+[submodule "infrastructure/ProjectHermes"]
+    path = infrastructure/ProjectHermes
+    url = https://github.com/homeric-intelligence/ProjectHermes.git
+
+# ===========================================================================
+# Provisioning
+# ===========================================================================
+
+[submodule "provisioning/ProjectTelemachy"]
+    path = provisioning/ProjectTelemachy
+    url = https://github.com/homeric-intelligence/ProjectTelemachy.git
+
+[submodule "provisioning/ProjectKeystone"]
+    path = provisioning/ProjectKeystone
+    url = https://github.com/homeric-intelligence/ProjectKeystone.git
+
+[submodule "provisioning/Myrmidons"]
+    path = provisioning/Myrmidons
+    url = https://github.com/homeric-intelligence/Myrmidons.git
+
+# ===========================================================================
+# CI/CD
+# ===========================================================================
+
+[submodule "ci-cd/ProjectProteus"]
+    path = ci-cd/ProjectProteus
+    url = https://github.com/homeric-intelligence/ProjectProteus.git
+
+# ===========================================================================
+# Research
+# ===========================================================================
+
+[submodule "research/ProjectOdyssey"]
+    path = research/ProjectOdyssey
+    url = https://github.com/homeric-intelligence/ProjectOdyssey.git
+
+[submodule "research/ProjectScylla"]
+    path = research/ProjectScylla
+    url = https://github.com/homeric-intelligence/ProjectScylla.git
+
+# ===========================================================================
+# Shared
+# ===========================================================================
+
+[submodule "shared/ProjectMnemosyne"]
+    path = shared/ProjectMnemosyne
+    url = https://github.com/homeric-intelligence/ProjectMnemosyne.git
+
+[submodule "shared/ProjectHephaestus"]
+    path = shared/ProjectHephaestus
+    url = https://github.com/homeric-intelligence/ProjectHephaestus.git
