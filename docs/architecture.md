@@ -42,11 +42,11 @@ Additional repos cover supporting concerns:
 
 | Repo | Concern |
 |---|---|
-| ProjectKeystone | Secrets and credential management; injects secrets into ai-maestro agent configs |
+| ProjectKeystone | Automated task DAG execution; watches NATS task events, advances dependency graphs via ai-maestro REST API |
 | ProjectProteus | CI/CD pipelines; builds AchaeanFleet images, runs Myrmidons apply on merge |
 | ProjectOdyssey | Research sandbox; experimental agents not yet promoted to production |
 | ProjectScylla | Chaos/resilience testing; calls ai-maestro API to inject failures |
-| ProjectHephaestus | Shared libraries and SDK; imported by other repos, not deployed standalone |
+| ProjectHephaestus | Shared utilities (changelog, system-info, markdown tools); not yet imported as a dependency by other repos |
 
 ---
 
@@ -62,7 +62,8 @@ Additional repos cover supporting concerns:
               ┌──────────────────────┼──────────────▼──────────────────────────┐
               │                      │         ProjectHermes                   │
               │                      │  webhook receiver → NATS JetStream      │
-              │                      │  subjects: maestro.agent.* maestro.task.*│
+              │                      │  subjects: hi.agents.{host}.{name}.{verb}│
+              │                      │           hi.tasks.{team}.{task}.{verb} │
               │                      └────────────┬────────────────────────────┘
               │                                   │ NATS pub/sub
               │            ┌──────────────────────┼──────────────────────┐
@@ -86,13 +87,13 @@ Additional repos cover supporting concerns:
               │
               ▼
         ProjectKeystone
-        (secrets injection
-         into agent configs)
+        (DAG advancement
+         via REST + NATS)
 
   ProjectMnemosyne ──────► AchaeanFleet (image templates)
   (agent marketplace)  └──► Myrmidons (YAML manifest templates)
 
-  ProjectHephaestus ─────► all repos (shared SDK / libraries)
+  ProjectHephaestus ─────► available for future shared code (e.g., maestro-client)
   ProjectOdyssey    ─────► research sandbox (promotes → AchaeanFleet)
 ```
 
@@ -108,9 +109,9 @@ Additional repos cover supporting concerns:
 | ProjectArgus | infrastructure | Observability and alerting | Scrapes metrics endpoints | Grafana + Prometheus stack |
 | Myrmidons | provisioning | Declarative desired-state (GitOps) | REST CRUD on `/agents`, `/tasks` | `just apply` reconciles YAML → live state |
 | ProjectTelemachy | provisioning | Multi-step workflow orchestration | Chains `/tasks` calls | Workflow definitions as YAML |
-| ProjectKeystone | provisioning | Secrets and credential management | Injects into agent config at apply time | Vault or SOPS backend |
+| ProjectKeystone | provisioning | Automated task DAG execution | Watches NATS task events; advances via REST `/tasks` | JetStream durable consumer |
 | ProjectProteus | ci-cd | Automated build and deploy pipelines | Triggers Myrmidons apply on merge | Builds AchaeanFleet images |
 | ProjectMnemosyne | shared | Agent template marketplace / registry | Consumed by AchaeanFleet + Myrmidons | `marketplace.json` catalog |
-| ProjectHephaestus | shared | Shared SDK and utility libraries | n/a (library only) | Imported by all other repos |
+| ProjectHephaestus | shared | Shared utilities and tooling | n/a (library only) | Not yet imported by other repos |
 | ProjectOdyssey | research | Experimental agent research sandbox | Full REST API access | Promotes to AchaeanFleet when stable |
 | ProjectScylla | research | Chaos and resilience testing | Calls `/agents` to inject failures | Uses NATS events from ProjectHermes |
