@@ -56,9 +56,29 @@ argus-start:
     cd infrastructure/ProjectArgus && just start
 
 # ===========================================================================
+# Provisioning Services
+# ===========================================================================
+
+# Start ProjectKeystone DAG executor daemon
+keystone-start:
+    cd provisioning/ProjectKeystone && just start
+
+# Print ProjectKeystone DAG status across all teams
+keystone-status:
+    cd provisioning/ProjectKeystone && just status
+
+# ===========================================================================
 # Workflows
 # ===========================================================================
 
 # Run a named workflow via ProjectTelemachy
 telemachy-run WORKFLOW:
     cd provisioning/ProjectTelemachy && just run WORKFLOW={{ WORKFLOW }}
+
+# ===========================================================================
+# Research
+# ===========================================================================
+
+# Run ProjectScylla tests
+scylla-test:
+    cd research/ProjectScylla && just test
