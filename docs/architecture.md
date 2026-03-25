@@ -45,7 +45,7 @@ Additional repos cover supporting concerns:
 | ProjectKeystone | Automated task DAG execution; watches NATS task events, advances dependency graphs via ai-maestro REST API |
 | ProjectProteus | CI/CD pipelines; builds AchaeanFleet images, runs Myrmidons apply on merge |
 | ProjectOdyssey | Research sandbox; experimental agents not yet promoted to production |
-| ProjectScylla | Chaos/resilience testing; calls ai-maestro API to inject failures |
+| ProjectScylla | AI agent ablation benchmarking; evaluates agent architectures across tiered configurations (T0–T6) |
 | ProjectHephaestus | Shared utilities (changelog, system-info, markdown tools); not yet imported as a dependency by other repos |
 
 ---
@@ -70,8 +70,8 @@ Additional repos cover supporting concerns:
               │            │                      │                      │
               ▼            ▼                      ▼                      ▼
         Myrmidons     ProjectArgus          ProjectTelemachy        ProjectScylla
-        (apply YAML   (metrics/alerts       (workflow engine        (chaos inject
-         to /agents)   Grafana dashboards)   chains /tasks)          via /agents)
+        (apply YAML   (metrics/alerts       (workflow engine        (ablation
+         to /agents)   Grafana dashboards)   chains /tasks)          benchmarking)
               │
               ▼
            Nomad cluster  ◄── configs/nomad/client.hcl + server.hcl
@@ -114,4 +114,4 @@ Additional repos cover supporting concerns:
 | ProjectMnemosyne | shared | Agent template marketplace / registry | Consumed by AchaeanFleet + Myrmidons | `marketplace.json` catalog |
 | ProjectHephaestus | shared | Shared utilities and tooling | n/a (library only) | Not yet imported by other repos |
 | ProjectOdyssey | research | Experimental agent research sandbox | Full REST API access | Promotes to AchaeanFleet when stable |
-| ProjectScylla | research | Chaos and resilience testing | Calls `/agents` to inject failures | Uses NATS events from ProjectHermes |
+| ProjectScylla | research | AI agent ablation benchmarking | Standalone evaluation framework | Measures agent performance across T0–T6 tiers |
