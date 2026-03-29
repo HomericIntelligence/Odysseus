@@ -2,11 +2,6 @@
 # Infrastructure
 # ===========================================================================
 
-# DO NOT MODIFY: ai-maestro is an upstream external dependency.
-# Integrate via its REST API and webhooks only. Never push to this submodule.
-[submodule "infrastructure/ai-maestro"]
-    path = infrastructure/ai-maestro
-    url = https://github.com/homeric-intelligence/ai-maestro.git
 
 [submodule "infrastructure/AchaeanFleet"]
     path = infrastructure/AchaeanFleet
@@ -67,3 +62,23 @@
 [submodule "shared/ProjectHephaestus"]
     path = shared/ProjectHephaestus
     url = https://github.com/homeric-intelligence/ProjectHephaestus.git
+
+# ===========================================================================
+# Control
+# ===========================================================================
+
+[submodule "control/ProjectAgamemnon"]
+    path = control/ProjectAgamemnon
+    url = https://github.com/HomericIntelligence/ProjectAgamemnon.git
+
+[submodule "control/ProjectNestor"]
+    path = control/ProjectNestor
+    url = https://github.com/HomericIntelligence/ProjectNestor.git
+
+# ===========================================================================
+# Testing
+# ===========================================================================
+
+[submodule "testing/ProjectCharybdis"]
+    path = testing/ProjectCharybdis
+    url = https://github.com/HomericIntelligence/ProjectCharybdis.git

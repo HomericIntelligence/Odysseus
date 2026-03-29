@@ -5,7 +5,7 @@
 - You have cloned the Odysseus repo with submodules (`just bootstrap`).
 - You have write access to AchaeanFleet, Myrmidons, and ProjectMnemosyne repos.
 - Podman is installed and the Podman socket is running (ADR 001).
-- ai-maestro is running and accessible at `$MAESTRO_URL`.
+- Agamemnon is running and accessible at `$AGAMEMNON_URL`.
 
 ---
 
@@ -23,7 +23,7 @@ mkdir <agent-name>
 Create a `Dockerfile` in that directory. Follow the conventions in existing vessels:
 - Base image should be a minimal, OCI-compatible image.
 - The entrypoint should be the agent binary or script.
-- Include a `LABEL ai.maestro.agent-type=<agent-name>` for discoverability.
+- Include a `LABEL hi.agamemnon.agent-type=<agent-name>` for discoverability.
 - Document required environment variables in a comment block at the top of the Dockerfile.
 
 ### 2. Build the vessel image
@@ -41,12 +41,12 @@ This builds the image and tags it as `homeric-intelligence/<agent-name>:latest`.
 podman images | grep <agent-name>
 ```
 
-### 3. Verify with ai-maestro docker/create
+### 3. Verify with Agamemnon agent launch
 
-Test that ai-maestro can launch a container from the new image:
+Test that Agamemnon can launch a container from the new image:
 
 ```bash
-curl -X POST $MAESTRO_URL/docker/create \
+curl -X POST $AGAMEMNON_URL/v1/agents \
   -H "Content-Type: application/json" \
   -d '{
     "image": "homeric-intelligence/<agent-name>:latest",
@@ -55,16 +55,16 @@ curl -X POST $MAESTRO_URL/docker/create \
   }'
 ```
 
-Check that the container starts and ai-maestro reports it as running:
+Check that the container starts and Agamemnon reports it as running:
 
 ```bash
-curl $MAESTRO_URL/agents | jq '.[] | select(.name == "test-<agent-name>")'
+curl $AGAMEMNON_URL/v1/agents | jq '.[] | select(.name == "test-<agent-name>")'
 ```
 
 Clean up the test agent before proceeding:
 
 ```bash
-curl -X DELETE $MAESTRO_URL/agents/test-<agent-name>
+curl -X DELETE $AGAMEMNON_URL/v1/agents/test-<agent-name>
 ```
 
 ### 4. Add a YAML template to Myrmidons
@@ -123,7 +123,7 @@ git commit -m "chore: update submodule pins for <agent-name> agent type"
 
 - [ ] `Dockerfile` created in `infrastructure/AchaeanFleet/vessels/<agent-name>/`
 - [ ] `just build-vessel <agent-name>` succeeds
-- [ ] ai-maestro `/docker/create` can launch a container from the image
+- [ ] Agamemnon `/v1/agents` can launch a container from the image
 - [ ] Template added to `provisioning/Myrmidons/_templates/<agent-name>.yaml`
 - [ ] Entry added to `shared/ProjectMnemosyne/marketplace.json`
 - [ ] Submodule pins updated in Odysseus root
