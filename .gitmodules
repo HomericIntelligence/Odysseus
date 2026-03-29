@@ -67,3 +67,12 @@
 [submodule "shared/ProjectHephaestus"]
     path = shared/ProjectHephaestus
     url = https://github.com/homeric-intelligence/ProjectHephaestus.git
+[submodule "control/ProjectAgamemnon"]
+	path = control/ProjectAgamemnon
+	url = https://github.com/HomericIntelligence/ProjectAgamemnon.git
+[submodule "control/ProjectNestor"]
+	path = control/ProjectNestor
+	url = https://github.com/HomericIntelligence/ProjectNestor.git
+[submodule "testing/ProjectCharybdis"]
+	path = testing/ProjectCharybdis
+	url = https://github.com/HomericIntelligence/ProjectCharybdis.git
