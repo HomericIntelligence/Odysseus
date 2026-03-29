@@ -5,22 +5,22 @@
 - The new host is running WSL2 (or a compatible Linux environment).
 - You have SSH access to the new host.
 - Tailscale is available for installation on the new host.
-- You have access to the ai-maestro primary host's API at `http://172.20.0.1:23000` (or your configured `MAESTRO_URL`).
+- You have access to the Agamemnon primary host's API at `http://172.20.0.1:8080` (or your configured `AGAMEMNON_URL`).
 
 ---
 
 ## Steps
 
-### 1. Install ai-maestro in headless mode
+### 1. Install Agamemnon agent
 
-On the new host, install ai-maestro without the UI. ai-maestro in headless mode registers itself as a peer and exposes the REST API locally.
+On the new host, install the Agamemnon agent. It registers itself as a peer and exposes the REST API locally.
 
 ```bash
-# Follow the ai-maestro installation guide for headless mode
-# Refer to infrastructure/ai-maestro/README.md for current instructions
+# Follow the Agamemnon installation guide
+# Refer to ~/ProjectAgamemnon/ for current instructions
 ```
 
-Configure ai-maestro to use the primary host as the sync target by setting the `HOST_SYNC_URL` environment variable to the primary host's ai-maestro API URL.
+Configure the agent to use the primary host as the sync target by setting the `AGAMEMNON_URL` environment variable to the primary host's Agamemnon API URL.
 
 ### 2. Install and configure Tailscale
 
@@ -37,15 +37,15 @@ ProjectHermes maintains a synchronized host list. After Tailscale is up, trigger
 
 ```bash
 # On the primary host, from the Odysseus repo root
-curl -X POST http://172.20.0.1:23000/host-sync \
+curl -X POST http://172.20.0.1:8080/v1/host-sync \
   -H "Content-Type: application/json" \
   -d '{"action": "scan"}'
 ```
 
-Verify the new host appears in the ai-maestro host list:
+Verify the new host appears in the Agamemnon host list:
 
 ```bash
-curl http://172.20.0.1:23000/hosts | jq '.[] | .hostname'
+curl http://172.20.0.1:8080/v1/hosts | jq '.[] | .hostname'
 ```
 
 ### 4. Deploy a NATS leaf node
@@ -66,7 +66,7 @@ nats-server -c /etc/nats/leaf.conf &
 Verify connectivity:
 
 ```bash
-nats --server nats://localhost:4222 sub "maestro.>" &
+nats --server nats://localhost:4222 sub "hi.>" &
 # Should see events forwarded from the primary cluster
 ```
 
@@ -104,8 +104,8 @@ If the host does not appear within 5 minutes, check the Argus service discovery 
 
 ## Verification Checklist
 
-- [ ] ai-maestro headless is running on new host
-- [ ] New host appears in `curl http://172.20.0.1:23000/hosts`
+- [ ] Agamemnon agent is running on new host
+- [ ] New host appears in `curl http://172.20.0.1:8080/v1/hosts`
 - [ ] New host appears in Tailscale admin console
 - [ ] NATS leaf node is running and connected to primary cluster
 - [ ] Nomad node status shows new host as "ready"

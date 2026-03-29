@@ -1,17 +1,17 @@
 # Runbook: Disaster Recovery
 
-This runbook covers recovery scenarios for the HomericIntelligence ecosystem, including total loss of the primary ai-maestro host.
+This runbook covers recovery scenarios for the HomericIntelligence ecosystem, including total loss of the primary Agamemnon host.
 
 ---
 
-## Scenario 1: Primary ai-maestro Host Goes Down
+## Scenario 1: Primary Agamemnon Host Goes Down
 
 ### Immediate impact
 
 - Agent lifecycle API is unavailable.
 - New tasks cannot be queued.
 - ProjectHermes stops receiving webhooks (no new NATS events).
-- Existing agents running on other hosts continue running until they poll ai-maestro for instructions.
+- Existing agents running on other hosts continue running until they poll Agamemnon for instructions.
 - NATS JetStream continues operating on any surviving leaf nodes.
 
 ### Recovery steps
@@ -19,8 +19,8 @@ This runbook covers recovery scenarios for the HomericIntelligence ecosystem, in
 #### Step 1: Diagnose the failure
 
 ```bash
-# Check if ai-maestro process is running
-systemctl status ai-maestro   # or: ps aux | grep maestro
+# Check if Agamemnon process is running
+systemctl status agamemnon   # or: ps aux | grep agamemnon
 
 # Check if the host itself is reachable
 ping 172.20.0.1
@@ -34,40 +34,40 @@ df -h /
 If the host is reachable but the process is down:
 
 ```bash
-systemctl start ai-maestro
+systemctl start agamemnon
 # Wait 10 seconds
-curl http://172.20.0.1:23000/health
+curl http://172.20.0.1:8080/health
 ```
 
 If this succeeds, proceed to Step 5 (verify state). If not, proceed to Step 3.
 
-#### Step 3: Restore ai-maestro on a fresh host
+#### Step 3: Restore Agamemnon on a fresh host
 
-If the primary host is unrecoverable, provision a new host (see `add-new-host.md` for the base setup), then restore ai-maestro state:
+If the primary host is unrecoverable, provision a new host (see `add-new-host.md` for the base setup), then restore Agamemnon state:
 
 ```bash
-# On the new host: install ai-maestro
-# Follow infrastructure/ai-maestro/README.md for installation
+# On the new host: install and start Agamemnon
+# Follow ~/ProjectAgamemnon/ for installation instructions
 
-# Update MAESTRO_URL in your environment to point to the new host
-export MAESTRO_URL=http://<new-host-tailscale-ip>:23000
+# Update AGAMEMNON_URL in your environment to point to the new host
+export AGAMEMNON_URL=http://<new-host-tailscale-ip>:8080
 ```
 
 #### Step 4: Re-apply state from Myrmidons
 
-Myrmidons holds the declarative desired state for all agents. Apply it to the fresh ai-maestro instance to reconstruct the agent registry:
+Myrmidons holds the declarative desired state for all agents. Apply it to the fresh Agamemnon instance to reconstruct the agent registry:
 
 ```bash
 cd /path/to/Odysseus
 just apply-all
 ```
 
-This calls `just apply` in `provisioning/Myrmidons`, which reads all YAML manifests and creates agents, tasks, and configurations in ai-maestro via REST.
+This calls `just apply` in `provisioning/Myrmidons`, which reads all YAML manifests and reconciles agents, tasks, and configurations via the Agamemnon REST API.
 
 Verify agents are registered:
 
 ```bash
-curl $MAESTRO_URL/agents | jq 'length'
+curl $AGAMEMNON_URL/v1/agents | jq 'length'
 # Should match the number of agent manifests in Myrmidons
 ```
 
@@ -80,28 +80,28 @@ If consumers (ProjectTelemachy, ProjectArgus, ProjectScylla) missed events durin
 nats stream list
 
 # Check the last sequence number processed by each consumer
-nats consumer info maestro-events <consumer-name>
+nats consumer info homeric-tasks <consumer-name>
 
 # Replay from a specific sequence number
-nats consumer next maestro-events <consumer-name> --count 1000
+nats consumer next homeric-tasks <consumer-name> --count 1000
 ```
 
 Durable consumers will automatically catch up from their last acknowledged sequence on reconnect. Manual replay is only needed if you want to reprocess events for debugging.
 
 #### Step 6: Verify ProjectHermes webhook receiver
 
-Ensure ProjectHermes is configured with the new ai-maestro host's webhook URL:
+Ensure ProjectHermes is configured with the new Agamemnon host's webhook URL:
 
 ```bash
 cd infrastructure/ProjectHermes
-# Update the MAESTRO_URL in the ProjectHermes config
+# Update the AGAMEMNON_URL in the ProjectHermes config
 just restart
 ```
 
 Confirm webhooks are flowing:
 
 ```bash
-nats sub "maestro.>" --count 5
+nats sub "hi.>" --count 5
 # Should see events when agents are created/started
 ```
 
@@ -109,7 +109,7 @@ nats sub "maestro.>" --count 5
 
 Restart or reconfigure any services that had a hardcoded reference to the old host's IP:
 - ProjectArgus (scrape targets)
-- ProjectTelemachy (MAESTRO_URL)
+- ProjectTelemachy (AGAMEMNON_URL)
 - ProjectKeystone (secret injection targets)
 
 ---
@@ -157,7 +157,7 @@ pixi install
 # 3. Bootstrap submodules
 just bootstrap
 
-# 4. Install and start ai-maestro (follow infrastructure/ai-maestro/README.md)
+# 4. Install and start Agamemnon (follow ~/ProjectAgamemnon/)
 
 # 5. Install and start NATS with server config
 nats-server -c configs/nats/server.conf &
@@ -176,14 +176,14 @@ just argus-start
 
 # 10. Verify
 just status
-curl $MAESTRO_URL/health
+curl $AGAMEMNON_URL/health
 ```
 
 ---
 
 ## Recovery Checklist
 
-- [ ] ai-maestro is running and `/health` returns 200
+- [ ] Agamemnon is running and `/health` returns 200
 - [ ] `just apply-all` completed without errors
 - [ ] Agent count matches expected count in `provisioning/Myrmidons/`
 - [ ] NATS server is running and all leaf nodes have reconnected

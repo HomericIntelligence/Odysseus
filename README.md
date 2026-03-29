@@ -35,7 +35,7 @@ Odysseus/
 ├── configs/
 │   ├── nomad/                # Nomad client/server HCL configs
 │   └── nats/                 # NATS server and leaf node configs
-├── infrastructure/           # Submodules: ai-maestro, AchaeanFleet, ProjectArgus, ProjectHermes
+├── infrastructure/           # Submodules: ai-maestro (deprecated, see ADR-006), AchaeanFleet, ProjectArgus, ProjectHermes
 ├── provisioning/             # Submodules: ProjectTelemachy, ProjectKeystone, Myrmidons
 ├── ci-cd/                    # Submodules: ProjectProteus
 ├── research/                 # Submodules: ProjectOdyssey, ProjectScylla
@@ -50,7 +50,7 @@ Odysseus/
 |---|---|
 | `just bootstrap` | Initialize and update all submodules |
 | `just status` | Show status across all submodules |
-| `just apply-all` | Apply Myrmidons declarative state to ai-maestro |
+| `just apply-all` | Apply Myrmidons declarative state via the Agamemnon API |
 | `just update-submodules` | Pull latest commits for all submodules |
 | `just hermes-start` | Start ProjectHermes event bridge |
 | `just argus-start` | Start ProjectArgus observability stack |
@@ -58,5 +58,5 @@ Odysseus/
 
 ## Important Notes
 
-- **Do not modify the `infrastructure/ai-maestro` submodule.** ai-maestro is an external dependency managed upstream. All integration is via its REST API and webhooks only.
-- All new features belong in their respective new repos, never in ai-maestro.
+- **`infrastructure/ai-maestro` is deprecated per ADR-006.** The submodule is pinned for backward compatibility only and will be removed once all dependents are migrated to ProjectAgamemnon. Do not add new integrations against ai-maestro.
+- All new task coordination features use ProjectAgamemnon (`control/ProjectAgamemnon`, REST API at `$AGAMEMNON_URL`).
