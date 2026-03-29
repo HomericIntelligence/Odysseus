@@ -1,5 +1,10 @@
 # HomericIntelligence System Architecture
 
+> **Architecture Rewrite In Progress** — ADR-006 supersedes ADR-004. This document reflects
+> the pre-migration state. The new architecture replaces ai-maestro with native
+> HomericIntelligence components. See [ADR-006](adr/006-decouple-from-ai-maestro.md) for
+> the authoritative post-migration architecture.
+
 ## Overview
 
 The HomericIntelligence ecosystem is a distributed agent mesh built on top of **ai-maestro**, an existing platform that provides agent lifecycle management, task queuing, messaging, memory, and webhooks via a REST API.

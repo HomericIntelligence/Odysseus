@@ -1,6 +1,6 @@
 # ADR 004: Extend ai-maestro via APIs Rather Than Replacing Its Capabilities
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-006](006-decouple-from-ai-maestro.md)
 
 ---
 

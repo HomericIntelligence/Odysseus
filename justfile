@@ -2,6 +2,7 @@
 # Variables
 # ===========================================================================
 
+# DEPRECATED: Will be replaced by AGAMEMNON_URL per ADR-006 migration
 MAESTRO_URL := env_var_or_default("MAESTRO_URL", "http://172.20.0.1:23000")
 
 # ===========================================================================
