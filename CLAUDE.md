@@ -24,7 +24,9 @@ Odysseus/
 │   │   ├── 001-podman-over-docker.md
 │   │   ├── 002-nats-event-bridge.md
 │   │   ├── 003-nomad-over-k8s.md
-│   │   └── 004-extend-not-replace-maestro.md
+│   │   ├── 004-extend-not-replace-maestro.md
+│   │   ├── 005-nats-subject-schema.md
+│   │   └── 006-decouple-from-ai-maestro.md
 │   └── runbooks/
 │       ├── add-new-host.md
 │       ├── add-new-agent-type.md
@@ -41,9 +43,9 @@ Odysseus/
 │   ├── AchaeanFleet
 │   ├── ProjectArgus
 │   └── ProjectHermes
-├── control/                      # git submodules (new)
-│   ├── ProjectAgamemnon          # Task coordination (replaces ai-maestro)
-│   └── ProjectNestor             # State machine coordination
+├── control/                      # git submodules
+│   ├── ProjectAgamemnon          # Planning + HMAS orchestration (replaces ai-maestro)
+│   └── ProjectNestor             # Research, ideation, handoff to Agamemnon
 ├── provisioning/                 # git submodules
 │   ├── ProjectTelemachy
 │   ├── ProjectKeystone
@@ -53,8 +55,8 @@ Odysseus/
 ├── research/                     # git submodules
 │   ├── ProjectOdyssey
 │   └── ProjectScylla
-├── testing/                      # git submodules (new)
-│   └── ProjectCharybdis          # Chaos/resilience testing
+├── testing/                      # git submodules
+│   └── ProjectCharybdis          # Chaos/resilience testing via Agamemnon /v1/chaos/*
 ├── shared/                       # git submodules
 │   ├── ProjectMnemosyne
 │   └── ProjectHephaestus
@@ -80,10 +82,10 @@ just bootstrap
 # Check status of all submodules
 just status
 
-# Apply Myrmidons declarative YAML state to ai-maestro (DEPRECATED: being updated per ADR-006 Wave 1)
+# Apply Myrmidons declarative YAML manifests via Agamemnon API
 just apply-all
 
-# Start the NATS event bridge (ProjectHermes) (DEPRECATED: being updated per ADR-006 Wave 1)
+# Start the NATS event bridge (ProjectHermes)
 just hermes-start
 
 # Start the observability stack (ProjectArgus)
