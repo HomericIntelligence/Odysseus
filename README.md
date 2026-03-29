@@ -13,7 +13,7 @@ Odysseus serves as the single source of truth for:
 ## Quick Start
 
 ```bash
-git clone --recurse-submodules https://github.com/homeric-intelligence/Odysseus.git
+git clone --recurse-submodules https://github.com/HomericIntelligence/Odysseus.git
 cd Odysseus
 just bootstrap
 ```
@@ -35,7 +35,7 @@ Odysseus/
 ├── configs/
 │   ├── nomad/                # Nomad client/server HCL configs
 │   └── nats/                 # NATS server and leaf node configs
-├── infrastructure/           # Submodules: ai-maestro (deprecated, see ADR-006), AchaeanFleet, ProjectArgus, ProjectHermes
+├── infrastructure/           # Submodules: AchaeanFleet, ProjectArgus, ProjectHermes
 ├── provisioning/             # Submodules: ProjectTelemachy, ProjectKeystone, Myrmidons
 ├── ci-cd/                    # Submodules: ProjectProteus
 ├── research/                 # Submodules: ProjectOdyssey, ProjectScylla
@@ -58,5 +58,6 @@ Odysseus/
 
 ## Important Notes
 
-- **`infrastructure/ai-maestro` is deprecated per ADR-006.** The submodule is pinned for backward compatibility only and will be removed once all dependents are migrated to ProjectAgamemnon. Do not add new integrations against ai-maestro.
-- All new task coordination features use ProjectAgamemnon (`control/ProjectAgamemnon`, REST API at `$AGAMEMNON_URL`).
+- **ai-maestro has been removed per ADR-006.** All task coordination uses ProjectAgamemnon (`control/ProjectAgamemnon`, REST API at `$AGAMEMNON_URL`).
+- See [docs/architecture.md](docs/architecture.md) for the current system architecture.
+- See [docs/adr/](docs/adr/) for Architecture Decision Records.

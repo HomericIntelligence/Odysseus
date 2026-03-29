@@ -147,7 +147,7 @@ Use this when setting up a net-new replacement for a completely lost host with n
 
 ```bash
 # 1. Clone Odysseus with all submodules
-git clone --recurse-submodules https://github.com/homeric-intelligence/Odysseus.git
+git clone --recurse-submodules https://github.com/HomericIntelligence/Odysseus.git
 cd Odysseus
 
 # 2. Install pixi and just
