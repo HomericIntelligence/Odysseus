@@ -9,7 +9,7 @@ Odysseus itself contains no application code. Its value is coordination: it ensu
 ## Key Principles
 
 1. **Odysseus is read-mostly.** Most day-to-day changes happen in the individual submodule repos, not here.
-2. **ai-maestro is being deprecated.** Per ADR-006, ProjectAgamemnon (control/ProjectAgamemnon) replaces ai-maestro's task coordination role. The `infrastructure/ai-maestro` submodule remains pinned for backward compatibility but will be removed when all dependent systems are migrated.
+2. **ai-maestro has been removed per ADR-006.** ProjectAgamemnon (control/ProjectAgamemnon) replaces ai-maestro's task coordination role.
 3. **ADRs are append-only.** Once an ADR is accepted it is never edited. Superseding decisions get a new ADR that references the old one.
 4. **Configs here are canonical.** The Nomad and NATS configs in `configs/` are the authoritative source. Individual hosts copy or symlink from here.
 5. **Submodule pins matter.** The submodule SHAs in this repo represent the last known-good cross-repo integration point.
@@ -39,7 +39,6 @@ Odysseus/
 │       ├── server.conf
 │       └── leaf.conf
 ├── infrastructure/               # git submodules
-│   ├── ai-maestro                # DEPRECATED per ADR-006 — being removed
 │   ├── AchaeanFleet
 │   ├── ProjectArgus
 │   └── ProjectHermes
@@ -71,7 +70,7 @@ Odysseus/
 - When adding a new submodule: `git submodule add <url> <path>`, update `.gitmodules`, and document the repo in `docs/architecture.md`.
 - When writing a new ADR: copy the format from an existing ADR, use the next sequential number, and set Status to "Proposed" until merged.
 - Runbooks should be written as numbered steps that can be executed top-to-bottom without prior context.
-- **ai-maestro is being deprecated per ADR-006.** ProjectAgamemnon replaces its task coordination role. Do not add new dependencies on ai-maestro; use ProjectAgamemnon for new integrations.
+- **ai-maestro has been fully removed per ADR-006.** ProjectAgamemnon replaces its task coordination role.
 
 ## Common Commands
 
