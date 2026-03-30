@@ -11,3 +11,6 @@ just = ">=1.13"
 [tasks]
 bootstrap = "just bootstrap"
 status = "just status"
+build = "just build"
+test = "just test"
+clean = "just clean"
