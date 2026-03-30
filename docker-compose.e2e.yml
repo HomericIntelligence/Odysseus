@@ -17,12 +17,6 @@ services:
       - "4222:4222"
       - "8222:8222"
     networks: [homeric-mesh]
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8222/healthz 2>/dev/null || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
 
   # ─── Control Plane (C++20) ───────────────────────────────
   agamemnon:
@@ -33,15 +27,8 @@ services:
     environment:
       NATS_URL: nats://nats:4222
     depends_on:
-      nats:
-        condition: service_healthy
+      - nats
     networks: [homeric-mesh]
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/v1/health 2>/dev/null || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 30s
 
   nestor:
     build:
@@ -51,103 +38,78 @@ services:
     environment:
       NATS_URL: nats://nats:4222
     depends_on:
-      nats:
-        condition: service_healthy
+      - nats
     networks: [homeric-mesh]
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8081/v1/health 2>/dev/null || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 30s
 
   # ─── Infrastructure ────────────────────────────────────
   hermes:
     build:
-      context: ./infrastructure/ProjectHermes/
+      context: /home/mvillmow/ProjectHermes/
     ports:
       - "8085:8085"
     environment:
       NATS_URL: nats://nats:4222
       HERMES_PORT: "8085"
     depends_on:
-      nats:
-        condition: service_healthy
+      - nats
     networks: [homeric-mesh]
-    healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8085/health')\" 2>/dev/null || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
 
   # ─── Observability ─────────────────────────────────────
   prometheus:
     image: prom/prometheus:latest
     ports:
-      - "9090:9090"
+      - "19090:9090"
     volumes:
-      - ./e2e/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - /home/mvillmow/Odysseus/e2e/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     networks: [homeric-mesh]
 
   loki:
     image: grafana/loki:latest
     ports:
-      - "3100:3100"
+      - "13100:3100"
     command: ["-config.file=/etc/loki/local-config.yaml"]
     networks: [homeric-mesh]
 
   grafana:
     image: grafana/grafana:latest
     ports:
-      - "3001:3000"
+      - "13001:3000"
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
       GF_SECURITY_ALLOW_EMBEDDING: "true"
     volumes:
-      - ./e2e/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./infrastructure/ProjectArgus/dashboards:/var/lib/grafana/dashboards:ro
+      - /home/mvillmow/Odysseus/e2e/grafana/provisioning:/etc/grafana/provisioning:ro
+      - /home/mvillmow/ProjectArgus/dashboards:/var/lib/grafana/dashboards:ro
     depends_on: [prometheus, loki]
     networks: [homeric-mesh]
 
   argus-exporter:
     build:
-      context: infrastructure/ProjectArgus/exporter/
-      dockerfile_inline: |
-        FROM python:3.11-slim
-        WORKDIR /app
-        RUN pip install --no-cache-dir prometheus_client requests
-        COPY exporter.py .
-        EXPOSE 9100
-        CMD ["python", "exporter.py"]
+      context: /home/mvillmow/ProjectArgus/exporter/
+      dockerfile: /home/mvillmow/Odysseus/e2e/Dockerfile.argus-exporter
     ports:
-      - "9100:9100"
+      - "19100:9100"
     environment:
       AGAMEMNON_URL: http://agamemnon:8080
       NESTOR_URL: http://nestor:8081
       NATS_URL: http://nats:8222
     depends_on:
-      agamemnon:
-        condition: service_healthy
-      nestor:
-        condition: service_healthy
-      nats:
-        condition: service_healthy
+      - agamemnon
+      - nestor
+      - nats
     networks: [homeric-mesh]
 
   # ─── Workers ───────────────────────────────────────────
   hello-myrmidon:
     build:
-      context: provisioning/Myrmidons/hello-world/
+      context: /home/mvillmow/Myrmidons/hello-world/
     environment:
       NATS_URL: nats://nats:4222
       AGAMEMNON_URL: http://agamemnon:8080
     depends_on:
-      nats:
-        condition: service_healthy
-      agamemnon:
-        condition: service_healthy
+      - nats
+      - agamemnon
     networks: [homeric-mesh]
     restart: on-failure
     deploy:
