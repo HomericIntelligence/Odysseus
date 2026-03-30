@@ -90,14 +90,14 @@ _build-keystone:
 # Build ProjectOdyssey (Mojo — outputs to submodule build/ directory)
 _build-odyssey:
     @echo "--- Building research/ProjectOdyssey (Mojo) ---"
-    cd research/ProjectOdyssey && just build
+    cd research/ProjectOdyssey && NATIVE=1 just build
 
 # ===========================================================================
 # Test
 # ===========================================================================
 
 # Run tests across all compilable submodules
-test: _test-agamemnon _test-nestor _test-charybdis
+test: _test-agamemnon _test-nestor _test-charybdis _test-keystone
     @echo "=== Tests complete ==="
 
 _test-agamemnon:
@@ -111,6 +111,10 @@ _test-nestor:
 _test-charybdis:
     @echo "--- Testing testing/ProjectCharybdis ---"
     ctest --test-dir "{{BUILD_ROOT}}/ProjectCharybdis" --output-on-failure
+
+_test-keystone:
+    @echo "--- Testing provisioning/ProjectKeystone ---"
+    ctest --test-dir "{{BUILD_ROOT}}/ProjectKeystone" --output-on-failure
 
 # ===========================================================================
 # Lint
