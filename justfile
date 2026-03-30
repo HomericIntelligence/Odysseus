@@ -90,7 +90,7 @@ _build-keystone:
 # Build ProjectOdyssey (Mojo — outputs to submodule build/ directory)
 _build-odyssey:
     @echo "--- Building research/ProjectOdyssey (Mojo) ---"
-    cd research/ProjectOdyssey && NATIVE=1 just build
+    cd research/ProjectOdyssey && BUILD_ROOT="{{BUILD_ROOT}}/ProjectOdyssey" just build
 
 # ===========================================================================
 # Test
