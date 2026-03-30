@@ -179,3 +179,27 @@ telemachy-run WORKFLOW:
 # Run ProjectScylla ablation benchmarks
 scylla-test:
     cd research/ProjectScylla && just test
+
+# ===========================================================================
+# E2E Pipeline Testing
+# ===========================================================================
+
+# Start the full E2E stack (builds containers, starts all services)
+e2e-up:
+    docker compose -f docker-compose.e2e.yml up -d --build
+
+# Run the E2E hello-world test (validates entire pipeline end-to-end)
+e2e-test:
+    bash e2e/run-hello-world.sh
+
+# Tear down the E2E stack and remove volumes
+e2e-down:
+    bash e2e/teardown.sh
+
+# Stream logs from E2E stack (optional: pass service name, e.g. just e2e-logs agamemnon)
+e2e-logs SERVICE="":
+    docker compose -f docker-compose.e2e.yml logs -f {{ SERVICE }}
+
+# Show status of E2E stack containers
+e2e-status:
+    docker compose -f docker-compose.e2e.yml ps
