@@ -184,9 +184,13 @@ scylla-test:
 # E2E Pipeline Testing
 # ===========================================================================
 
-# Start the full E2E stack (builds containers, starts all services)
+# Build E2E container images
+e2e-build:
+    podman compose -f docker-compose.e2e.yml build
+
+# Start the full E2E stack (handles podman DNS workaround)
 e2e-up:
-    docker compose -f docker-compose.e2e.yml up -d --build
+    bash e2e/start-stack.sh
 
 # Run the E2E hello-world test (validates entire pipeline end-to-end)
 e2e-test:
