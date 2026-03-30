@@ -24,10 +24,10 @@ services:
       retries: 10
       start_period: 5s
 
-  # ─── Control Plane ─────────────────────────────────────
+  # ─── Control Plane (C++20) ───────────────────────────────
   agamemnon:
     build:
-      context: control/ProjectAgamemnon/stub/
+      context: control/ProjectAgamemnon/
     ports:
       - "8080:8080"
     environment:
@@ -37,15 +37,15 @@ services:
         condition: service_healthy
     networks: [homeric-mesh]
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/v1/health')\" 2>/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/v1/health 2>/dev/null || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10
-      start_period: 10s
+      start_period: 30s
 
   nestor:
     build:
-      context: control/ProjectNestor/stub/
+      context: control/ProjectNestor/
     ports:
       - "8081:8081"
     environment:
@@ -55,11 +55,11 @@ services:
         condition: service_healthy
     networks: [homeric-mesh]
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8081/v1/health')\" 2>/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8081/v1/health 2>/dev/null || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10
-      start_period: 10s
+      start_period: 30s
 
   # ─── Infrastructure ────────────────────────────────────
   hermes:
