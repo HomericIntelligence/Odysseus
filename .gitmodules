@@ -2,18 +2,17 @@
 # Infrastructure
 # ===========================================================================
 
-
 [submodule "infrastructure/AchaeanFleet"]
     path = infrastructure/AchaeanFleet
-    url = https://github.com/homeric-intelligence/AchaeanFleet.git
+    url = https://github.com/HomericIntelligence/AchaeanFleet.git
 
 [submodule "infrastructure/ProjectArgus"]
     path = infrastructure/ProjectArgus
-    url = https://github.com/homeric-intelligence/ProjectArgus.git
+    url = https://github.com/HomericIntelligence/ProjectArgus.git
 
 [submodule "infrastructure/ProjectHermes"]
     path = infrastructure/ProjectHermes
-    url = https://github.com/homeric-intelligence/ProjectHermes.git
+    url = https://github.com/HomericIntelligence/ProjectHermes.git
 
 # ===========================================================================
 # Provisioning
@@ -21,15 +20,15 @@
 
 [submodule "provisioning/ProjectTelemachy"]
     path = provisioning/ProjectTelemachy
-    url = https://github.com/homeric-intelligence/ProjectTelemachy.git
+    url = https://github.com/HomericIntelligence/ProjectTelemachy.git
 
 [submodule "provisioning/ProjectKeystone"]
     path = provisioning/ProjectKeystone
-    url = https://github.com/homeric-intelligence/ProjectKeystone.git
+    url = https://github.com/HomericIntelligence/ProjectKeystone.git
 
 [submodule "provisioning/Myrmidons"]
     path = provisioning/Myrmidons
-    url = https://github.com/homeric-intelligence/Myrmidons.git
+    url = https://github.com/HomericIntelligence/Myrmidons.git
 
 # ===========================================================================
 # CI/CD
@@ -37,7 +36,7 @@
 
 [submodule "ci-cd/ProjectProteus"]
     path = ci-cd/ProjectProteus
-    url = https://github.com/homeric-intelligence/ProjectProteus.git
+    url = https://github.com/HomericIntelligence/ProjectProteus.git
 
 # ===========================================================================
 # Research
@@ -45,11 +44,11 @@
 
 [submodule "research/ProjectOdyssey"]
     path = research/ProjectOdyssey
-    url = https://github.com/homeric-intelligence/ProjectOdyssey.git
+    url = https://github.com/HomericIntelligence/ProjectOdyssey.git
 
 [submodule "research/ProjectScylla"]
     path = research/ProjectScylla
-    url = https://github.com/homeric-intelligence/ProjectScylla.git
+    url = https://github.com/HomericIntelligence/ProjectScylla.git
 
 # ===========================================================================
 # Shared
@@ -57,11 +56,11 @@
 
 [submodule "shared/ProjectMnemosyne"]
     path = shared/ProjectMnemosyne
-    url = https://github.com/homeric-intelligence/ProjectMnemosyne.git
+    url = https://github.com/HomericIntelligence/ProjectMnemosyne.git
 
 [submodule "shared/ProjectHephaestus"]
     path = shared/ProjectHephaestus
-    url = https://github.com/homeric-intelligence/ProjectHephaestus.git
+    url = https://github.com/HomericIntelligence/ProjectHephaestus.git
 
 # ===========================================================================
 # Control
