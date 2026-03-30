@@ -7,6 +7,12 @@
 networks:
   homeric-mesh:
     driver: bridge
+    driver_opts:
+      dns_enabled: "true"
+
+# Shared anchors
+x-nats-env: &nats-env
+  NATS_URL: nats://nats:4222
 
 services:
   # ─── Transport Layer ───────────────────────────────────
@@ -16,7 +22,9 @@ services:
     ports:
       - "4222:4222"
       - "8222:8222"
-    networks: [homeric-mesh]
+    networks:
+      homeric-mesh:
+        aliases: [nats]
 
   # ─── Control Plane (C++20) ───────────────────────────────
   agamemnon:
@@ -25,10 +33,12 @@ services:
     ports:
       - "8080:8080"
     environment:
-      NATS_URL: nats://nats:4222
+      <<: *nats-env
     depends_on:
       - nats
-    networks: [homeric-mesh]
+    networks:
+      homeric-mesh:
+        aliases: [agamemnon]
 
   nestor:
     build:
@@ -36,10 +46,13 @@ services:
     ports:
       - "8081:8081"
     environment:
-      NATS_URL: nats://nats:4222
+      <<: *nats-env
+      NESTOR_PORT: "8081"
     depends_on:
       - nats
-    networks: [homeric-mesh]
+    networks:
+      homeric-mesh:
+        aliases: [nestor]
 
   # ─── Infrastructure ────────────────────────────────────
   hermes:
@@ -48,11 +61,13 @@ services:
     ports:
       - "8085:8085"
     environment:
-      NATS_URL: nats://nats:4222
+      <<: *nats-env
       HERMES_PORT: "8085"
     depends_on:
       - nats
-    networks: [homeric-mesh]
+    networks:
+      homeric-mesh:
+        aliases: [hermes]
 
   # ─── Observability ─────────────────────────────────────
   prometheus:
@@ -61,14 +76,31 @@ services:
       - "19090:9090"
     volumes:
       - /home/mvillmow/Odysseus/e2e/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    networks: [homeric-mesh]
+    networks:
+      homeric-mesh:
+        aliases: [prometheus]
 
   loki:
     image: grafana/loki:latest
     ports:
       - "13100:3100"
     command: ["-config.file=/etc/loki/local-config.yaml"]
-    networks: [homeric-mesh]
+    networks:
+      homeric-mesh:
+        aliases: [loki]
+
+  promtail:
+    image: grafana/promtail:latest
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - /home/mvillmow/Odysseus/e2e/promtail.yml:/etc/promtail/config.yml:ro
+      - promtail-positions:/tmp
+      - /run/user/1000/podman/podman.sock:/var/run/podman/podman.sock:ro
+    depends_on:
+      - loki
+    networks:
+      homeric-mesh:
+        aliases: [promtail]
 
   grafana:
     image: grafana/grafana:latest
@@ -82,7 +114,9 @@ services:
       - /home/mvillmow/Odysseus/e2e/grafana/provisioning:/etc/grafana/provisioning:ro
       - /home/mvillmow/ProjectArgus/dashboards:/var/lib/grafana/dashboards:ro
     depends_on: [prometheus, loki]
-    networks: [homeric-mesh]
+    networks:
+      homeric-mesh:
+        aliases: [grafana]
 
   argus-exporter:
     build:
@@ -98,21 +132,28 @@ services:
       - agamemnon
       - nestor
       - nats
-    networks: [homeric-mesh]
+    networks:
+      homeric-mesh:
+        aliases: [argus-exporter]
 
   # ─── Workers ───────────────────────────────────────────
   hello-myrmidon:
     build:
       context: /home/mvillmow/Myrmidons/hello-world/
     environment:
-      NATS_URL: nats://nats:4222
+      <<: *nats-env
       AGAMEMNON_URL: http://agamemnon:8080
     depends_on:
       - nats
       - agamemnon
-    networks: [homeric-mesh]
+    networks:
+      homeric-mesh:
+        aliases: [hello-myrmidon]
     restart: on-failure
     deploy:
       restart_policy:
         condition: on-failure
         max_attempts: 5
+
+volumes:
+  promtail-positions:
