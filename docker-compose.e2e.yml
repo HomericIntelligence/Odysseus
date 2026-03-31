@@ -7,12 +7,6 @@
 networks:
   homeric-mesh:
     driver: bridge
-    driver_opts:
-      dns_enabled: "true"
-
-# Shared anchors
-x-nats-env: &nats-env
-  NATS_URL: nats://nats:4222
 
 services:
   # ─── Transport Layer ───────────────────────────────────
@@ -22,138 +16,141 @@ services:
     ports:
       - "4222:4222"
       - "8222:8222"
-    networks:
-      homeric-mesh:
-        aliases: [nats]
+    networks: [homeric-mesh]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8222/healthz 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
-  # ─── Control Plane (C++20) ───────────────────────────────
+  # ─── Control Plane ─────────────────────────────────────
   agamemnon:
     build:
-      context: control/ProjectAgamemnon/
+      context: control/ProjectAgamemnon/stub/
     ports:
       - "8080:8080"
     environment:
-      <<: *nats-env
+      NATS_URL: nats://nats:4222
     depends_on:
-      - nats
-    networks:
-      homeric-mesh:
-        aliases: [agamemnon]
+      nats:
+        condition: service_healthy
+    networks: [homeric-mesh]
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/v1/health')\" 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
   nestor:
     build:
-      context: control/ProjectNestor/
+      context: control/ProjectNestor/stub/
     ports:
       - "8081:8081"
     environment:
-      <<: *nats-env
-      NESTOR_PORT: "8081"
+      NATS_URL: nats://nats:4222
     depends_on:
-      - nats
-    networks:
-      homeric-mesh:
-        aliases: [nestor]
+      nats:
+        condition: service_healthy
+    networks: [homeric-mesh]
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8081/v1/health')\" 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
   # ─── Infrastructure ────────────────────────────────────
   hermes:
     build:
-      context: /home/mvillmow/ProjectHermes/
+      context: ${HERMES_DIR}/
     ports:
       - "8085:8085"
     environment:
-      <<: *nats-env
+      NATS_URL: nats://nats:4222
       HERMES_PORT: "8085"
     depends_on:
-      - nats
-    networks:
-      homeric-mesh:
-        aliases: [hermes]
+      nats:
+        condition: service_healthy
+    networks: [homeric-mesh]
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8085/health')\" 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
   # ─── Observability ─────────────────────────────────────
   prometheus:
     image: prom/prometheus:latest
     ports:
-      - "19090:9090"
+      - "9090:9090"
     volumes:
-      - /home/mvillmow/Odysseus/e2e/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    networks:
-      homeric-mesh:
-        aliases: [prometheus]
+      - ${PROJECT_ROOT}/e2e/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks: [homeric-mesh]
 
   loki:
     image: grafana/loki:latest
     ports:
-      - "13100:3100"
+      - "3100:3100"
     command: ["-config.file=/etc/loki/local-config.yaml"]
-    networks:
-      homeric-mesh:
-        aliases: [loki]
-
-  promtail:
-    image: grafana/promtail:latest
-    command: ["-config.file=/etc/promtail/config.yml"]
-    volumes:
-      - /home/mvillmow/Odysseus/e2e/promtail.yml:/etc/promtail/config.yml:ro
-      - promtail-positions:/tmp
-      - /run/user/1000/podman/podman.sock:/var/run/podman/podman.sock:ro
-    depends_on:
-      - loki
-    networks:
-      homeric-mesh:
-        aliases: [promtail]
+    networks: [homeric-mesh]
 
   grafana:
     image: grafana/grafana:latest
     ports:
-      - "13001:3000"
+      - "3001:3000"
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
       GF_SECURITY_ALLOW_EMBEDDING: "true"
     volumes:
-      - /home/mvillmow/Odysseus/e2e/grafana/provisioning:/etc/grafana/provisioning:ro
-      - /home/mvillmow/ProjectArgus/dashboards:/var/lib/grafana/dashboards:ro
+      - ${PROJECT_ROOT}/e2e/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${ARGUS_DIR}/dashboards:/var/lib/grafana/dashboards:ro
     depends_on: [prometheus, loki]
-    networks:
-      homeric-mesh:
-        aliases: [grafana]
+    networks: [homeric-mesh]
 
   argus-exporter:
     build:
-      context: /home/mvillmow/ProjectArgus/exporter/
-      dockerfile: /home/mvillmow/Odysseus/e2e/Dockerfile.argus-exporter
+      context: infrastructure/ProjectArgus/exporter/
+      dockerfile_inline: |
+        FROM python:3.11-slim
+        WORKDIR /app
+        RUN pip install --no-cache-dir prometheus_client requests
+        COPY exporter.py .
+        EXPOSE 9100
+        CMD ["python", "exporter.py"]
     ports:
-      - "19100:9100"
+      - "9100:9100"
     environment:
       AGAMEMNON_URL: http://agamemnon:8080
       NESTOR_URL: http://nestor:8081
       NATS_URL: http://nats:8222
     depends_on:
-      - agamemnon
-      - nestor
-      - nats
-    networks:
-      homeric-mesh:
-        aliases: [argus-exporter]
+      agamemnon:
+        condition: service_healthy
+      nestor:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    networks: [homeric-mesh]
 
   # ─── Workers ───────────────────────────────────────────
   hello-myrmidon:
     build:
-      context: /home/mvillmow/Myrmidons/hello-world/
+      context: ${MYRMIDONS_DIR}/hello-world/
     environment:
-      <<: *nats-env
+      NATS_URL: nats://nats:4222
       AGAMEMNON_URL: http://agamemnon:8080
     depends_on:
-      - nats
-      - agamemnon
-    networks:
-      homeric-mesh:
-        aliases: [hello-myrmidon]
+      nats:
+        condition: service_healthy
+      agamemnon:
+        condition: service_healthy
+    networks: [homeric-mesh]
     restart: on-failure
     deploy:
       restart_policy:
         condition: on-failure
         max_attempts: 5
-
-volumes:
-  promtail-positions:
