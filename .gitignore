@@ -1,0 +1,32 @@
+# Generated environment files
+.env
+.env.local
+.env*.local
+
+# Build artifacts
+/build/
+dist/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Dependencies
+__pycache__/
+*.pyc
+node_modules/
+.pixi/
+
+# Temporary files
+.claude/worktrees/
+.issue_implementer/
+*.tmp

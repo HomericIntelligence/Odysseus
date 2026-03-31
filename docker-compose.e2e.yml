@@ -64,7 +64,7 @@ services:
   # ─── Infrastructure ────────────────────────────────────
   hermes:
     build:
-      context: ./infrastructure/ProjectHermes/
+      context: ${HERMES_DIR}/
     ports:
       - "8085:8085"
     environment:
@@ -87,7 +87,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./e2e/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${PROJECT_ROOT}/e2e/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     networks: [homeric-mesh]
 
   loki:
@@ -106,8 +106,8 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
       GF_SECURITY_ALLOW_EMBEDDING: "true"
     volumes:
-      - ./e2e/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./infrastructure/ProjectArgus/dashboards:/var/lib/grafana/dashboards:ro
+      - ${PROJECT_ROOT}/e2e/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${ARGUS_DIR}/dashboards:/var/lib/grafana/dashboards:ro
     depends_on: [prometheus, loki]
     networks: [homeric-mesh]
 
@@ -139,7 +139,7 @@ services:
   # ─── Workers ───────────────────────────────────────────
   hello-myrmidon:
     build:
-      context: provisioning/Myrmidons/hello-world/
+      context: ${MYRMIDONS_DIR}/hello-world/
     environment:
       NATS_URL: nats://nats:4222
       AGAMEMNON_URL: http://agamemnon:8080
