@@ -8,6 +8,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ODYSSEUS_ROOT="$(dirname "$SCRIPT_DIR")"
 COMPOSE_FILE="$ODYSSEUS_ROOT/docker-compose.e2e.yml"
 
+# Resolve symlink paths for podman (can't follow symlinks as build contexts)
+PROJECT_ROOT="$ODYSSEUS_ROOT"
+HERMES_DIR="$(readlink -f "$ODYSSEUS_ROOT/infrastructure/ProjectHermes")"
+ARGUS_DIR="$(readlink -f "$ODYSSEUS_ROOT/infrastructure/ProjectArgus")"
+MYRMIDONS_DIR="$(readlink -f "$ODYSSEUS_ROOT/provisioning/Myrmidons")"
+PODMAN_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
+
+# Write .env for docker-compose variable substitution
+cat > "$ODYSSEUS_ROOT/.env" <<EOF
+PROJECT_ROOT=$PROJECT_ROOT
+HERMES_DIR=$HERMES_DIR
+ARGUS_DIR=$ARGUS_DIR
+MYRMIDONS_DIR=$MYRMIDONS_DIR
+PODMAN_SOCK=$PODMAN_SOCK
+EOF
+
 echo "╔══════════════════════════════════════════════╗"
 echo "║  Starting HomericIntelligence E2E Stack      ║"
 echo "╚══════════════════════════════════════════════╝"
