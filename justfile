@@ -202,8 +202,8 @@ e2e-down:
 
 # Stream logs from E2E stack (optional: pass service name, e.g. just e2e-logs agamemnon)
 e2e-logs SERVICE="":
-    docker compose -f docker-compose.e2e.yml logs -f {{ SERVICE }}
+    podman compose -f docker-compose.e2e.yml logs -f {{ SERVICE }}
 
 # Show status of E2E stack containers
 e2e-status:
-    docker compose -f docker-compose.e2e.yml ps
+    podman compose -f docker-compose.e2e.yml ps
