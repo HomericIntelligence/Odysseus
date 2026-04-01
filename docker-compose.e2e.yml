@@ -1,5 +1,5 @@
 # HomericIntelligence E2E Stack
-# Starts the full pipeline in podman/docker containers.
+# Starts the full pipeline in podman containers.
 # Usage: just e2e-up   (start)
 #        just e2e-test (run hello-world validation)
 #        just e2e-down (tear down)
@@ -27,7 +27,7 @@ services:
   # ─── Control Plane ─────────────────────────────────────
   agamemnon:
     build:
-      context: control/ProjectAgamemnon/stub/
+      context: control/ProjectAgamemnon/
     ports:
       - "8080:8080"
     environment:
@@ -37,7 +37,7 @@ services:
         condition: service_healthy
     networks: [homeric-mesh]
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/v1/health')\" 2>/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/v1/health 2>/dev/null || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -45,7 +45,7 @@ services:
 
   nestor:
     build:
-      context: control/ProjectNestor/stub/
+      context: control/ProjectNestor/
     ports:
       - "8081:8081"
     environment:
@@ -55,7 +55,7 @@ services:
         condition: service_healthy
     networks: [homeric-mesh]
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8081/v1/health')\" 2>/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/v1/health 2>/dev/null || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10

@@ -14,7 +14,7 @@ ARGUS_DIR="$(readlink -f "$ODYSSEUS_ROOT/infrastructure/ProjectArgus")"
 MYRMIDONS_DIR="$(readlink -f "$ODYSSEUS_ROOT/provisioning/Myrmidons")"
 PODMAN_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
 
-# Write .env for docker-compose variable substitution
+# Write .env for compose variable substitution
 cat > "$ODYSSEUS_ROOT/.env" <<EOF
 PROJECT_ROOT=$PROJECT_ROOT
 HERMES_DIR=$HERMES_DIR
@@ -159,7 +159,7 @@ while [ $ELAPSED -lt $MAX_WAIT ]; do
 done
 [ "$TASK_STATUS" = "completed" ] \
   && pass "Myrmidon processed task in ${ELAPSED}s → status=completed" \
-  || fail "Task not completed after ${MAX_WAIT}s (status=$TASK_STATUS). Check: docker compose logs hello-myrmidon"
+  || fail "Task not completed after ${MAX_WAIT}s (status=$TASK_STATUS). Check: podman compose logs hello-myrmidon"
 
 # ─── Phase 6: Observability ──────────────────────────────────────────────
 info "Phase 6: Argus exporter metrics"
