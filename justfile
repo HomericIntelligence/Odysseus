@@ -48,37 +48,64 @@ status:
 build: _build-agamemnon _build-nestor _build-charybdis _build-keystone _build-odyssey
     @echo "=== Build complete. Artifacts in {{BUILD_ROOT}}/ ==="
 
-# Build ProjectAgamemnon (C++/CMake, debug preset)
+# One-command setup for a fresh clone (after pixi is installed at root)
+setup: bootstrap build
+    @echo "=== Setup complete ==="
+
+# Install all server binaries to a prefix (default: /usr/local)
+install PREFIX="/usr/local":
+    cmake --install "{{BUILD_ROOT}}/ProjectAgamemnon" --prefix "{{PREFIX}}"
+    cmake --install "{{BUILD_ROOT}}/ProjectNestor" --prefix "{{PREFIX}}"
+
+# Build ProjectAgamemnon (C++/CMake + Conan, debug preset)
 _build-agamemnon:
+    @echo "--- Conan deps for control/ProjectAgamemnon ---"
+    cd control/ProjectAgamemnon && pixi run conan install . \
+        --output-folder="{{BUILD_ROOT}}/ProjectAgamemnon" \
+        --profile=conan/profiles/debug \
+        --build=missing
     @echo "--- Building control/ProjectAgamemnon ---"
     cmake -S control/ProjectAgamemnon -B "{{BUILD_ROOT}}/ProjectAgamemnon" \
+        -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectAgamemnon/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
         -G Ninja \
         -DProjectAgamemnon_BUILD_TESTING=ON \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
     cmake --build "{{BUILD_ROOT}}/ProjectAgamemnon"
 
-# Build ProjectNestor (C++/CMake, debug preset)
+# Build ProjectNestor (C++/CMake + Conan, debug preset)
 _build-nestor:
+    @echo "--- Conan deps for control/ProjectNestor ---"
+    cd control/ProjectNestor && pixi run conan install . \
+        --output-folder="{{BUILD_ROOT}}/ProjectNestor" \
+        --profile=conan/profiles/debug \
+        --build=missing
     @echo "--- Building control/ProjectNestor ---"
     cmake -S control/ProjectNestor -B "{{BUILD_ROOT}}/ProjectNestor" \
+        -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectNestor/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
         -G Ninja \
         -DProjectNestor_BUILD_TESTING=ON \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
     cmake --build "{{BUILD_ROOT}}/ProjectNestor"
 
-# Build ProjectCharybdis (C++/CMake, debug preset)
+# Build ProjectCharybdis (C++/CMake + Conan, debug preset)
 _build-charybdis:
+    @echo "--- Conan deps for testing/ProjectCharybdis ---"
+    cd testing/ProjectCharybdis && pixi run conan install . \
+        --output-folder="{{BUILD_ROOT}}/ProjectCharybdis" \
+        --profile=conan/profiles/debug \
+        --build=missing
     @echo "--- Building testing/ProjectCharybdis ---"
     cmake -S testing/ProjectCharybdis -B "{{BUILD_ROOT}}/ProjectCharybdis" \
+        -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectCharybdis/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
         -G Ninja \
         -DProjectCharybdis_BUILD_TESTING=ON \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
     cmake --build "{{BUILD_ROOT}}/ProjectCharybdis"
 
-# Build ProjectKeystone (C++/CMake via Makefile, respects BUILD_DIR)
+# Build ProjectKeystone (C++/CMake, debug preset — Conan TBD when checked out)
 _build-keystone:
     @echo "--- Building provisioning/ProjectKeystone ---"
     cmake -S provisioning/ProjectKeystone -B "{{BUILD_ROOT}}/ProjectKeystone" \
