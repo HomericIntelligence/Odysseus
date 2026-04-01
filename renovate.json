@@ -1,0 +1,20 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "schedule": ["before 5am on Monday"],
+  "ignorePaths": [
+    "control/**",
+    "testing/**",
+    "infrastructure/**",
+    "provisioning/**",
+    "research/**",
+    "shared/**",
+    "ci-cd/**"
+  ],
+  "packageRules": [
+    {
+      "matchManagers": ["github-actions"],
+      "automerge": true
+    }
+  ]
+}
