@@ -230,9 +230,18 @@ if should_check_worker; then
     else
         check_fail "podman socket not found"
         if $INSTALL; then
-            systemctl --user enable --now podman.socket 2>/dev/null \
-                && check_pass "podman socket enabled" \
-                || check_warn "podman socket — could not enable (run: systemctl --user enable --now podman.socket)"
+            # Ensure XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS are set —
+            # SSH sessions and sudo strip these, breaking systemctl --user.
+            export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+            export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
+            if systemctl --user enable --now podman.socket 2>/dev/null; then
+                check_pass "podman socket enabled"
+            else
+                check_warn "podman socket — could not enable via systemctl --user"
+                echo -e "    ${DIM}This usually means no systemd user session is running (common over SSH).${NC}"
+                echo -e "    ${DIM}Fix: run 'sudo loginctl enable-linger $USER' then reconnect,${NC}"
+                echo -e "    ${DIM}or run 'systemctl --user enable --now podman.socket' from a desktop session.${NC}"
+            fi
         fi
     fi
 
