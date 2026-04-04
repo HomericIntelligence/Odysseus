@@ -79,7 +79,7 @@ echo "Agamemnon=$AGAMEMNON_IP"
 # Argus Exporter (Python — needs Agamemnon + Nestor + NATS IPs)
 podman run -d --replace --name odysseus-argus-exporter-1 \
   --network odysseus_homeric-mesh \
-  -p 19100:9100 \
+  -p 9100:9100 \
   -e "AGAMEMNON_URL=http://${AGAMEMNON_IP}:8080" \
   -e "NESTOR_URL=http://${NESTOR_IP}:8081" \
   -e "NATS_URL=http://${NATS_IP}:8222" \
