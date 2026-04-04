@@ -4,8 +4,9 @@ data_dir   = "/var/lib/nomad"
 client {
   enabled = true
 
-  # Nomad server addresses — update with your Nomad server's Tailscale IP
-  servers = ["172.20.0.1:4647"]
+  # Nomad server addresses — set to your Nomad server's Tailscale IP
+  # Example: epimetheus = 100.92.173.32
+  servers = ["100.92.173.32:4647"]
 }
 
 # Nomad uses the Docker driver with the podman-docker shim (per ADR-001).

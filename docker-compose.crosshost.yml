@@ -1,0 +1,53 @@
+# HomericIntelligence Cross-Host Deployment Overlay
+#
+# Splits the E2E stack across two Tailscale-connected hosts:
+#   - Worker host (epimetheus): NATS, Agamemnon, Hermes, myrmidons, Argus
+#   - Control host: Nestor (native binary), Odysseus console
+#
+# Usage:
+#   CONTROL_HOST_IP=100.73.61.56 bash e2e/start-crosshost.sh
+#
+# Or manually:
+#   podman compose -f docker-compose.e2e.yml -f docker-compose.crosshost.yml up -d
+#
+# Requires .env with: PROJECT_ROOT, HERMES_DIR, ARGUS_DIR, MYRMIDONS_DIR, CONTROL_HOST_IP
+
+services:
+  # ─── Replace Nestor with a lightweight stub ─────────────────
+  # Nestor runs natively on the control host. This stub satisfies
+  # compose dependency resolution (argus-exporter depends_on nestor)
+  # but exits immediately — the real Nestor is remote.
+  nestor:
+    image: busybox:latest
+    command: ["sh", "-c", "echo 'Nestor runs on control host'; exit 0"]
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 1s
+      timeout: 1s
+      retries: 1
+      start_period: 0s
+    deploy:
+      restart_policy:
+        condition: "no"
+
+  # ─── Reconfigure argus-exporter for remote Nestor ──────────
+  argus-exporter:
+    environment:
+      AGAMEMNON_URL: http://agamemnon:8080
+      NESTOR_URL: http://${CONTROL_HOST_IP}:8081
+      NATS_URL: http://nats:8222
+
+  # ─── NATS-to-Loki bridge for hi.logs.> ─────────────────────
+  nats-loki-bridge:
+    build:
+      context: e2e/nats-loki-bridge/
+    environment:
+      NATS_URL: nats://nats:4222
+      LOKI_URL: http://loki:3100
+    depends_on:
+      nats:
+        condition: service_healthy
+      loki:
+        condition: service_started
+    networks: [homeric-mesh]
+    restart: on-failure
