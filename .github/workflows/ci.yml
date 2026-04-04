@@ -20,4 +20,4 @@ jobs:
       - name: Lint YAML configs
         run: |
           find configs/ -name '*.yml' -o -name '*.yaml' -o -name '*.json' | sort
-          find configs/ -name '*.yml' -o -name '*.yaml' | xargs yamllint -d "{extends: default, rules: {line-length: {max: 200}, truthy: disable, document-start: disable}}" || true
+          find configs/ -name '*.yml' -o -name '*.yaml' | xargs --no-run-if-empty yamllint -d "{extends: default, rules: {line-length: {max: 200}, truthy: disable, document-start: disable}}"
