@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: homeric-exporter
+    static_configs:
+      - targets: ['argus-exporter:9100']
+        labels:
+          env: crosshost
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Nestor runs on the control host — scrape over Tailscale
+  - job_name: nestor-remote
+    static_configs:
+      - targets: ['${CONTROL_HOST_IP}:8081']
+        labels:
+          env: crosshost
+          host: control
+    metrics_path: /v1/health

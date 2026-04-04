@@ -52,10 +52,12 @@ build: _build-agamemnon _build-nestor _build-charybdis _build-keystone _build-od
 setup: bootstrap build
     @echo "=== Setup complete ==="
 
-# Install all server binaries to a prefix (default: /usr/local)
+# Install all server binaries and libraries to a prefix (default: /usr/local)
 install PREFIX="/usr/local":
     cmake --install "{{BUILD_ROOT}}/ProjectAgamemnon" --prefix "{{PREFIX}}"
     cmake --install "{{BUILD_ROOT}}/ProjectNestor" --prefix "{{PREFIX}}"
+    cmake --install "{{BUILD_ROOT}}/ProjectCharybdis" --prefix "{{PREFIX}}"
+    cmake --install "{{BUILD_ROOT}}/ProjectKeystone" --prefix "{{PREFIX}}"
 
 # Build ProjectAgamemnon (C++/CMake + Conan, debug preset)
 _build-agamemnon:
@@ -105,10 +107,16 @@ _build-charybdis:
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
     cmake --build "{{BUILD_ROOT}}/ProjectCharybdis"
 
-# Build ProjectKeystone (C++/CMake, debug preset — Conan TBD when checked out)
+# Build ProjectKeystone (C++/CMake + Conan, debug preset)
 _build-keystone:
+    @echo "--- Conan deps for provisioning/ProjectKeystone ---"
+    cd provisioning/ProjectKeystone && pixi run conan install . \
+        --output-folder="{{BUILD_ROOT}}/ProjectKeystone" \
+        --profile=conan/profiles/debug \
+        --build=missing
     @echo "--- Building provisioning/ProjectKeystone ---"
     cmake -S provisioning/ProjectKeystone -B "{{BUILD_ROOT}}/ProjectKeystone" \
+        -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectKeystone/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
         -G Ninja \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
@@ -234,3 +242,82 @@ e2e-logs SERVICE="":
 # Show status of E2E stack containers
 e2e-status:
     podman compose -f docker-compose.e2e.yml ps
+
+# Validate Conan package installation (C++ packages export, consume, install)
+e2e-conan-validate:
+    bash e2e/validate-conan-install.sh
+
+# Validate pip package installation (Python packages in clean venvs)
+e2e-pip-validate:
+    bash e2e/validate-pip-install.sh
+
+# Full validation suite (Docker E2E + Conan + pip)
+e2e-full: e2e-test e2e-conan-validate e2e-pip-validate
+    @echo "=== Full E2E validation complete ==="
+
+# ===========================================================================
+# Cross-Host Deployment (two Tailscale-connected hosts)
+# ===========================================================================
+
+# Start cross-host stack on worker host (requires CONTROL_HOST_IP)
+crosshost-up CONTROL_HOST_IP:
+    CONTROL_HOST_IP={{ CONTROL_HOST_IP }} bash e2e/start-crosshost.sh
+
+# Run cross-host E2E validation from control host (requires WORKER_HOST_IP)
+crosshost-test WORKER_HOST_IP:
+    WORKER_HOST_IP={{ WORKER_HOST_IP }} bash e2e/run-crosshost-e2e.sh
+
+# Start the Odysseus console (NATS event viewer)
+odysseus-console NATS_URL="nats://localhost:4222":
+    NATS_URL={{ NATS_URL }} python3 tools/odysseus-console.py
+
+# ===========================================================================
+# Python Package Installation
+# ===========================================================================
+
+# Install all Python packages in editable mode
+install-python:
+    pip install -e shared/ProjectHephaestus
+    pip install -e infrastructure/ProjectHermes
+    pip install -e provisioning/ProjectTelemachy
+
+# ===========================================================================
+# IPC E2E Tests (75 test cases × 4 topologies)
+# ===========================================================================
+
+# Run IPC tests by category on compose topology (T4, requires e2e-up)
+e2e-test-fault:
+    bash e2e/run-ipc-tests.sh --topology t4 --category fault
+
+e2e-test-perf:
+    bash e2e/run-ipc-tests.sh --topology t4 --category perf
+
+e2e-test-protocol:
+    bash e2e/run-ipc-tests.sh --topology t4 --category protocol
+
+e2e-test-security:
+    bash e2e/run-ipc-tests.sh --topology t4 --category security
+
+e2e-test-chaos:
+    bash e2e/run-ipc-tests.sh --topology t4 --category chaos
+
+e2e-test-all-categories:
+    bash e2e/run-ipc-tests.sh --topology t4 --category all
+
+# Run IPC tests on local topology (T1, no containers — fastest feedback)
+e2e-test-local:
+    bash e2e/run-ipc-tests.sh --topology t1 --category all
+
+# Run IPC tests in single container (T3)
+e2e-test-single-container:
+    bash e2e/run-ipc-tests.sh --topology t3 --category all
+
+# Multi-shell topology (T2, requires tmux)
+e2e-test-tmux-setup:
+    bash e2e/topologies/t2-tmux.sh setup
+
+e2e-test-tmux-run:
+    bash e2e/run-ipc-tests.sh --topology t2 --category all
+
+e2e-test-tmux-teardown:
+    bash e2e/topologies/t2-tmux.sh teardown
