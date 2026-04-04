@@ -3,6 +3,9 @@
 .env.local
 .env*.local
 
+# Podman runtime artifacts
+e2e/resolv.conf
+
 # Build artifacts
 /build/
 dist/
