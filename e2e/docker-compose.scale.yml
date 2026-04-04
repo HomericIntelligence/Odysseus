@@ -1,0 +1,7 @@
+# Overlay: Scale hello-myrmidon to 5 replicas for connection pool testing (B12)
+# Usage: podman compose -f docker-compose.e2e.yml -f e2e/docker-compose.scale.yml up -d
+
+services:
+  hello-myrmidon:
+    deploy:
+      replicas: 5

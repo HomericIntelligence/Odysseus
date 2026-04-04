@@ -1,0 +1,18 @@
+# Overlay: Chaos testing infrastructure
+# Adds tmpfs for JetStream disk-full simulation and NET_ADMIN for tc netem
+# Usage: podman compose -f docker-compose.e2e.yml -f e2e/docker-compose.chaos.yml up -d
+
+services:
+  nats:
+    tmpfs:
+      - /var/lib/nats/jetstream:size=1m
+    cap_add:
+      - NET_ADMIN
+
+  agamemnon:
+    cap_add:
+      - NET_ADMIN
+
+  hello-myrmidon:
+    cap_add:
+      - NET_ADMIN

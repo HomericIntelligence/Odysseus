@@ -1,0 +1,35 @@
+# Overlay: 3-node NATS cluster for split-brain testing (E12)
+# Usage: podman compose -f docker-compose.e2e.yml -f e2e/docker-compose.cluster.yml up -d
+
+services:
+  # Override the default single NATS with node 1 of the cluster
+  nats:
+    command: ["-js", "-m", "8222", "--cluster_name", "hi-cluster",
+              "--cluster", "nats://0.0.0.0:6222",
+              "--routes", "nats://nats-2:6222,nats://nats-3:6222"]
+
+  nats-2:
+    image: nats:latest
+    command: ["-js", "-m", "8222", "--cluster_name", "hi-cluster",
+              "--cluster", "nats://0.0.0.0:6222",
+              "--routes", "nats://nats:6222,nats://nats-3:6222"]
+    networks: [homeric-mesh]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8222/healthz 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  nats-3:
+    image: nats:latest
+    command: ["-js", "-m", "8222", "--cluster_name", "hi-cluster",
+              "--cluster", "nats://0.0.0.0:6222",
+              "--routes", "nats://nats:6222,nats://nats-2:6222"]
+    networks: [homeric-mesh]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8222/healthz 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
