@@ -1,5 +1,5 @@
 # HomericIntelligence E2E Stack
-# Starts the full pipeline in podman containers.
+# Starts the full pipeline in podman/docker containers.
 # Usage: just e2e-up   (start)
 #        just e2e-test (run hello-world validation)
 #        just e2e-down (tear down)
@@ -11,7 +11,7 @@ networks:
 services:
   # ─── Transport Layer ───────────────────────────────────
   nats:
-    image: nats:latest
+    image: nats:alpine
     command: ["-js", "-m", "8222"]
     ports:
       - "4222:4222"
