@@ -197,7 +197,7 @@ The `main` branch is protected. All changes must go through pull requests:
 
 All documentation files must follow these standards:
 
-- Code blocks must have a language tag (`python`, `bash`, `hcl`, `yaml`, `text`, etc.)
+- Code blocks must have a language tag (`toml`, `bash`, `hcl`, `yaml`, `text`, etc.)
 - Code blocks must be surrounded by blank lines (before and after)
 - Lists must be surrounded by blank lines
 - Headings must be surrounded by blank lines
