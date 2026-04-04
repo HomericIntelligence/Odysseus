@@ -243,6 +243,10 @@ e2e-logs SERVICE="":
 e2e-status:
     podman compose -f docker-compose.e2e.yml ps
 
+# Check all E2E pipeline prerequisites (use --install to fix missing deps)
+doctor *ARGS:
+    bash e2e/doctor.sh {{ ARGS }}
+
 # Validate Conan package installation (C++ packages export, consume, install)
 e2e-conan-validate:
     bash e2e/validate-conan-install.sh
