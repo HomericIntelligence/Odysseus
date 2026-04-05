@@ -216,6 +216,61 @@ scylla-test:
     cd research/ProjectScylla && just test
 
 # ===========================================================================
+# One-Command Install (per host role)
+# ===========================================================================
+
+# Install all prerequisites for a worker host (podman, NATS, observability)
+install-worker:
+    bash e2e/doctor.sh --role worker --install
+    git submodule update --init --recursive
+    @echo "=== Worker host ready. Run: just start-nats, just start-hermes, etc. ==="
+
+# Install all prerequisites + build C++ binaries for a control host
+install-control:
+    bash e2e/doctor.sh --role control --install
+    git submodule update --init --recursive
+    just _build-agamemnon _build-nestor
+    @echo "=== Control host ready. Run: just start-agamemnon, just start-nestor, etc. ==="
+
+# ===========================================================================
+# Per-Component Launchers (cross-host capable)
+# ===========================================================================
+# Each component can run independently on any Tailscale host.
+# Point NATS_URL at the NATS server (default: nats://localhost:4222).
+
+# Start NATS JetStream server (standalone container)
+start-nats:
+    podman run -d --replace --name hi-nats \
+      -p 4222:4222 -p 8222:8222 \
+      nats:alpine -js -m 8222
+    @echo "NATS running at nats://$(hostname -I | awk '{print $1}'):4222"
+
+# Start ProjectAgamemnon (C++ binary, connects to NATS)
+start-agamemnon NATS_URL="nats://localhost:4222":
+    NATS_URL={{ NATS_URL }} "{{BUILD_ROOT}}/ProjectAgamemnon/ProjectAgamemnon_server"
+
+# Start ProjectNestor (C++ binary, connects to NATS)
+start-nestor NATS_URL="nats://localhost:4222":
+    NATS_URL={{ NATS_URL }} "{{BUILD_ROOT}}/ProjectNestor/ProjectNestor_server"
+
+# Start ProjectHermes webhook-to-NATS bridge (Python/FastAPI)
+start-hermes NATS_URL="nats://localhost:4222":
+    cd infrastructure/ProjectHermes && NATS_URL={{ NATS_URL }} just start
+
+# Start hello-myrmidon worker (Python, pulls from hi.myrmidon.hello.>)
+start-myrmidon NATS_URL="nats://localhost:4222" AGAMEMNON_URL="http://localhost:8080":
+    NATS_URL={{ NATS_URL }} AGAMEMNON_URL={{ AGAMEMNON_URL }} \
+      python3 provisioning/Myrmidons/hello-world/worker.py
+
+# Start ProjectArgus observability stack (Prometheus + Loki + Grafana)
+start-argus:
+    cd infrastructure/ProjectArgus && just start
+
+# Start Odysseus console — real-time NATS event viewer
+start-console NATS_URL="nats://localhost:4222":
+    NATS_URL={{ NATS_URL }} python3 tools/odysseus-console.py
+
+# ===========================================================================
 # E2E Pipeline Testing
 # ===========================================================================
 
