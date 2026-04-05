@@ -199,6 +199,7 @@ def _build_container_cmd(claude_args: list[str], cwd: str = WORKING_DIR) -> list
         "--network", "homeric-mesh",
         "-v", f"{cwd}:{CONTAINER_WORKSPACE}",
         "-v", f"{home}/.claude:{home}/.claude",
+        "-v", f"{home}/.config/gh:{home}/.config/gh:ro",
         "-w", CONTAINER_WORKSPACE,
         "-e", f"ANTHROPIC_API_KEY={os.environ.get('ANTHROPIC_API_KEY', '')}",
         "-e", f"HOME={home}",
