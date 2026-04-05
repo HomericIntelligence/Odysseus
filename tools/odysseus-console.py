@@ -82,10 +82,44 @@ def _ts() -> str:
     return datetime.now(timezone.utc).strftime("%H:%M:%S")
 
 
-def print_status(state: str, detail: str = ""):
+# Track whether the last output was an inline status (needs \r overwrite)
+_last_was_inline = False
+
+
+def _term_width() -> int:
+    try:
+        return os.get_terminal_size().columns
+    except OSError:
+        return 80
+
+
+def print_status(state: str, detail: str = "", inline: bool = False):
+    """Print a status line. Inline=True overwrites the current line (for transient states)."""
+    global _last_was_inline
     colors = {"connected": GREEN, "disconnected": RED, "reconnecting": YELLOW}
     c = colors.get(state, DIM)
-    print(f"{DIM}{_ts()}{RESET} {c}{BOLD}[{state.upper()}]{RESET} {detail}", flush=True)
+    line = f"{DIM}{_ts()}{RESET} {c}{BOLD}[{state.upper()}]{RESET} {detail}"
+
+    if inline:
+        # Pad to terminal width to overwrite previous content, then \r back
+        visible_len = len(f"{_ts()} [{state.upper()}] {detail}")
+        padding = max(0, _term_width() - visible_len)
+        print(f"\r{line}{' ' * padding}", end="", flush=True)
+        _last_was_inline = True
+    else:
+        # If previous output was inline, move to a new line first
+        if _last_was_inline:
+            print(flush=True)  # newline
+        print(line, flush=True)
+        _last_was_inline = False
+
+
+def clear_inline():
+    """Emit a newline if the last status was inline, so events print cleanly."""
+    global _last_was_inline
+    if _last_was_inline:
+        print(flush=True)
+        _last_was_inline = False
 
 
 async def main() -> None:
@@ -118,15 +152,16 @@ async def main() -> None:
 
     # nats-py lifecycle callbacks (must be coroutines)
     async def on_disconnected():
-        print_status("disconnected", NATS_URL)
+        print_status("disconnected", NATS_URL, inline=True)
 
     async def on_reconnected():
         print_status("connected", f"Reconnected to {NATS_URL}")
 
     async def on_closed():
-        print_status("disconnected", "Connection closed")
+        print_status("disconnected", "Connection closed", inline=True)
 
     async def on_message(msg):
+        clear_inline()
         print(format_event(msg.subject, msg.data), flush=True)
 
     # Outer loop: handles initial connection failures.
@@ -134,7 +169,7 @@ async def main() -> None:
     while not stop.is_set():
         nc = None
         try:
-            print_status("reconnecting", f"Connecting to {NATS_URL}...")
+            print_status("reconnecting", f"Connecting to {NATS_URL}...", inline=True)
 
             # Use allow_reconnect=False so connect() fails fast on first
             # attempt. Our outer loop handles retry. Once connected, transient
@@ -180,16 +215,16 @@ async def main() -> None:
                 break
 
             # Connection permanently closed — outer loop retries
-            print_status("disconnected", "Connection lost")
+            print_status("disconnected", "Connection lost", inline=True)
 
         except asyncio.TimeoutError:
-            print_status("disconnected", f"Connection timed out ({NATS_URL})")
+            print_status("disconnected", f"Connection timed out ({NATS_URL})", inline=True)
         except Exception as e:
             # Initial connection failed — friendly message, no stack trace
             err_msg = str(e)
             if not err_msg:
                 err_msg = type(e).__name__
-            print_status("disconnected", err_msg)
+            print_status("disconnected", err_msg, inline=True)
 
             # Clean up partial connection
             if nc is not None:
@@ -200,12 +235,13 @@ async def main() -> None:
 
         # Wait before retrying, but stop immediately on Ctrl+C
         if not stop.is_set():
-            print_status("reconnecting", f"Retrying in {RETRY_INTERVAL}s...")
+            print_status("reconnecting", f"Retrying in {RETRY_INTERVAL}s...", inline=True)
             try:
                 await asyncio.wait_for(stop.wait(), timeout=RETRY_INTERVAL)
             except asyncio.TimeoutError:
                 pass
 
+    clear_inline()
     print(f"\n{DIM}Disconnected.{RESET}")
 
 

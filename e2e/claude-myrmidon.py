@@ -41,6 +41,11 @@ MAX_ITERATIONS = int(os.environ.get("MAX_ITERATIONS", "5"))
 DRY_RUN = os.environ.get("DRY_RUN", "0") == "1"
 NO_GITHUB = os.environ.get("NO_GITHUB", "0") == "1"
 
+# Container configuration — claude CLI always runs inside the achaean-claude vessel
+CLAUDE_IMAGE = os.environ.get("CLAUDE_IMAGE", "achaean-claude:latest")
+CONTAINER_WORKSPACE = "/workspace"
+CONTAINER_RUNTIME = os.environ.get("CONTAINER_RUNTIME", "podman")
+
 STREAM_NAME = "homeric-myrmidon"
 LOG_SUBJECT = "hi.logs.myrmidon.claude"
 
@@ -182,9 +187,33 @@ def _get_session_id(task_id: str, stage: str) -> str:
     return _session_ids[key]
 
 
+def _build_container_cmd(claude_args: list[str], cwd: str = WORKING_DIR) -> list[str]:
+    """Build a container run command with proper volume mappings.
+
+    Maps the host WORKING_DIR to /workspace inside the achaean-claude container,
+    plus the user's .claude config and ANTHROPIC_API_KEY for authentication.
+    """
+    home = os.path.expanduser("~")
+    cmd = [
+        CONTAINER_RUNTIME, "run", "--rm",
+        "--network", "homeric-mesh",
+        "-v", f"{cwd}:{CONTAINER_WORKSPACE}",
+        "-v", f"{home}/.claude:{home}/.claude",
+        "-w", CONTAINER_WORKSPACE,
+        "-e", f"ANTHROPIC_API_KEY={os.environ.get('ANTHROPIC_API_KEY', '')}",
+        "-e", f"HOME={home}",
+        CLAUDE_IMAGE,
+    ]
+    cmd.extend(claude_args)
+    return cmd
+
+
 def invoke_claude(prompt: str, cwd: str = WORKING_DIR, stage: str = "",
                   iteration: int = 0, task_id: str = "") -> str:
-    """Invoke Claude Code CLI. Resumes the same session for iterations > 0."""
+    """Invoke Claude Code CLI inside the achaean-claude container.
+
+    Resumes the same session for iterations > 0.
+    """
     if DRY_RUN:
         log("claude", f"[DRY-RUN] Skipping claude -p ({len(prompt)} chars)")
         return mock_claude_response(stage, iteration)
@@ -192,30 +221,27 @@ def invoke_claude(prompt: str, cwd: str = WORKING_DIR, stage: str = "",
     session_id = _get_session_id(task_id, stage) if task_id else ""
     is_resume = iteration > 0 and session_id
 
+    claude_args = [
+        "claude", "-p", prompt,
+        "--permission-mode", "acceptEdits",
+        "--allowedTools", "Bash,Read,Write,Edit,Glob,Grep",
+    ]
+
     if is_resume:
         log("claude", f"Resuming session {session_id[:8]}... ({len(prompt)} chars)")
-        cmd = [
-            "claude", "-p", prompt,
-            "--resume", session_id,
-            "--permission-mode", "acceptEdits",
-            "--allowedTools", "Bash,Read,Write,Edit,Glob,Grep",
-        ]
+        claude_args.extend(["--resume", session_id])
     else:
         log("claude", f"Starting new session ({len(prompt)} chars)")
-        cmd = [
-            "claude", "-p", prompt,
-            "--permission-mode", "acceptEdits",
-            "--allowedTools", "Bash,Read,Write,Edit,Glob,Grep",
-        ]
         if session_id:
-            cmd.extend(["--session-id", session_id])
+            claude_args.extend(["--session-id", session_id])
+
+    cmd = _build_container_cmd(claude_args, cwd=cwd)
 
     try:
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            cwd=cwd,
             stdin=subprocess.DEVNULL,
             timeout=600,  # 10 minute timeout per stage
         )
@@ -232,17 +258,61 @@ def invoke_claude(prompt: str, cwd: str = WORKING_DIR, stage: str = "",
         log("claude", f"{RED}Timed out after 600s{NC}")
         return "ERROR: Claude invocation timed out after 10 minutes"
     except FileNotFoundError:
-        log("claude", f"{RED}claude CLI not found in PATH{NC}")
-        return "ERROR: claude CLI not found"
+        log("claude", f"{RED}{CONTAINER_RUNTIME} not found in PATH{NC}")
+        return f"ERROR: {CONTAINER_RUNTIME} not found"
 
 
 # ─── GitHub Issue Comments ───────────────────────────────────────────────────
 # Track comment IDs so we can edit-in-place instead of creating duplicates
 _comment_ids: dict[str, int] = {}  # key: "stage-iteration" → GitHub comment ID
+_comment_ids_loaded: set[int] = set()  # issue numbers already scanned
 
 
 def _comment_key(stage: str, iteration: int) -> str:
     return f"{stage}-{iteration}"
+
+
+def _load_existing_comment_ids(issue_number: int):
+    """Fetch existing issue comments and populate _comment_ids for deduplication.
+
+    Parses each comment body for '## Stage: STAGE (iteration N)' headers.
+    Called lazily on first post_issue_comment per issue. Survives process restarts.
+    """
+    if issue_number in _comment_ids_loaded:
+        return
+    _comment_ids_loaded.add(issue_number)
+
+    try:
+        result = subprocess.run(
+            ["gh", "api", "--paginate",
+             f"repos/{REPO}/issues/{issue_number}/comments",
+             "--jq", r'.[] | "\(.id)\t\(.body[0:80])"'],
+            capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30,
+        )
+        if result.returncode != 0:
+            log("github", f"{YELLOW}Failed to load existing comments: {result.stderr[:200]}{NC}")
+            return
+
+        import re
+        pattern = re.compile(r"## Stage: (\w+)(?:\s+\(iteration (\d+)\))?")
+        for line in result.stdout.strip().splitlines():
+            parts = line.split("\t", 1)
+            if len(parts) < 2:
+                continue
+            comment_id_str, body_prefix = parts
+            if not comment_id_str.isdigit():
+                continue
+            m = pattern.search(body_prefix)
+            if m:
+                stage_name = m.group(1).lower()
+                iteration_num = int(m.group(2)) if m.group(2) else 0
+                key = _comment_key(stage_name, iteration_num)
+                _comment_ids[key] = int(comment_id_str)
+
+        if _comment_ids:
+            log("github", f"Loaded {len(_comment_ids)} existing comment(s) for issue #{issue_number}")
+    except Exception as e:
+        log("github", f"{YELLOW}Could not load existing comments: {e}{NC}")
 
 
 def post_issue_comment(issue_number: int, stage: str, iteration: int, content: str):
@@ -253,6 +323,8 @@ def post_issue_comment(issue_number: int, stage: str, iteration: int, content: s
     if NO_GITHUB:
         log(stage, f"[NO_GITHUB] Would post to issue #{issue_number} ({len(content)} chars)")
         return
+
+    _load_existing_comment_ids(issue_number)
 
     header = f"## Stage: {stage.upper()}"
     if iteration > 0:
@@ -704,6 +776,8 @@ async def main():
     print(f"{BOLD}╠══════════════════════════════════════════════════════╣{NC}")
     print(f"{BOLD}║{NC}  NATS: {NATS_URL}")
     print(f"{BOLD}║{NC}  Mode: {'DRY-RUN' if DRY_RUN else 'LIVE'} | GitHub: {'DISABLED' if NO_GITHUB else 'ENABLED'}")
+    print(f"{BOLD}║{NC}  Container: {CLAUDE_IMAGE} via {CONTAINER_RUNTIME}")
+    print(f"{BOLD}║{NC}  Workspace: {WORKING_DIR} → {CONTAINER_WORKSPACE}")
     print(f"{BOLD}║{NC}  Stages: plan → test → implement → review → ship")
     print(f"{BOLD}║{NC}  Max iterations: {MAX_ITERATIONS}")
     print(f"{BOLD}╚══════════════════════════════════════════════════════╝{NC}")
