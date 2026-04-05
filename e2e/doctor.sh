@@ -234,6 +234,32 @@ if should_check_worker; then
             # SSH sessions and sudo strip these, breaking systemctl --user.
             export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
             export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
+
+            # If the unit file doesn't exist (podman built from source), install it first.
+            if ! systemctl --user cat podman.socket &>/dev/null; then
+                PODMAN_SRC_UNIT=$(ls ~/.local/src/podman-*/contrib/systemd/user/podman.socket \
+                                     /usr/local/src/podman-*/contrib/systemd/user/podman.socket \
+                                     2>/dev/null | head -1)
+                PODMAN_SRC_SERVICE=$(ls ~/.local/src/podman-*/contrib/systemd/user/podman.service.in \
+                                        /usr/local/src/podman-*/contrib/systemd/user/podman.service.in \
+                                        2>/dev/null | head -1)
+                if [[ -n "$PODMAN_SRC_UNIT" ]]; then
+                    mkdir -p ~/.config/systemd/user
+                    cp "$PODMAN_SRC_UNIT" ~/.config/systemd/user/podman.socket
+                    if [[ -n "$PODMAN_SRC_SERVICE" ]]; then
+                        PODMAN_BIN=$(command -v podman)
+                        sed "s|@@PODMAN@@|${PODMAN_BIN}|g" "$PODMAN_SRC_SERVICE" \
+                            > ~/.config/systemd/user/podman.service
+                    fi
+                    systemctl --user daemon-reload
+                else
+                    check_warn "podman socket — unit files not found (podman built from source?)"
+                    echo -e "    ${DIM}Install unit files manually from your podman source tree:${NC}"
+                    echo -e "    ${DIM}  cp <src>/contrib/systemd/user/podman.socket ~/.config/systemd/user/${NC}"
+                    echo -e "    ${DIM}  systemctl --user daemon-reload${NC}"
+                fi
+            fi
+
             if systemctl --user enable --now podman.socket 2>/dev/null; then
                 check_pass "podman socket enabled"
             else
