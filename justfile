@@ -358,6 +358,14 @@ start-claude-myrmidon NATS_URL="nats://localhost:4222":
 e2e-dry-run NATS_URL="nats://localhost:4222":
     DRY_RUN=1 NO_GITHUB=1 NATS_URL={{ NATS_URL }} python3 e2e/claude-myrmidon.py
 
+# Start Claude multi-repo myrmidon — parallel pipeline for multi-repo justfile tasks
+start-claude-myrmidon-multi NATS_URL="nats://localhost:4222":
+    NATS_URL={{ NATS_URL }} python3 e2e/claude-myrmidon-multi.py
+
+# Run multi-repo myrmidon in dry-run mode (validates NATS fan-out/fan-in, no Claude API)
+e2e-multi-dry-run NATS_URL="nats://localhost:4222":
+    DRY_RUN=1 NO_GITHUB=1 NATS_URL={{ NATS_URL }} python3 e2e/claude-myrmidon-multi.py
+
 # Build E2E container images
 e2e-build:
     podman compose -f docker-compose.e2e.yml build
