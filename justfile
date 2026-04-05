@@ -274,6 +274,14 @@ start-console NATS_URL="nats://localhost:4222":
 # E2E Pipeline Testing
 # ===========================================================================
 
+# Start Claude Code myrmidon — multi-stage pipeline worker (plan → test → implement → review → ship)
+start-claude-myrmidon NATS_URL="nats://localhost:4222":
+    NATS_URL={{ NATS_URL }} python3 e2e/claude-myrmidon.py
+
+# Run Claude myrmidon in dry-run mode (no Claude CLI, validates NATS pipeline only)
+e2e-dry-run NATS_URL="nats://localhost:4222":
+    DRY_RUN=1 NO_GITHUB=1 NATS_URL={{ NATS_URL }} python3 e2e/claude-myrmidon.py
+
 # Build E2E container images
 e2e-build:
     podman compose -f docker-compose.e2e.yml build
