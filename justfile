@@ -271,6 +271,82 @@ start-console NATS_URL="nats://localhost:4222":
     NATS_URL={{ NATS_URL }} python3 tools/odysseus-console.py
 
 # ===========================================================================
+# CI/CD Pipelines (ProjectProteus)
+# ===========================================================================
+
+# Build an OCI image via Dagger pipeline (e.g. just proteus-build myapp)
+proteus-build NAME:
+    cd ci-cd/ProjectProteus && just build {{ NAME }}
+
+# Run tests for a repo via Dagger
+proteus-test NAME:
+    cd ci-cd/ProjectProteus && just test {{ NAME }}
+
+# Full pipeline: build → test → promote → dispatch
+proteus-pipeline NAME:
+    cd ci-cd/ProjectProteus && just pipeline {{ NAME }}
+
+# Lint via Dagger
+proteus-lint:
+    cd ci-cd/ProjectProteus && just lint
+
+# Validate all pipeline configs
+proteus-validate:
+    cd ci-cd/ProjectProteus && just validate
+
+# Run lint + validate quality check
+proteus-check:
+    cd ci-cd/ProjectProteus && just check
+
+# ===========================================================================
+# Skills Marketplace (ProjectMnemosyne)
+# ===========================================================================
+
+# Validate all skill files in ProjectMnemosyne
+mnemosyne-validate:
+    cd shared/ProjectMnemosyne && just validate
+
+# Regenerate marketplace.json index from skill files
+mnemosyne-generate-marketplace:
+    cd shared/ProjectMnemosyne && just generate-marketplace
+
+# Run ProjectMnemosyne tests
+mnemosyne-test:
+    cd shared/ProjectMnemosyne && just test
+
+# Run validate + test quality check
+mnemosyne-check:
+    cd shared/ProjectMnemosyne && just check
+
+# ===========================================================================
+# Shared Utilities (ProjectHephaestus)
+# ===========================================================================
+
+# Run ProjectHephaestus unit + integration tests
+hephaestus-test:
+    cd shared/ProjectHephaestus && just test
+
+# Run ProjectHephaestus linter
+hephaestus-lint:
+    cd shared/ProjectHephaestus && just lint
+
+# Run ProjectHephaestus formatter
+hephaestus-format:
+    cd shared/ProjectHephaestus && just format
+
+# Run ProjectHephaestus type checker
+hephaestus-typecheck:
+    cd shared/ProjectHephaestus && just typecheck
+
+# Run lint + format-check + typecheck quality gate
+hephaestus-check:
+    cd shared/ProjectHephaestus && just check
+
+# Run pip-audit dependency vulnerability scan
+hephaestus-audit:
+    cd shared/ProjectHephaestus && just audit
+
+# ===========================================================================
 # E2E Pipeline Testing
 # ===========================================================================
 
