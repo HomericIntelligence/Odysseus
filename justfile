@@ -271,6 +271,34 @@ start-console NATS_URL="nats://localhost:4222":
     NATS_URL={{ NATS_URL }} python3 tools/odysseus-console.py
 
 # ===========================================================================
+# Fleet Management (AchaeanFleet)
+# ===========================================================================
+
+# Build a single vessel image (e.g. just fleet-build-vessel odysseus-console)
+fleet-build-vessel NAME:
+    cd infrastructure/AchaeanFleet && just build-vessel {{ NAME }}
+
+# Build all base + vessel images
+fleet-build-all:
+    cd infrastructure/AchaeanFleet && just build-all
+
+# Verify built images (Trivy scan, smoke test)
+fleet-verify:
+    cd infrastructure/AchaeanFleet && just verify
+
+# Run fleet integration tests
+fleet-test:
+    cd infrastructure/AchaeanFleet && just test
+
+# Push images to registry
+fleet-push:
+    cd infrastructure/AchaeanFleet && just push
+
+# Clean all built images
+fleet-clean:
+    cd infrastructure/AchaeanFleet && just clean
+
+# ===========================================================================
 # CI/CD Pipelines (ProjectProteus)
 # ===========================================================================
 
@@ -293,6 +321,10 @@ proteus-lint:
 # Validate all pipeline configs
 proteus-validate:
     cd ci-cd/ProjectProteus && just validate
+
+# Dispatch a pipeline to a host via Dagger
+proteus-dispatch HOST:
+    cd ci-cd/ProjectProteus && just dispatch-apply {{ HOST }}
 
 # Run lint + validate quality check
 proteus-check:

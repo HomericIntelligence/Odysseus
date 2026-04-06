@@ -162,7 +162,7 @@ done
 echo ""
 echo "--- Checking section header ---"
 
-if grep -q "CI/CD (ProjectProteus)" justfile; then
+if grep -q "CI/CD.*ProjectProteus" justfile; then
     pass "CI/CD (ProjectProteus) section header exists"
 else
     fail "CI/CD (ProjectProteus) section header missing"
