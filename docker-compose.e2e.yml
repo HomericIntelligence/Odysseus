@@ -18,7 +18,7 @@ services:
       - "8222:8222"
     networks: [homeric-mesh]
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8222/healthz 2>/dev/null || exit 1"]
+      test: ["CMD", "sh", "-c", "wget -q --spider http://localhost:8222/healthz 2>/dev/null || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -37,7 +37,7 @@ services:
         condition: service_healthy
     networks: [homeric-mesh]
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/v1/health 2>/dev/null || exit 1"]
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:8080/v1/health 2>/dev/null || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -55,7 +55,7 @@ services:
         condition: service_healthy
     networks: [homeric-mesh]
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/v1/health 2>/dev/null || exit 1"]
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:8081/v1/health 2>/dev/null || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -75,7 +75,7 @@ services:
         condition: service_healthy
     networks: [homeric-mesh]
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8085/health')\" 2>/dev/null || exit 1"]
+      test: ["CMD", "sh", "-c", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8085/health')\" 2>/dev/null || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10
