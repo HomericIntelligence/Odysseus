@@ -31,9 +31,32 @@ sudo tailscale up --authkey=<your-tailscale-authkey>
 
 Verify the new host appears in your Tailscale admin console and has been assigned an IP in the mesh network.
 
-### 3. Register the new host with ProjectHermes host-sync
+### 3. Configure Host Firewall for Tailscale
 
-ProjectHermes maintains a synchronized host list. After Tailscale is up, trigger a host-sync from the primary host:
+On hosts running `firewalld` (Debian 11, RHEL, Fedora), add the `tailscale0` interface
+to the `trusted` zone so service ports are reachable from other Tailscale nodes:
+
+```bash
+sudo firewall-cmd --permanent --zone=trusted --add-interface=tailscale0
+sudo firewall-cmd --reload
+```
+
+Verify the zone assignment:
+
+```bash
+firewall-cmd --get-zone-of-interface=tailscale0
+# Expected: trusted
+```
+
+**Diagnostic note:** "No route to host" (ICMP reject) indicates the host kernel firewall is
+blocking the connection — check firewalld. "Connection timed out" (no response) suggests a
+Tailscale ACL or routing issue.
+
+Skip this step if firewalld is not active (`systemctl is-active firewalld` returns inactive).
+
+### 4. Register the new host with ProjectHermes host-sync
+
+ProjectHermes maintains a synchronized host list. After Tailscale is up and the firewall is configured, trigger a host-sync from the primary host:
 
 ```bash
 # On the primary host, from the Odysseus repo root
@@ -48,7 +71,7 @@ Verify the new host appears in the Agamemnon host list:
 curl http://172.20.0.1:8080/v1/hosts | jq '.[] | .hostname'
 ```
 
-### 4. Deploy a NATS leaf node
+### 5. Deploy a NATS leaf node
 
 The new host needs a NATS leaf node to participate in the event mesh. Copy the leaf node config from this repo:
 
@@ -70,7 +93,7 @@ nats --server nats://localhost:4222 sub "hi.>" &
 # Should see events forwarded from the primary cluster
 ```
 
-### 5. Deploy a Nomad client agent
+### 6. Deploy a Nomad client agent
 
 Copy the client config and start Nomad:
 
@@ -88,7 +111,7 @@ nomad node status
 # New host should appear with status "ready"
 ```
 
-### 6. Verify ProjectArgus receives metrics
+### 7. Verify ProjectArgus receives metrics
 
 ProjectArgus scrapes all known hosts. After the new host is registered, check that Argus has picked it up:
 
