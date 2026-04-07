@@ -253,6 +253,14 @@ start-agamemnon NATS_URL="nats://localhost:4222":
 start-nestor NATS_URL="nats://localhost:4222":
     NATS_URL={{ NATS_URL }} "{{BUILD_ROOT}}/ProjectNestor/ProjectNestor_server"
 
+# Start Agamemnon using submodule-local pixi build (control/ProjectAgamemnon/build/debug/)
+start-agamemnon-native NATS_URL="nats://localhost:4222":
+    NATS_URL={{ NATS_URL }} control/ProjectAgamemnon/build/debug/ProjectAgamemnon_server
+
+# Start Nestor using submodule-local pixi build (control/ProjectNestor/build/debug/)
+start-nestor-native NATS_URL="nats://localhost:4222":
+    NATS_URL={{ NATS_URL }} control/ProjectNestor/build/debug/ProjectNestor_server
+
 # Start ProjectHermes webhook-to-NATS bridge (Python/FastAPI)
 start-hermes NATS_URL="nats://localhost:4222":
     cd infrastructure/ProjectHermes && NATS_URL={{ NATS_URL }} just start
