@@ -90,7 +90,7 @@ info "Phase 3: Webhook through Hermes → NATS"
 WEBHOOK_TS=$(date -u +%FT%TZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
 WEBHOOK_RESP=$(curl -sf -X POST http://localhost:8085/webhook \
   -H "Content-Type: application/json" \
-  -d "{\"event\":\"task.created\",\"data\":{\"team_id\":\"e2e-team\",\"task_id\":\"e2e-webhook-task\"},\"timestamp\":\"$WEBHOOK_TS\"}")
+  -d "{\"event\":\"task.updated\",\"data\":{\"team_id\":\"e2e-team\",\"task_id\":\"e2e-webhook-task\"},\"timestamp\":\"$WEBHOOK_TS\"}")
 
 echo "$WEBHOOK_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('status')=='accepted', f'Bad: {d}'" \
   && pass "Webhook accepted: $WEBHOOK_RESP" || fail "Webhook rejected: $WEBHOOK_RESP"

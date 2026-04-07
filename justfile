@@ -268,7 +268,7 @@ start-hermes NATS_URL="nats://localhost:4222":
 # Start hello-myrmidon worker (Python, pulls from hi.myrmidon.hello.>)
 start-myrmidon NATS_URL="nats://localhost:4222" AGAMEMNON_URL="http://localhost:8080":
     NATS_URL={{ NATS_URL }} AGAMEMNON_URL={{ AGAMEMNON_URL }} \
-      python3 provisioning/Myrmidons/hello-world/worker.py
+      python3 provisioning/Myrmidons/hello-world/main.py
 
 # Start ProjectArgus observability stack (Prometheus + Loki + Grafana)
 start-argus:

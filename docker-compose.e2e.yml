@@ -105,6 +105,9 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
       GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
     volumes:
       - ${PROJECT_ROOT}/e2e/grafana/provisioning:/etc/grafana/provisioning:ro
       - ${ARGUS_DIR}/dashboards:/var/lib/grafana/dashboards:ro

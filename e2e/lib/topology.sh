@@ -70,6 +70,9 @@ topology_wait_healthy() {
     if [ "$mode" = "t1" ] || [ "$mode" = "t2" ]; then
         export NATS_MONITOR_PORT="${NATS_MONITOR_PORT:-18222}"
         export AGAMEMNON_PORT="${AGAMEMNON_PORT:-18080}"
+    else
+        export NATS_MONITOR_PORT="${NATS_MONITOR_PORT:-8222}"
+        export AGAMEMNON_PORT="${AGAMEMNON_PORT:-8080}"
     fi
 
     source "$_TOPOLOGY_LIB_DIR/nats.sh"
