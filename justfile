@@ -442,6 +442,13 @@ e2e-conan-validate:
 e2e-pip-validate:
     bash e2e/validate-pip-install.sh
 
+# Run all Phase 6 justfile delegation tests (103 checks across 4 submodules)
+e2e-test-justfiles:
+    bash e2e/test-justfile-achaean-fleet.sh
+    bash e2e/test-justfile-proteus.sh
+    bash e2e/test-justfile-mnemosyne.sh
+    bash e2e/test-justfile-hephaestus.sh
+
 # Full validation suite (Docker E2E + Conan + pip)
 e2e-full: e2e-test e2e-conan-validate e2e-pip-validate
     @echo "=== Full E2E validation complete ==="
