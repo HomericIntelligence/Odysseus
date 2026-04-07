@@ -141,11 +141,11 @@ _test-agamemnon:
 
 _test-nestor:
     @echo "--- Testing control/ProjectNestor ---"
-    ctest --test-dir "{{BUILD_ROOT}}/ProjectNestor" --output-on-failure
+    ctest --test-dir "{{BUILD_ROOT}}/ProjectNestor" --output-on-failure --no-tests=error
 
 _test-charybdis:
     @echo "--- Testing testing/ProjectCharybdis ---"
-    ctest --test-dir "{{BUILD_ROOT}}/ProjectCharybdis" --output-on-failure
+    ctest --test-dir "{{BUILD_ROOT}}/ProjectCharybdis" --output-on-failure --no-tests=error
 
 _test-keystone:
     @echo "--- Testing provisioning/ProjectKeystone ---"
