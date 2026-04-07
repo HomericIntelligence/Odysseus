@@ -183,6 +183,21 @@ if has_cmd tailscale; then
     fi
 fi
 
+# Check firewalld tailscale0 zone (worker hosts only)
+if should_check_worker && has_cmd firewall-cmd && systemctl is-active --quiet firewalld 2>/dev/null; then
+    ZONE=$(firewall-cmd --get-zone-of-interface=tailscale0 2>/dev/null || echo "")
+    if [ "$ZONE" = "trusted" ]; then
+        check_pass "firewalld tailscale0 zone: trusted"
+    else
+        check_fail "firewalld tailscale0 not in trusted zone (zone: ${ZONE:-unknown})"
+        if [ "$INSTALL" = "true" ]; then
+            sudo firewall-cmd --permanent --zone=trusted --add-interface=tailscale0 \
+                && sudo firewall-cmd --reload \
+                && check_pass "firewalld tailscale0 added to trusted zone" || true
+        fi
+    fi
+fi
+
 # Check peer reachability (if IPs provided)
 if [[ -n "$WORKER_IP" ]]; then
     if ping -c1 -W3 "$WORKER_IP" >/dev/null 2>&1; then
