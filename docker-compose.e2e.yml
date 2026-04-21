@@ -18,7 +18,7 @@ services:
       - "8222:8222"
     networks: [homeric-mesh]
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget -q --spider http://localhost:8222/healthz 2>/dev/null || exit 1"]
+      test: "wget -q -O /dev/stdout http://localhost:8222/healthz 2>/dev/null | grep -q ok"
       interval: 5s
       timeout: 3s
       retries: 10
@@ -37,7 +37,7 @@ services:
         condition: service_healthy
     networks: [homeric-mesh]
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:8080/v1/health 2>/dev/null || exit 1"]
+      test: "wget -qO- http://localhost:8080/v1/health 2>/dev/null || exit 1"
       interval: 5s
       timeout: 3s
       retries: 10
@@ -55,7 +55,7 @@ services:
         condition: service_healthy
     networks: [homeric-mesh]
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:8081/v1/health 2>/dev/null || exit 1"]
+      test: "wget -qO- http://localhost:8081/v1/health 2>/dev/null || exit 1"
       interval: 5s
       timeout: 3s
       retries: 10
@@ -75,7 +75,7 @@ services:
         condition: service_healthy
     networks: [homeric-mesh]
     healthcheck:
-      test: ["CMD", "sh", "-c", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8085/health')\" 2>/dev/null || exit 1"]
+      test: "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8085/health')\" 2>/dev/null || exit 1"
       interval: 5s
       timeout: 3s
       retries: 10
@@ -84,10 +84,11 @@ services:
   # ─── Observability ─────────────────────────────────────
   prometheus:
     image: prom/prometheus:latest
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--web.enable-lifecycle"]
     ports:
       - "9090:9090"
     volumes:
-      - ${PROJECT_ROOT}/e2e/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${PROJECT_ROOT}/e2e/prometheus.runtime.yml:/etc/prometheus/prometheus.yml:ro
     networks: [homeric-mesh]
 
   loki:
@@ -117,13 +118,7 @@ services:
   argus-exporter:
     build:
       context: infrastructure/ProjectArgus/exporter/
-      dockerfile_inline: |
-        FROM python:3.11-slim
-        WORKDIR /app
-        RUN pip install --no-cache-dir prometheus_client requests
-        COPY exporter.py .
-        EXPOSE 9100
-        CMD ["python", "exporter.py"]
+      dockerfile: ../../../e2e/Dockerfile.argus-exporter
     ports:
       - "9100:9100"
     environment:
