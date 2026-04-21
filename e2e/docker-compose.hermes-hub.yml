@@ -1,0 +1,18 @@
+# HomericIntelligence Hermes-Hub Topology Overlay
+#
+# Splits the E2E stack so that hermes (100.73.61.56) runs the full control + infra
+# stack while epimetheus (100.92.173.32) runs only the hello-myrmidon worker natively.
+#
+# Usage (from Odysseus root on hermes):
+#   podman compose -f docker-compose.e2e.yml -f e2e/docker-compose.hermes-hub.yml up -d
+#
+# The hello-myrmidon is disabled here; launch it on epimetheus with:
+#   NATS_URL=nats://100.73.61.56:4222 python3 provisioning/Myrmidons/hello-world/main.py
+
+services:
+  # ─── Disable hello-myrmidon — runs natively on epimetheus over Tailscale ──
+  # Agamemnon publishes hi.myrmidon.hello.{task_id} via JetStream; the remote
+  # worker on epimetheus pulls that subject and publishes
+  # hi.tasks.{team_id}.{task_id}.completed back, completing the dispatch loop.
+  hello-myrmidon:
+    profiles: ["disabled"]
