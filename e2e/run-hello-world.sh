@@ -48,11 +48,14 @@ echo "╚═══════════════════════�
 # ─── Phase 1: Start Stack ──────────────────────────────────────────────────
 info "Phase 1: Starting E2E stack"
 cd "$ODYSSEUS_ROOT"
-$COMPOSE_CMD -f "$COMPOSE_FILE" up -d --build 2>&1 | tail -20
-
-echo "  Waiting for services to be healthy..."
-$COMPOSE_CMD -f "$COMPOSE_FILE" wait nats agamemnon nestor hermes 2>/dev/null || true
-sleep 5
+if curl -sf http://localhost:8080/v1/health >/dev/null 2>&1; then
+  echo "  Stack already running — skipping compose up."
+else
+  $COMPOSE_CMD -f "$COMPOSE_FILE" up -d --build 2>&1 | tail -20
+  echo "  Waiting for services to be healthy..."
+  $COMPOSE_CMD -f "$COMPOSE_FILE" wait nats agamemnon nestor hermes 2>/dev/null || true
+  sleep 5
+fi
 
 # ─── Phase 2: Health Checks ───────────────────────────────────────────────
 info "Phase 2: Service health checks"
@@ -168,13 +171,13 @@ info "Phase 6: Argus exporter metrics"
 sleep 5
 METRICS=$(curl -sf http://localhost:9100/metrics 2>/dev/null) || { fail "Argus exporter not responding on :9100"; }
 
-echo "$METRICS" | grep -q "hi_agamemnon_health 1" \
+echo "$METRICS" | grep -qE "hi_agamemnon_health(\{\})? 1" \
   && pass "Prometheus metric: hi_agamemnon_health=1" || fail "hi_agamemnon_health not 1 (Agamemnon down?)"
 echo "$METRICS" | grep -q "hi_agents_total" \
   && pass "Prometheus metric: hi_agents_total present" || fail "hi_agents_total metric missing"
 echo "$METRICS" | grep -q 'hi_agents_online' \
   && pass "Prometheus metric: hi_agents_online present" || fail "hi_agents_online metric missing"
-echo "$METRICS" | grep -q "hi_nestor_health 1" \
+echo "$METRICS" | grep -qE "hi_nestor_health(\{\})? 1" \
   && pass "Prometheus metric: hi_nestor_health=1" || fail "hi_nestor_health not 1 (Nestor down?)"
 echo "$METRICS" | grep -q "hi_tasks_total" \
   && pass "Prometheus metric: hi_tasks_total present" || fail "hi_tasks_total metric missing"

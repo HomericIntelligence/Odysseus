@@ -84,7 +84,7 @@ latencies = []
 
 for i in range(10):
     ts = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-    body = json.dumps({'event': 'task.created', 'data': {'team_id': 'b05', 'task_id': f'b05-{i}'}, 'timestamp': ts}).encode()
+    body = json.dumps({'event': 'task.updated', 'data': {'team_id': 'b05', 'task_id': f'b05-{i}'}, 'timestamp': ts}).encode()
 
     start = time.monotonic()
     req = urllib.request.Request(f'{base}/webhook', data=body,

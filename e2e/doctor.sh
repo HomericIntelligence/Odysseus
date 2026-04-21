@@ -461,7 +461,7 @@ if [[ -f "$ODYSSEUS_ROOT/.gitmodules" ]]; then
     # Check Myrmidons not targeting ai-maestro (#77)
     MYRMIDONS_DIR="$ODYSSEUS_ROOT/provisioning/Myrmidons"
     if [[ -d "$MYRMIDONS_DIR/scripts" ]]; then
-        STALE_REFS=$(grep -r "aim_" "$MYRMIDONS_DIR/scripts/" 2>/dev/null | wc -l || true)
+        STALE_REFS=$(grep -rE '(ai[-_]maestro|MAESTRO_URL|\baim_[a-z]+\()' "$MYRMIDONS_DIR/scripts/" 2>/dev/null | wc -l || true)
         if [[ "$STALE_REFS" -eq 0 ]]; then
             check_pass "Myrmidons targets Agamemnon (not ai-maestro)"
         else

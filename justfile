@@ -2,7 +2,7 @@
 # Variables
 # ===========================================================================
 
-AGAMEMNON_URL := env_var_or_default("AGAMEMNON_URL", "http://172.20.0.1:8080")
+AGAMEMNON_URL := env_var_or_default("AGAMEMNON_URL", "http://localhost:8080")
 
 # Root build directory — all submodule build artifacts land here when
 # building from Odysseus. Each submodule uses its own ./build/ when
@@ -416,6 +416,7 @@ e2e-up:
 
 # Run the E2E hello-world test (validates entire pipeline end-to-end)
 e2e-test:
+    bash e2e/start-stack.sh
     bash e2e/run-hello-world.sh
 
 # Tear down the E2E stack and remove volumes

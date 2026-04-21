@@ -12,4 +12,8 @@ fi
 
 echo "Tearing down HomericIntelligence E2E stack..."
 $COMPOSE_CMD -f "$COMPOSE_FILE" down -v --remove-orphans 2>&1
+# Remove containers started outside compose (podman run --replace by start-stack.sh)
+podman ps -a --filter name=odysseus --format '{{.Names}}' 2>/dev/null \
+  | xargs -r podman rm -f 2>/dev/null || true
+podman network rm odysseus_homeric-mesh 2>/dev/null || true
 echo "Done."

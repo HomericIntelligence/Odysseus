@@ -120,7 +120,7 @@ TASK_ID=$(echo "$TASK_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin
 info "Phase 6: Waiting for hello-myrmidon to process task"
 
 # Check if hello-myrmidon worker is running on the worker host
-MYRMIDON_RUNNING=$(ssh mvillmow@${WORKER} "ps aux | grep hello_myrmidon | grep -v grep | wc -l" 2>/dev/null || echo "0")
+MYRMIDON_RUNNING=$(ssh "${REMOTE_USER:-$(whoami)}@${WORKER}" "ps aux | grep hello_myrmidon | grep -v grep | wc -l" 2>/dev/null || echo "0")
 if [ "${MYRMIDON_RUNNING:-0}" -eq 0 ]; then
   echo -e "  ${YELLOW}⚠ SKIP${NC}: hello-myrmidon binary not running on worker (cmake ≥3.20 required to build)"
   echo -e "  ${YELLOW}⚠ NOTE${NC}: NATS dispatch path verified — task created and dispatched to hi.myrmidon.hello.* subject"
