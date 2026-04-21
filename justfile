@@ -520,3 +520,27 @@ e2e-test-tmux-run:
 
 e2e-test-tmux-teardown:
     bash e2e/topologies/t2-tmux.sh teardown
+
+# ===========================================================================
+# Hermes-Hub Topology (hermes = full stack, epimetheus = remote myrmidon)
+# ===========================================================================
+# Validates cross-host myrmidon dispatch: Agamemnon (hermes) → NATS → Tailscale
+# → hello-myrmidon (epimetheus) → NATS → Agamemnon → task=completed.
+# Requires ssh aliases: "hermes" → 100.73.61.56, "epimetheus" → 100.92.173.32
+
+# Build stack on hermes + launch myrmidon on epimetheus
+hermes-hub-up:
+    bash e2e/start-hermes-hub.sh
+
+# Run 8-phase E2E validation for the hermes-hub topology
+hermes-hub-test:
+    bash e2e/run-hermes-hub-e2e.sh
+
+# Tear down: stop compose stack on hermes + kill myrmidon on epimetheus
+hermes-hub-down:
+    ssh hermes "cd Odysseus && podman compose -f docker-compose.e2e.yml -f e2e/docker-compose.hermes-hub.yml down -v 2>&1 | tail -10"
+    ssh epimetheus "pkill -f 'provisioning/Myrmidons/hello-world/main.py' && echo 'Myrmidon stopped' || echo 'Myrmidon was not running'"
+
+# Stream logs from hermes compose stack (optional: pass service name, e.g. just hermes-hub-logs agamemnon)
+hermes-hub-logs SERVICE="":
+    ssh hermes "cd Odysseus && podman compose -f docker-compose.e2e.yml -f e2e/docker-compose.hermes-hub.yml logs --tail=100 {{ SERVICE }}"
