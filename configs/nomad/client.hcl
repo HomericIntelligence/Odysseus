@@ -4,8 +4,10 @@ data_dir   = "/var/lib/nomad"
 client {
   enabled = true
 
-  # Nomad server addresses — set to your Nomad server's Tailscale IP
-  # Example: epimetheus = 100.92.173.32
+  # Nomad server addresses — Tailscale IP of the primary Nomad server
+  # Set NOMAD_SERVER_IP environment variable to override the hardcoded IP below.
+  # To find your Nomad server's Tailscale IP, run on that host: tailscale ip -4
+  # Default below is epimetheus (100.92.173.32) — update for your network.
   servers = ["100.92.173.32:4647"]
 }
 
