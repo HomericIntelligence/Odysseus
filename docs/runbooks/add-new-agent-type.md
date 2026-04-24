@@ -1,8 +1,20 @@
 # Runbook: Add a New Agent Type to the HomericIntelligence Ecosystem
 
+## Important: Symlink-Based Submodule Layout
+
+Per ADR-007, the subdirectories referenced in this runbook (`infrastructure/AchaeanFleet`, `provisioning/Myrmidons`, `shared/ProjectMnemosyne`) are **symlinks to standalone git repositories**, not git submodule worktrees. When making changes to these repos, you must:
+
+1. Clone or navigate to the actual repository (not via the Odysseus symlink).
+2. Make your commits in that standalone repo clone.
+3. Push changes to that repo's GitHub remote.
+4. Return to Odysseus and update the submodule pin if tracking a specific commit SHA.
+
+Do not attempt `cd infrastructure/AchaeanFleet && git add ...` — the symlink does not have its own `.git/` directory.
+
 ## Prerequisites
 
 - You have cloned the Odysseus repo with submodules (`just bootstrap`).
+- You have standalone clones of AchaeanFleet, Myrmidons, and ProjectMnemosyne repositories (see Step 6).
 - You have write access to AchaeanFleet, Myrmidons, and ProjectMnemosyne repos.
 - Podman is installed and the Podman socket is running (ADR 001).
 - Agamemnon is running and accessible at `$AGAMEMNON_URL`.
@@ -99,23 +111,53 @@ Edit `marketplace.json` to add an entry for the new agent type. Include:
 
 ### 6. Commit and push changes
 
-Commit changes in each modified repo separately, then update the submodule pins in Odysseus:
+Because the subdirectories in Odysseus are symlinks (ADR-007), you must commit changes in each repo's standalone clone, not in the symlinked paths:
+
+#### 6a. Commit in AchaeanFleet standalone clone
+
+Navigate to your AchaeanFleet repository clone (not the Odysseus symlink):
 
 ```bash
-# Commit in AchaeanFleet
-cd infrastructure/AchaeanFleet && git add vessels/<agent-name>/ && git commit -m "feat: add <agent-name> vessel"
-
-# Commit in Myrmidons
-cd provisioning/Myrmidons && git add _templates/<agent-name>.yaml && git commit -m "feat: add <agent-name> template"
-
-# Commit in ProjectMnemosyne
-cd shared/ProjectMnemosyne && git add marketplace.json && git commit -m "feat: register <agent-name> in marketplace"
-
-# Update submodule pins in Odysseus root
-cd /path/to/Odysseus
-git add infrastructure/AchaeanFleet provisioning/Myrmidons shared/ProjectMnemosyne
-git commit -m "chore: update submodule pins for <agent-name> agent type"
+cd /path/to/AchaeanFleet
+git add vessels/<agent-name>/
+git commit -m "feat: add <agent-name> vessel"
+git push origin main
 ```
+
+#### 6b. Commit in Myrmidons standalone clone
+
+Navigate to your Myrmidons repository clone:
+
+```bash
+cd /path/to/Myrmidons
+git add _templates/<agent-name>.yaml
+git commit -m "feat: add <agent-name> template"
+git push origin main
+```
+
+#### 6c. Commit in ProjectMnemosyne standalone clone
+
+Navigate to your ProjectMnemosyne repository clone:
+
+```bash
+cd /path/to/ProjectMnemosyne
+git add marketplace.json
+git commit -m "feat: register <agent-name> in marketplace"
+git push origin main
+```
+
+#### 6d. Update submodule pins in Odysseus (optional)
+
+If you have pinned specific commit SHAs in the Odysseus `.gitmodules` for these repos, return to Odysseus and update those pins:
+
+```bash
+cd /path/to/Odysseus
+git add .gitmodules
+git commit -m "chore: update submodule pins for <agent-name> agent type"
+git push origin main
+```
+
+Otherwise, the symlinks in Odysseus will point to the latest main branch of each repo, and no pin update is needed.
 
 ---
 
