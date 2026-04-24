@@ -21,12 +21,15 @@ Odysseus/
 ├── docs/
 │   ├── architecture.md           # System-wide architecture overview and component map
 │   ├── adr/
+│   │   ├── README.md
+│   │   ├── template.md
 │   │   ├── 001-podman-over-docker.md
 │   │   ├── 002-nats-event-bridge.md
 │   │   ├── 003-nomad-over-k8s.md
 │   │   ├── 004-extend-not-replace-maestro.md
 │   │   ├── 005-nats-subject-schema.md
-│   │   └── 006-decouple-from-ai-maestro.md
+│   │   ├── 006-decouple-from-ai-maestro.md
+│   │   └── 007-symlinks-over-submodules.md
 │   └── runbooks/
 │       ├── add-new-host.md
 │       ├── add-new-agent-type.md
@@ -68,7 +71,7 @@ Odysseus/
 
 - Use `pixi run` or `just` for all task execution. Never run scripts directly.
 - When adding a new submodule: `git submodule add <url> <path>`, update `.gitmodules`, and document the repo in `docs/architecture.md`.
-- When writing a new ADR: copy the format from an existing ADR, use the next sequential number, and set Status to "Proposed" until merged.
+- When writing a new ADR: use `docs/adr/template.md` as the template, use the next sequential number, and set Status to "Proposed" until merged.
 - Runbooks should be written as numbered steps that can be executed top-to-bottom without prior context.
 - **ai-maestro has been fully removed per ADR-006.** ProjectAgamemnon replaces its task coordination role.
 
