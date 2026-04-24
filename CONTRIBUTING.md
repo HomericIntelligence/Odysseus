@@ -256,6 +256,45 @@ Address review comments promptly:
 2. Push changes to update the PR
 3. Request re-review if needed
 
+## Branch Protection Policy
+
+The `main` branch is protected by GitHub branch protection rules to ensure code quality and prevent accidents. These rules are enforced automatically by GitHub:
+
+### Protection Rules
+
+- **Direct pushes blocked** - All changes to `main` must go through pull requests. Direct `git push` to `main` will be rejected.
+- **PR approval required** - At least 1 approval from a maintainer is required before merging.
+- **CI status checks must pass** - All automated checks (tests, linting, validations) must pass before merge is allowed.
+- **Linear history enforced** - Only rebase-based merges are allowed. This prevents merge commits and keeps the history clean and linear.
+
+### Merge Convention
+
+Always use the following command to merge your PR:
+
+```bash
+gh pr merge --auto --rebase
+```
+
+This will:
+1. Enable auto-merge on your PR (merge happens as soon as all conditions are met)
+2. Use rebase strategy, maintaining linear history
+3. Keep your branch name clean and commit history readable
+
+### For Repo Admins
+
+If you are setting up a fresh fork or new repository and need to enable these rules:
+
+1. Go to **Settings** → **Branches**
+2. Click **Add rule** under "Branch protection rules"
+3. Enter `main` as the branch name pattern
+4. Enable:
+   - Require a pull request before merging (1 approval minimum)
+   - Require status checks to pass before merging
+   - Require branches to be up to date before merging
+   - Require a linear history (dismiss stale pull request approvals when new commits are pushed)
+5. Optionally require dismissal of stale reviews when new commits are pushed
+6. Save the rule
+
 ## Key References
 
 - **Available recipes**: Run `just --list` to see all cross-repo commands
