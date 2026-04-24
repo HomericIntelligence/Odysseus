@@ -1,0 +1,22 @@
+# CODEOWNERS for HomericIntelligence/Odysseus
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Global fallback — all files not matched below
+* @mvillmow
+
+# Infrastructure configs — require infra review
+configs/nomad/ @mvillmow
+configs/nats/ @mvillmow
+
+# Architecture decisions — require architecture review
+docs/adr/ @mvillmow
+
+# Runbooks — require ops review
+docs/runbooks/ @mvillmow
+
+# Submodule pins — require repo admin review
+.gitmodules @mvillmow
+
+# Tooling — require DX review
+justfile @mvillmow
+pixi.toml @mvillmow
