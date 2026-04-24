@@ -1,0 +1,22 @@
+name: Build idempotency
+on:
+  pull_request:
+    paths:
+      - justfile
+      - pixi.toml
+      - .gitmodules
+      - '**/CMakeLists.txt'
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  idempotent-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: prefix-dev/setup-pixi@v0.8.1
+      - name: Run idempotency test
+        run: bash e2e/test-build-idempotent.sh

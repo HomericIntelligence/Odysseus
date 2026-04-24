@@ -67,13 +67,14 @@ _build-agamemnon:
         --profile=conan/profiles/debug \
         --build=missing
     @echo "--- Building control/ProjectAgamemnon ---"
-    cmake -S control/ProjectAgamemnon -B "{{BUILD_ROOT}}/ProjectAgamemnon" \
+    @rm -rf "{{BUILD_ROOT}}/ProjectAgamemnon/CMakeCache.txt" "{{BUILD_ROOT}}/ProjectAgamemnon/CMakeFiles" "{{BUILD_ROOT}}/ProjectAgamemnon/_deps" 2>/dev/null || true
+    pixi run cmake -S control/ProjectAgamemnon -B "{{BUILD_ROOT}}/ProjectAgamemnon" \
         -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectAgamemnon/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
         -G Ninja \
         -DProjectAgamemnon_BUILD_TESTING=ON \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-    cmake --build "{{BUILD_ROOT}}/ProjectAgamemnon"
+    pixi run cmake --build "{{BUILD_ROOT}}/ProjectAgamemnon"
 
 # Build ProjectNestor (C++/CMake + Conan, debug preset)
 _build-nestor:
@@ -83,13 +84,14 @@ _build-nestor:
         --profile=conan/profiles/debug \
         --build=missing
     @echo "--- Building control/ProjectNestor ---"
-    cmake -S control/ProjectNestor -B "{{BUILD_ROOT}}/ProjectNestor" \
+    @rm -rf "{{BUILD_ROOT}}/ProjectNestor/CMakeCache.txt" "{{BUILD_ROOT}}/ProjectNestor/CMakeFiles" "{{BUILD_ROOT}}/ProjectNestor/_deps" 2>/dev/null || true
+    pixi run cmake -S control/ProjectNestor -B "{{BUILD_ROOT}}/ProjectNestor" \
         -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectNestor/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
         -G Ninja \
         -DProjectNestor_BUILD_TESTING=ON \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-    cmake --build "{{BUILD_ROOT}}/ProjectNestor"
+    pixi run cmake --build "{{BUILD_ROOT}}/ProjectNestor"
 
 # Build ProjectCharybdis (C++/CMake + Conan, debug preset)
 _build-charybdis:
@@ -99,13 +101,14 @@ _build-charybdis:
         --profile=conan/profiles/debug \
         --build=missing
     @echo "--- Building testing/ProjectCharybdis ---"
-    cmake -S testing/ProjectCharybdis -B "{{BUILD_ROOT}}/ProjectCharybdis" \
+    @rm -rf "{{BUILD_ROOT}}/ProjectCharybdis/CMakeCache.txt" "{{BUILD_ROOT}}/ProjectCharybdis/CMakeFiles" "{{BUILD_ROOT}}/ProjectCharybdis/_deps" 2>/dev/null || true
+    pixi run cmake -S testing/ProjectCharybdis -B "{{BUILD_ROOT}}/ProjectCharybdis" \
         -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectCharybdis/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
         -G Ninja \
         -DProjectCharybdis_BUILD_TESTING=ON \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-    cmake --build "{{BUILD_ROOT}}/ProjectCharybdis"
+    pixi run cmake --build "{{BUILD_ROOT}}/ProjectCharybdis"
 
 # Build ProjectKeystone (C++/CMake + Conan, debug preset)
 _build-keystone:
@@ -115,12 +118,13 @@ _build-keystone:
         --profile=conan/profiles/debug \
         --build=missing
     @echo "--- Building provisioning/ProjectKeystone ---"
-    cmake -S provisioning/ProjectKeystone -B "{{BUILD_ROOT}}/ProjectKeystone" \
+    @rm -rf "{{BUILD_ROOT}}/ProjectKeystone/CMakeCache.txt" "{{BUILD_ROOT}}/ProjectKeystone/CMakeFiles" "{{BUILD_ROOT}}/ProjectKeystone/_deps" 2>/dev/null || true
+    pixi run cmake -S provisioning/ProjectKeystone -B "{{BUILD_ROOT}}/ProjectKeystone" \
         -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectKeystone/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
         -G Ninja \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-    cmake --build "{{BUILD_ROOT}}/ProjectKeystone"
+    pixi run cmake --build "{{BUILD_ROOT}}/ProjectKeystone"
 
 # Build ProjectOdyssey (Mojo — outputs to submodule build/ directory)
 _build-odyssey:
@@ -170,10 +174,6 @@ clean:
 # ===========================================================================
 # Quality
 # ===========================================================================
-
-# Lint all Markdown files
-lint:
-    pixi run markdownlint '**/*.md' --ignore node_modules --ignore .pixi
 
 # Validate HCL syntax for Nomad configs
 validate-configs:
