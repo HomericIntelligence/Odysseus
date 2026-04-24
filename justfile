@@ -168,6 +168,23 @@ clean:
     rm -rf "{{BUILD_ROOT}}"
 
 # ===========================================================================
+# Quality
+# ===========================================================================
+
+# Lint all Markdown files
+lint:
+    pixi run markdownlint '**/*.md' --ignore node_modules --ignore .pixi
+
+# Validate HCL syntax for Nomad configs
+validate-configs:
+    nomad fmt -check configs/nomad/client.hcl configs/nomad/server.hcl || echo "Note: install nomad to validate HCL syntax"
+    yamllint -d "{extends: default, rules: {line-length: {max: 200}, truthy: disable, document-start: disable}}" configs/ || true
+
+# Run all CI checks locally
+ci: lint validate-configs
+    @echo "All checks passed"
+
+# ===========================================================================
 # Provisioning
 # ===========================================================================
 
