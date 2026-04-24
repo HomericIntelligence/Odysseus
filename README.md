@@ -24,11 +24,22 @@ If you already cloned without submodules:
 git submodule update --init --recursive
 ```
 
+## Documentation
+
+Complete documentation is available in the [docs/](docs/) directory:
+
+- **[Documentation Index](docs/README.md)** — Table of contents for all architecture, decisions, and operational guides
+- **[System Architecture](docs/architecture.md)** — Complete overview of all components and interactions
+- **[Architecture Decision Records](docs/adr/)** — All significant architectural decisions with rationale
+- **[Operational Runbooks](docs/runbooks/)** — Step-by-step guides for common operational tasks
+- **[NATS Subject Schema](docs/nats-subjects.md)** — Event bus subject patterns and streams
+
 ## Repository Layout
 
 ```
 Odysseus/
 ├── docs/
+│   ├── README.md             # Documentation index and table of contents
 │   ├── architecture.md       # Full system architecture overview
 │   ├── adr/                  # Architecture Decision Records
 │   └── runbooks/             # Operational runbooks
