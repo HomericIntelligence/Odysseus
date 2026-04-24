@@ -23,6 +23,14 @@ services:
       timeout: 3s
       retries: 10
       start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
 
   # ─── Control Plane ─────────────────────────────────────
   agamemnon:
@@ -42,6 +50,14 @@ services:
       timeout: 3s
       retries: 10
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 128M
 
   nestor:
     build:
@@ -60,6 +76,14 @@ services:
       timeout: 3s
       retries: 10
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 128M
 
   # ─── Infrastructure ────────────────────────────────────
   hermes:
@@ -80,6 +104,14 @@ services:
       timeout: 3s
       retries: 10
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
 
   # ─── Observability ─────────────────────────────────────
   prometheus:
@@ -90,6 +122,14 @@ services:
     volumes:
       - ${PROJECT_ROOT}/e2e/prometheus.runtime.yml:/etc/prometheus/prometheus.yml:ro
     networks: [homeric-mesh]
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
 
   loki:
     image: grafana/loki:latest
@@ -97,6 +137,14 @@ services:
       - "3100:3100"
     command: ["-config.file=/etc/loki/local-config.yaml"]
     networks: [homeric-mesh]
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
 
   grafana:
     image: grafana/grafana:latest
@@ -104,7 +152,7 @@ services:
       - "3001:3000"
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_SECURITY_ALLOW_EMBEDDING: "true"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
@@ -114,6 +162,14 @@ services:
       - ${ARGUS_DIR}/dashboards:/var/lib/grafana/dashboards:ro
     depends_on: [prometheus, loki]
     networks: [homeric-mesh]
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
 
   argus-exporter:
     build:
@@ -133,6 +189,14 @@ services:
       nats:
         condition: service_healthy
     networks: [homeric-mesh]
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
 
   # ─── Workers ───────────────────────────────────────────
   hello-myrmidon:
@@ -152,3 +216,10 @@ services:
       restart_policy:
         condition: on-failure
         max_attempts: 5
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 128M
