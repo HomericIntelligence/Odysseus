@@ -224,6 +224,8 @@ def _build_container_cmd_scoped(
         "-e", f"ANTHROPIC_API_KEY={os.environ.get('ANTHROPIC_API_KEY', '')}",
         "-e", f"HOME={home}",
     ]
+    if os.path.exists(f"{home}/.claude.json"):
+        common_mounts += ["-v", f"{home}/.claude.json:{home}/.claude.json"]
 
     if scope in ("plan", "review"):
         # Read-only workspace
@@ -243,7 +245,7 @@ def _build_container_cmd_scoped(
 
     cmd = [
         CONTAINER_RUNTIME, "run", "--rm",
-        "--network", "homeric-mesh",
+        "--network", os.environ.get("CONTAINER_NETWORK", "odysseus_homeric-mesh"),
         *volume_mounts,
         *common_mounts,
         "-w", CONTAINER_WORKSPACE,
