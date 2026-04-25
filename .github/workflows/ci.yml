@@ -22,6 +22,19 @@ jobs:
           find configs/ -name '*.yml' -o -name '*.yaml' -o -name '*.json' | sort
           find configs/ -name '*.yml' -o -name '*.yaml' | xargs --no-run-if-empty yamllint -d "{extends: default, rules: {line-length: {max: 200}, truthy: disable, document-start: disable}}"
 
+  harden:
+    name: Harden checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [validate]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pixi
+        uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          pixi-version: latest
+
       - name: Install markdownlint-cli
         run: npm install -g markdownlint-cli
 
@@ -29,27 +42,18 @@ jobs:
         run: |
           markdownlint docs/architecture.md docs/adr/*.md
 
-      - name: Install pixi
-        uses: prefix-dev/setup-pixi@v0.8.1
-        with:
-          pixi-version: latest
-
       - name: Validate pixi manifest
         run: pixi info --manifest-path pixi.toml
 
       - name: Validate justfile
-        run: just --summary
+        run: pixi run just --summary
 
       - name: Symlink integrity audit
         run: |
-          broken=()
-          while IFS= read -r -d '' link; do
-            if ! [ -e "$link" ]; then
-              broken+=("$link -> $(readlink "$link")")
-            fi
-          done < <(find . -not -path './.git/*' -type l -print0)
-          if [ ${#broken[@]} -gt 0 ]; then
-            printf 'Broken symlink: %s\n' "${broken[@]}"
+          broken=$(find . -not -path './.git/*' -type l ! -exec test -e {} \; -print)
+          if [ -n "$broken" ]; then
+            echo "Broken symlinks found:"
+            echo "$broken"
             exit 1
           fi
           echo "All symlinks are valid."
