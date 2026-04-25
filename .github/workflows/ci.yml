@@ -21,3 +21,43 @@ jobs:
         run: |
           find configs/ -name '*.yml' -o -name '*.yaml' -o -name '*.json' | sort
           find configs/ -name '*.yml' -o -name '*.yaml' | xargs --no-run-if-empty yamllint -d "{extends: default, rules: {line-length: {max: 200}, truthy: disable, document-start: disable}}"
+
+      - name: Install markdownlint-cli
+        run: npm install -g markdownlint-cli
+
+      - name: Lint Markdown docs
+        run: |
+          markdownlint docs/architecture.md docs/adr/*.md
+
+      - name: Install pixi
+        uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          pixi-version: latest
+
+      - name: Validate pixi manifest
+        run: pixi info --manifest-path pixi.toml
+
+      - name: Validate justfile
+        run: just --summary
+
+      - name: Symlink integrity audit
+        run: |
+          broken=()
+          while IFS= read -r -d '' link; do
+            if ! [ -e "$link" ]; then
+              broken+=("$link -> $(readlink "$link")")
+            fi
+          done < <(find . -not -path './.git/*' -type l -print0)
+          if [ ${#broken[@]} -gt 0 ]; then
+            printf 'Broken symlink: %s\n' "${broken[@]}"
+            exit 1
+          fi
+          echo "All symlinks are valid."
+
+      - name: Verify Claude read permissions (if present)
+        run: |
+          if [ -f scripts/verify_claude_read_permissions.py ]; then
+            python scripts/verify_claude_read_permissions.py
+          else
+            echo "scripts/verify_claude_read_permissions.py not present — skipping."
+          fi
