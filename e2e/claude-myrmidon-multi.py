@@ -65,25 +65,82 @@ LOG_SUBJECT = "hi.logs.myrmidon.claude-multi"
 
 # ─── Repo Registry ──────────────────────────────────────────────────────────
 REPOS: dict[str, dict] = {
+    # Infrastructure
     "achaean-fleet": {
         "path": "infrastructure/AchaeanFleet",
         "github_repo": "HomericIntelligence/AchaeanFleet",
         "description": "OCI image build recipes (build-vessel)",
     },
+    "argus": {
+        "path": "infrastructure/ProjectArgus",
+        "github_repo": "HomericIntelligence/ProjectArgus",
+        "description": "Observability stack (Prometheus/Grafana)",
+    },
+    "hermes": {
+        "path": "infrastructure/ProjectHermes",
+        "github_repo": "HomericIntelligence/ProjectHermes",
+        "description": "NATS event bridge (FastAPI webhook → JetStream)",
+    },
+    # Control plane
+    "agamemnon": {
+        "path": "control/ProjectAgamemnon",
+        "github_repo": "HomericIntelligence/ProjectAgamemnon",
+        "description": "Orchestration REST API (C++20, port 8080)",
+    },
+    "nestor": {
+        "path": "control/ProjectNestor",
+        "github_repo": "HomericIntelligence/ProjectNestor",
+        "description": "Research + ideation service (C++20, port 8081)",
+    },
+    # Provisioning
+    "telemachy": {
+        "path": "provisioning/ProjectTelemachy",
+        "github_repo": "HomericIntelligence/ProjectTelemachy",
+        "description": "Declarative workflow runner (Telemachy)",
+    },
+    "keystone": {
+        "path": "provisioning/ProjectKeystone",
+        "github_repo": "HomericIntelligence/ProjectKeystone",
+        "description": "C++20 MessageBus + ThreadPool library (HMAS transport)",
+    },
+    "myrmidons": {
+        "path": "provisioning/Myrmidons",
+        "github_repo": "HomericIntelligence/Myrmidons",
+        "description": "Declarative agent fleet manifests (YAML → Agamemnon)",
+    },
+    # CI/CD
     "proteus": {
         "path": "ci-cd/ProjectProteus",
         "github_repo": "HomericIntelligence/ProjectProteus",
         "description": "CI/CD pipeline trigger recipes",
     },
+    # Research
+    "odyssey": {
+        "path": "research/ProjectOdyssey",
+        "github_repo": "HomericIntelligence/ProjectOdyssey",
+        "description": "Mojo ML training framework (standalone, no mesh integration)",
+    },
+    "scylla": {
+        "path": "research/ProjectScylla",
+        "github_repo": "HomericIntelligence/ProjectScylla",
+        "description": "Agent evaluation and benchmarking framework",
+    },
+    # Testing
+    "charybdis": {
+        "path": "testing/ProjectCharybdis",
+        "github_repo": "HomericIntelligence/ProjectCharybdis",
+        "description": "Chaos and resilience testing via Agamemnon /v1/chaos/*",
+    },
+    # Shared
     "mnemosyne": {
         "path": "shared/ProjectMnemosyne",
         "github_repo": "HomericIntelligence/ProjectMnemosyne",
-        "description": "Skills marketplace recipes",
+        "description": "Skills marketplace and knowledge registry",
     },
     "hephaestus": {
         "path": "shared/ProjectHephaestus",
         "github_repo": "HomericIntelligence/ProjectHephaestus",
-        "description": "Test and lint recipes",
+        "description": "Shared tooling, linting, and CI helpers",
     },
 }
 
