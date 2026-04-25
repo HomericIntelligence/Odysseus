@@ -193,16 +193,40 @@ def _build_container_cmd(claude_args: list[str], cwd: str = WORKING_DIR) -> list
     Maps the host WORKING_DIR to /workspace inside the achaean-claude container,
     plus the user's .claude config and ANTHROPIC_API_KEY for authentication.
     """
+    import glob as _glob
+    import stat as _stat
+
     home = os.path.expanduser("~")
+
+    # Host Claude processes reset .credentials.json to 0600; agent user (uid=1000)
+    # inside the container needs read access. Fix permissions before each invocation.
+    for _path in _glob.glob(f"{home}/.claude/**", recursive=True) + [f"{home}/.claude.json"]:
+        try:
+            _st = os.stat(_path)
+            if not (_st.st_mode & _stat.S_IROTH):
+                os.chmod(_path, _st.st_mode | _stat.S_IROTH)
+        except OSError:
+            pass
+
+    # Use the standalone binary (not npm claude) — standalone connects to
+    # api.anthropic.com directly, avoiding Traefik TLS interception of api.claude.ai.
+    standalone = os.path.join(home, ".local/share/claude/versions/2.1.120")
+    if not os.path.exists(standalone):
+        versions = sorted(_glob.glob(os.path.join(home, ".local/share/claude/versions/*")))
+        standalone = versions[-1] if versions else ""
+
     cmd = [
         CONTAINER_RUNTIME, "run", "--rm",
-        "--network", "homeric-mesh",
+        "--userns=keep-id",  # maps host UID → same UID in container so agent can write workspace
+        "--network", os.environ.get("CONTAINER_NETWORK", "odysseus_homeric-mesh"),
         "-v", f"{cwd}:{CONTAINER_WORKSPACE}",
         "-v", f"{home}/.claude:{home}/.claude",
         "-v", f"{home}/.config/gh:{home}/.config/gh:ro",
         "-w", CONTAINER_WORKSPACE,
         "-e", f"ANTHROPIC_API_KEY={os.environ.get('ANTHROPIC_API_KEY', '')}",
         "-e", f"HOME={home}",
+        *(["-v", f"{home}/.claude.json:{home}/.claude.json"] if os.path.exists(f"{home}/.claude.json") else []),
+        *(["-v", f"{standalone}:/usr/local/bin/claude-host:ro"] if standalone else []),
         CLAUDE_IMAGE,
     ]
     cmd.extend(claude_args)
@@ -211,30 +235,20 @@ def _build_container_cmd(claude_args: list[str], cwd: str = WORKING_DIR) -> list
 
 def invoke_claude(prompt: str, cwd: str = WORKING_DIR, stage: str = "",
                   iteration: int = 0, task_id: str = "") -> str:
-    """Invoke Claude Code CLI inside the achaean-claude container.
-
-    Resumes the same session for iterations > 0.
-    """
+    """Invoke Claude Code CLI inside the achaean-claude container."""
     if DRY_RUN:
         log("claude", f"[DRY-RUN] Skipping claude -p ({len(prompt)} chars)")
         return mock_claude_response(stage, iteration)
 
-    session_id = _get_session_id(task_id, stage) if task_id else ""
-    is_resume = iteration > 0 and session_id
-
+    # Session resumption is disabled: the standalone binary keys sessions by the host
+    # working-directory path, not the container's /workspace path, so --resume always
+    # fails across ephemeral containers. Each stage receives full context in its prompt.
+    log("claude", f"Starting new session ({len(prompt)} chars)")
     claude_args = [
-        "claude", "-p", prompt,
-        "--permission-mode", "acceptEdits",
+        "claude-host", "-p", prompt,
+        "--dangerously-skip-permissions",
         "--allowedTools", "Bash,Read,Write,Edit,Glob,Grep",
     ]
-
-    if is_resume:
-        log("claude", f"Resuming session {session_id[:8]}... ({len(prompt)} chars)")
-        claude_args.extend(["--resume", session_id])
-    else:
-        log("claude", f"Starting new session ({len(prompt)} chars)")
-        if session_id:
-            claude_args.extend(["--session-id", session_id])
 
     cmd = _build_container_cmd(claude_args, cwd=cwd)
 
