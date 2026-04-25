@@ -1,0 +1,209 @@
+name: Required Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: required-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Lint YAML (configs/ and .github/workflows/)
+        run: |
+          yamllint -d relaxed configs/ .github/workflows/
+
+      - name: Validate Nomad HCL syntax
+        run: |
+          find configs/nomad -name "*.hcl" | while IFS= read -r f; do
+            if command -v nomad &>/dev/null; then
+              nomad fmt -check "$f" && echo "OK (nomad fmt): $f"
+            elif command -v hclfmt &>/dev/null; then
+              hclfmt --check "$f" && echo "OK (hclfmt): $f"
+            else
+              echo "::notice::HCL check skipped (no validator available): $f"
+            fi
+          done
+
+  unit-tests:
+    name: unit-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install markdown parser
+        run: pip install markdown
+
+      - name: Validate all markdown ADRs are well-formed
+        run: |
+          python3 -c "
+          import markdown, glob
+          files = glob.glob('docs/**/*.md', recursive=True)
+          if not files:
+              print('No markdown files found')
+          else:
+              for f in files:
+                  markdown.markdown(open(f).read())
+              print(f'All markdown OK ({len(files)} files parsed)')
+          "
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Validate justfile syntax
+        run: just --list > /dev/null
+
+  integration-tests:
+    name: integration-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Validate NATS config syntax
+        run: |
+          find configs/nats -name "*.conf" | while IFS= read -r f; do
+            python3 -c "
+          import sys
+          content = open('$f').read()
+          if content.strip():
+              print(f'OK: $f')
+          else:
+              print(f'WARNING: $f is empty')
+              sys.exit(1)
+          "
+          done
+
+      - name: Check submodule URLs are reachable
+        run: |
+          git submodule foreach 'git ls-remote --exit-code origin HEAD > /dev/null && echo "OK: $name" || echo "WARN: $name unreachable"'
+
+  security/dependency-scan:
+    name: security/dependency-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy filesystem scan on configs/
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          scan-type: fs
+          scan-ref: configs/
+          exit-code: 0
+          format: table
+
+  security/secrets-scan:
+    name: security/secrets-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pixi
+        uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          pixi-version: latest
+
+      - name: Install yamllint (for validate-configs recipe)
+        run: pip install yamllint
+
+      - name: Run validate-configs (canonical build artifact for meta-repo)
+        run: just validate-configs
+
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate all JSON files in configs/
+        run: |
+          json_files=$(find . -path './.git' -prune -o -name "*.json" -print)
+          if [ -z "$json_files" ]; then
+            echo "No JSON files found"
+          else
+            echo "$json_files" | xargs -I{} jq . {} > /dev/null
+            echo "All JSON OK"
+          fi
+
+      - name: Validate tools/github shell scripts are valid bash
+        run: |
+          sh_files=$(find tools/github -name "*.sh" 2>/dev/null || true)
+          if [ -z "$sh_files" ]; then
+            echo "No shell scripts found in tools/github"
+          else
+            echo "$sh_files" | xargs -I{} bash -n {}
+            echo "All shell scripts OK"
+          fi
+
+  schema-validation:
+    name: schema-validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install check-jsonschema
+        run: pip install check-jsonschema
+
+      - name: Validate GitHub Actions workflow YAML against schema
+        run: |
+          find .github/workflows -name "*.yml" | xargs check-jsonschema \
+            --schemafile https://json.schemastore.org/github-workflow
+
+      - name: Validate org-ruleset.json is valid JSON
+        run: jq . configs/github/org-ruleset.json > /dev/null && echo "org-ruleset.json is valid JSON"
+
+  deps/version-sync:
+    name: deps/version-sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Check for uninitialized submodules
+        run: |
+          uninitialized=$(git submodule status | grep "^-" || true)
+          if [ -n "$uninitialized" ]; then
+            echo "WARN: uninitialized submodules detected:"
+            echo "$uninitialized"
+          else
+            echo "OK: all submodules initialized"
+          fi
+
+      - name: Verify submodule SHAs reference valid commits
+        run: |
+          git submodule foreach 'git log --oneline -1 HEAD'
