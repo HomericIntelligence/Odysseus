@@ -20,7 +20,8 @@ State the decision clearly and concisely. Include:
 
 ## Consequences
 
-Describe the expected outcomes and implications of this decision. Include three subsections:
+Describe the expected outcomes and implications of this decision. Include three
+subsections:
 
 **Positive:**
 - Expected benefits
@@ -38,4 +39,5 @@ Describe the expected outcomes and implications of this decision. Include three 
 
 Link to related ADRs, issues, or documentation:
 - [ADR XXX](XXX-title.md) - Related decision
-- [Issue #NNN](https://github.com/HomericIntelligence/Odysseus/issues/NNN) - Corresponding issue
+- [Issue #NNN](https://github.com/HomericIntelligence/Odysseus/issues/NNN) -
+  Corresponding issue
