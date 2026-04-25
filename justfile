@@ -561,3 +561,44 @@ hermes-hub-down:
 # Stream logs from hermes compose stack (optional: pass service name, e.g. just hermes-hub-logs agamemnon)
 hermes-hub-logs SERVICE="":
     ssh hermes "cd Odysseus && podman compose -f docker-compose.e2e.yml -f e2e/docker-compose.hermes-hub.yml logs --tail=100 {{ SERVICE }}"
+
+# ===========================================================================
+# GitHub Org Ruleset Management
+# ===========================================================================
+
+# Snapshot all 15 repos' current classic branch protection to a timestamped backup file
+ruleset-backup:
+    mkdir -p configs/github/backups
+    ./tools/github/snapshot-protection.sh > "configs/github/backups/rulesets-$(date +%Y%m%d-%H%M%S).json"
+    @echo "Backup written."
+
+# Snapshot all 15 repos' classic branch protection to the canonical pre-ruleset backup file
+protection-snapshot:
+    mkdir -p configs/github/backups
+    ./tools/github/snapshot-protection.sh > configs/github/backups/branch-protection-pre-ruleset.json
+    @echo "Snapshot written to configs/github/backups/branch-protection-pre-ruleset.json"
+
+# Create or update the org-level ruleset (default: evaluate mode JSON)
+ruleset-apply FILE="configs/github/org-ruleset.json":
+    ./tools/github/apply-org-ruleset.sh "{{FILE}}"
+
+# Validate the live org ruleset against the canonical JSON and print current enforcement + checks
+ruleset-validate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ORG=HomericIntelligence
+    NAME=homeric-main-baseline
+    live=$(gh api "orgs/$ORG/rulesets" --paginate --jq ".[] | select(.name == \"$NAME\")" 2>/dev/null || echo "null")
+    if [[ "$live" == "null" ]]; then
+      echo "ERROR: Ruleset '$NAME' not found in org." >&2
+      exit 1
+    fi
+    echo "Live ruleset enforcement: $(echo "$live" | jq -r '.enforcement')"
+    echo "Live required checks:"
+    echo "$live" | jq -r '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' 2>/dev/null || echo "  (none)"
+    echo "Canonical required checks (from file):"
+    jq -r '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' configs/github/org-ruleset.json
+
+# Remove classic branch protection from ALL 15 repos (requires confirmation; run after ruleset is active)
+protection-remove-all:
+    ./tools/github/remove-classic-protection.sh --all
