@@ -38,6 +38,7 @@ NATS_URL = os.environ.get("NATS_URL", "nats://localhost:4222")
 REPO = os.environ.get("REPO", "HomericIntelligence/Odysseus")
 WORKING_DIR = os.environ.get("WORKING_DIR", os.getcwd())
 MAX_ITERATIONS = int(os.environ.get("MAX_ITERATIONS", "5"))
+ISSUE_NUMBER = int(os.environ.get("ISSUE_NUMBER", "0"))  # 0 = read from task payload
 DRY_RUN = os.environ.get("DRY_RUN", "0") == "1"
 NO_GITHUB = os.environ.get("NO_GITHUB", "0") == "1"
 
@@ -192,17 +193,46 @@ def _build_container_cmd(claude_args: list[str], cwd: str = WORKING_DIR) -> list
 
     Maps the host WORKING_DIR to /workspace inside the achaean-claude container,
     plus the user's .claude config and ANTHROPIC_API_KEY for authentication.
+
+    Mounts the host's standalone claude binary to avoid npm version TLS issues
+    with the oauth auth flow inside containers.
     """
     home = os.path.expanduser("~")
+
+    # Ensure .claude directory files are readable by the container's agent user.
+    # Podman rootless maps the host user to root in the container namespace,
+    # making o+r required for the agent user (uid=1000 in container) to read creds.
+    import glob as _glob
+    import stat as _stat
+    for _path in _glob.glob(f"{home}/.claude/**", recursive=True) + [f"{home}/.claude.json"]:
+        try:
+            _st = os.stat(_path)
+            if not (_st.st_mode & _stat.S_IROTH):
+                os.chmod(_path, _st.st_mode | _stat.S_IROTH)
+        except OSError:
+            pass
+
+    # Standalone binary path — newer version uses api.anthropic.com for OAuth
+    # (npm 2.1.101 uses api.claude.ai which is intercepted by Traefik in this env)
+    standalone = os.path.join(home, ".local/share/claude/versions/2.1.120")
+    if not os.path.exists(standalone):
+        # Fallback: find any available standalone version
+        import glob as _g
+        versions = sorted(_g.glob(os.path.join(home, ".local/share/claude/versions/*")))
+        standalone = versions[-1] if versions else ""
+
     cmd = [
         CONTAINER_RUNTIME, "run", "--rm",
-        "--network", "homeric-mesh",
+        "--userns=keep-id",  # maps host UID→same UID in container so agent can write workspace files
+        "--network", os.environ.get("CONTAINER_NETWORK", "odysseus_homeric-mesh"),
         "-v", f"{cwd}:{CONTAINER_WORKSPACE}",
         "-v", f"{home}/.claude:{home}/.claude",
         "-v", f"{home}/.config/gh:{home}/.config/gh:ro",
         "-w", CONTAINER_WORKSPACE,
         "-e", f"ANTHROPIC_API_KEY={os.environ.get('ANTHROPIC_API_KEY', '')}",
         "-e", f"HOME={home}",
+        *(["-v", f"{home}/.claude.json:{home}/.claude.json"] if os.path.exists(f"{home}/.claude.json") else []),
+        *(["-v", f"{standalone}:/usr/local/bin/claude-host:ro"] if standalone else []),
         CLAUDE_IMAGE,
     ]
     cmd.extend(claude_args)
@@ -219,22 +249,16 @@ def invoke_claude(prompt: str, cwd: str = WORKING_DIR, stage: str = "",
         log("claude", f"[DRY-RUN] Skipping claude -p ({len(prompt)} chars)")
         return mock_claude_response(stage, iteration)
 
-    session_id = _get_session_id(task_id, stage) if task_id else ""
-    is_resume = iteration > 0 and session_id
-
+    # Session resumption is disabled: each container stage is ephemeral and the
+    # standalone binary's session store keys by the HOST working directory path,
+    # which differs from the container's /workspace path. Prompts carry all
+    # needed context explicitly so resume is not required for correctness.
+    log("claude", f"Starting new session ({len(prompt)} chars)")
     claude_args = [
-        "claude", "-p", prompt,
-        "--permission-mode", "acceptEdits",
+        "claude-host", "-p", prompt,
+        "--dangerously-skip-permissions",
         "--allowedTools", "Bash,Read,Write,Edit,Glob,Grep",
     ]
-
-    if is_resume:
-        log("claude", f"Resuming session {session_id[:8]}... ({len(prompt)} chars)")
-        claude_args.extend(["--resume", session_id])
-    else:
-        log("claude", f"Starting new session ({len(prompt)} chars)")
-        if session_id:
-            claude_args.extend(["--session-id", session_id])
 
     cmd = _build_container_cmd(claude_args, cwd=cwd)
 
@@ -244,7 +268,7 @@ def invoke_claude(prompt: str, cwd: str = WORKING_DIR, stage: str = "",
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
-            timeout=600,  # 10 minute timeout per stage
+            timeout=1800,  # 30 minute timeout per stage
         )
         output = result.stdout.strip()
         if result.returncode != 0:
@@ -399,7 +423,7 @@ async def stage_plan(task_data: dict, js) -> dict:
     team_id = task_data.get("team_id", "unknown")
     subject = task_data.get("subject", "unknown task")
     description = task_data.get("description", "")
-    issue_number = task_data.get("issue_number", 7)
+    issue_number = task_data.get("issue_number", ISSUE_NUMBER or 7)
 
     log("plan", f"Planning task: {subject}")
     log_memory("plan")
@@ -408,32 +432,23 @@ async def stage_plan(task_data: dict, js) -> dict:
     prompt = f"""You are a planning agent for the HomericIntelligence ecosystem.
 
 Task: {subject}
-Description: {description}
 GitHub Issue: #{issue_number} on {REPO}
+
+Task description (read carefully — this defines what to implement):
+{description}
 
 Instructions:
 1. Read the GitHub issue: run `gh issue view {issue_number} --repo {REPO}`
-2. Read existing ADRs at docs/adr/ for format reference
-3. Read .gitmodules and check which paths are symlinks vs real dirs (use `ls -la`)
-4. Read docs/architecture.md for context
+2. Explore the repository to understand the current state relevant to this task
+3. Produce a structured implementation plan
 
 Produce a structured plan with TWO parts:
 
 PART 1 — Implementation Plan:
-- ADR number and title
-- Each section the ADR needs (Context, Decision, Consequences)
-- Key facts to include (number of submodules, which are symlinks, why chosen)
-- Impact areas to address (CI/CD, onboarding, disaster recovery, cloning)
+List every file to create or modify, the exact changes needed, and the order of operations.
 
 PART 2 — Acceptance Criteria (the fixed rubric for review):
-Number each criterion. These will NOT change between iterations.
-1. File exists at the correct path
-2. Status field is present
-3. Context section explains the problem
-4. Decision section documents the choice and rationale
-5. Consequences section covers positive, negative, and neutral impacts
-6. Format matches existing ADRs
-7. Factually accurate
+Number each criterion. Be specific and testable. These will NOT change between iterations.
 
 Output ONLY the plan as markdown. No preamble."""
 
@@ -456,7 +471,7 @@ async def stage_test(task_data: dict, js) -> dict:
     plan = task_data.get("plan", "")
     iteration = task_data.get("iteration", 1)
     feedback = task_data.get("feedback", "")
-    issue_number = task_data.get("issue_number", 7)
+    issue_number = task_data.get("issue_number", ISSUE_NUMBER or 7)
 
     log("test", f"Writing tests (iteration {iteration})")
     log_memory("test")
@@ -474,18 +489,13 @@ Previous review feedback to incorporate into tests:
 Based on this plan and acceptance criteria:
 {plan}
 {feedback_section}
-Write a bash validation script that checks the ADR implementation.
-The script should verify each acceptance criterion from the plan:
-- File existence at the expected path
-- Required sections present (Context, Decision, Consequences)
-- Format compliance (compare structure against docs/adr/006-decouple-from-ai-maestro.md)
-- Factual accuracy (grep for expected content like submodule mentions)
-- Content completeness (each impact area addressed)
+Write a bash validation script that verifies each acceptance criterion from the plan.
 
 The script should:
 - Print PASS or FAIL for each check with a description
 - Exit 0 if ALL checks pass, exit 1 if any fail
-- Use simple bash (grep, test, etc.) — no special dependencies
+- Use simple bash (grep, test, find, etc.) — no special dependencies
+- Be specific to the actual files and changes described in the plan
 
 Output ONLY the bash script. No explanation. Start with #!/usr/bin/env bash."""
 
@@ -494,7 +504,7 @@ Output ONLY the bash script. No explanation. Start with #!/usr/bin/env bash."""
 
     # Save test script
     if not DRY_RUN:
-        test_path = os.path.join(WORKING_DIR, "e2e", "test-adr-007.sh")
+        test_path = os.path.join(WORKING_DIR, "e2e", f"test-task-{task_id[:8]}.sh")
         with open(test_path, "w") as f:
             f.write(result)
         os.chmod(test_path, 0o755)
@@ -520,7 +530,7 @@ async def stage_implement(task_data: dict, js) -> dict:
     iteration = task_data.get("iteration", 1)
     feedback = task_data.get("feedback", "")
     concerns = task_data.get("concerns", "")
-    issue_number = task_data.get("issue_number", 7)
+    issue_number = task_data.get("issue_number", ISSUE_NUMBER or 7)
 
     log("implement", f"Implementing (iteration {iteration})")
     log_memory("implement")
@@ -538,7 +548,7 @@ Outstanding concerns from reviewer:
 
     prompt = f"""You are an implementation agent for the HomericIntelligence ecosystem.
 
-Write the file docs/adr/007-symlinks-over-submodules.md based on this plan:
+Implement the task described in this plan:
 
 {plan}
 
@@ -546,13 +556,12 @@ The following test script must pass against your output:
 {test_script}
 {feedback_section}
 Instructions:
-1. Read existing ADRs at docs/adr/ for format reference (especially 006)
-2. Read .gitmodules to get accurate submodule data
-3. Check which directories are symlinks: ls -la control/ infrastructure/ provisioning/ etc.
-4. Write docs/adr/007-symlinks-over-submodules.md with accurate content
-5. Run the test script e2e/test-adr-007.sh to verify your work passes
+1. Read any relevant existing files referenced in the plan
+2. Make all the changes described in the plan
+3. Run the test script e2e/test-task-{task_id[:8]}.sh to verify your work passes
+4. Fix anything that fails before finishing
 
-Output a brief summary of what you wrote (3-5 lines). The file should already be written."""
+Output a brief summary of what you changed (3-5 lines). All files should already be written."""
 
     result = invoke_claude(prompt, stage="implement", iteration=iteration, task_id=task_id)
     post_issue_comment(issue_number, "implement", iteration, result)
@@ -574,7 +583,7 @@ async def stage_review(task_data: dict, js) -> dict:
     test_script = task_data.get("test_script", "")
     iteration = task_data.get("iteration", 1)
     previous_concerns = task_data.get("concerns", "")
-    issue_number = task_data.get("issue_number", 7)
+    issue_number = task_data.get("issue_number", ISSUE_NUMBER or 7)
 
     log("review", f"Reviewing (iteration {iteration})")
     log_memory("review")
@@ -593,17 +602,13 @@ Do NOT shift the goalposts.
 
     prompt = f"""You are a strict code reviewer for the HomericIntelligence ecosystem.
 
-Review the file docs/adr/007-symlinks-over-submodules.md against:
+Review the implementation against:
 
 1. The plan and acceptance criteria:
 {plan}
 
-2. The test script (run it: bash e2e/test-adr-007.sh):
+2. The test script (run it: bash e2e/test-task-{task_id[:8]}.sh):
 {test_script}
-
-3. ADR format reference: read docs/adr/006-decouple-from-ai-maestro.md
-
-4. Factual accuracy: check .gitmodules and ls -la on submodule directories
 {previous_section}
 For EACH acceptance criterion from the plan, output:
 - PASS: <criterion> — <brief explanation>
@@ -670,7 +675,8 @@ async def stage_ship(task_data: dict, js) -> dict:
     """Stage 5: Commit, create PR, publish completion."""
     task_id = task_data.get("task_id", "unknown")
     team_id = task_data.get("team_id", "unknown")
-    issue_number = task_data.get("issue_number", 7)
+    subject = task_data.get("subject", "implement task")
+    issue_number = task_data.get("issue_number", ISSUE_NUMBER or 7)
 
     log("ship", "Shipping approved implementation")
     log_memory("ship")
@@ -678,22 +684,22 @@ async def stage_ship(task_data: dict, js) -> dict:
 
     prompt = f"""You are a shipping agent for the HomericIntelligence ecosystem.
 
-The ADR at docs/adr/007-symlinks-over-submodules.md has been reviewed and approved.
+The implementation for this task has been reviewed and approved:
+Task: {subject}
+GitHub Issue: #{issue_number} on {REPO}
 
 Steps:
-1. Create a new branch: git checkout -b docs/adr-007-symlinks
-2. Stage the file: git add docs/adr/007-symlinks-over-submodules.md
-3. Commit: git commit -m "docs(adr): add ADR-007 documenting symlinks-instead-of-submodules decision
+1. Run: git status — to see what files were changed
+2. Create a new branch based on the task (use a short kebab-case name derived from the subject)
+3. Stage ALL changed/new files: git add <files>
+4. Commit with a conventional commit message that includes "Closes #{issue_number}" in the body
+5. Push: git push -u origin <branch>
+6. Create PR: gh pr create --repo {REPO} --title "{subject}" --body "Closes #{issue_number}
 
-Closes #{issue_number}
+Implemented by the claude-myrmidon pipeline (plan → test → implement → review → ship).
 
-Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
-4. Push: git push -u origin docs/adr-007-symlinks
-5. Create PR: gh pr create --repo {REPO} --title "docs(adr): add ADR-007 symlinks-instead-of-submodules" --body "Closes #{issue_number}
-
-Written by the claude-myrmidon pipeline (plan → test → implement → review → ship).
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+7. Enable auto-merge: gh pr merge --auto --rebase <PR number>
 
 Output the PR URL."""
 
