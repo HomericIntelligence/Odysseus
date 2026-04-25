@@ -8,7 +8,7 @@ on:
 
 jobs:
   validate:
-    name: Validate configs
+    name: validate configs
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -54,7 +54,7 @@ jobs:
           [ "$broken" -eq 0 ] || exit 1
 
   verify-scripts:
-    name: Verify Claude read permissions (if present)
+    name: verify-scripts — Claude read permissions (if present)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
