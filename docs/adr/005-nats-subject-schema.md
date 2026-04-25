@@ -8,9 +8,15 @@
 
 ## Context
 
-ADR 002 introduced NATS JetStream as the event bridge between ai-maestro webhooks and the rest of the HomericIntelligence ecosystem. The examples in ADR 002 used placeholder subjects (`maestro.agent.started`, `maestro.task.completed`) that were never implemented. The actual subject schema, designed and implemented in ProjectHermes, uses a hierarchical `hi.*` prefix with structured segments for routing and filtering.
+ADR 002 introduced NATS JetStream as the event bridge between ai-maestro
+webhooks and the rest of the HomericIntelligence ecosystem. The examples in
+ADR 002 used placeholder subjects (`maestro.agent.started`,
+`maestro.task.completed`) that were never implemented. The actual subject
+schema, designed and implemented in ProjectHermes, uses a hierarchical `hi.*`
+prefix with structured segments for routing and filtering.
 
-This ADR documents the implemented subject schema as the authoritative reference.
+This ADR documents the implemented subject schema as the authoritative
+reference.
 
 ## Decision
 
@@ -63,11 +69,16 @@ Additional durable consumers should be registered here as services are added.
 
 ### Slugification
 
-All dynamic segments (host, name) are slugified by ProjectHermes: spaces become hyphens, dots become hyphens, all lowercase. This ensures subjects are valid NATS tokens.
+All dynamic segments (host, name) are slugified by ProjectHermes: spaces
+become hyphens, dots become hyphens, all lowercase. This ensures subjects are
+valid NATS tokens.
 
 ## Consequences
 
-- All subscribers must use the `hi.*` prefix, not the `maestro.*` prefix shown in ADR 002 examples.
-- Subscribers wanting all events for a category should use `>` wildcard: `hi.agents.>`, `hi.tasks.>`.
-- Subscribers wanting events for a specific entity can filter: `hi.tasks.team-42.>`.
+- All subscribers must use the `hi.*` prefix, not the `maestro.*` prefix shown
+  in ADR 002 examples.
+- Subscribers wanting all events for a category should use `>` wildcard:
+  `hi.agents.>`, `hi.tasks.>`.
+- Subscribers wanting events for a specific entity can filter:
+  `hi.tasks.team-42.>`.
 - New event verbs can be added without changing stream configuration.

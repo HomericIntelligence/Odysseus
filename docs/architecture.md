@@ -1,22 +1,25 @@
 # HomericIntelligence System Architecture
 
-> **Post-migration architecture.** This document reflects the state after ADR-006 was implemented.
+> **Post-migration architecture.** This document reflects the state after
+> ADR-006 was implemented.
 > ai-maestro has been replaced by native HomericIntelligence components. The
-> `infrastructure/ai-maestro` submodule remains pinned for backward compatibility but carries no
-> active role and will be removed. See [ADR-006](adr/006-decouple-from-ai-maestro.md).
+> `infrastructure/ai-maestro` submodule remains pinned for backward
+> compatibility but carries no active role and will be removed.
+> See [ADR-006](adr/006-decouple-from-ai-maestro.md).
 
 ---
 
 ## Overview
 
-HomericIntelligence is a distributed agent mesh built from purpose-built, loosely-coupled
-components. There is no central platform dependency: coordination is owned by ProjectAgamemnon,
-transport is owned by ProjectKeystone (BlazingMQ + NATS JetStream), and every other component
+HomericIntelligence is a distributed agent mesh built from purpose-built,
+loosely-coupled components. There is no central platform dependency:
+coordination is owned by ProjectAgamemnon, transport is owned by
+ProjectKeystone (BlazingMQ + NATS JetStream), and every other component
 integrates through well-defined subjects rather than direct service calls.
 
-Odysseus is the meta-repo and user-facing hub. It holds Architecture Decision Records, runbooks,
-canonical configs, and references every other repository as a git submodule. Odysseus itself
-contains no application code.
+Odysseus is the meta-repo and user-facing hub. It holds Architecture Decision
+Records, runbooks, canonical configs, and references every other repository as
+a git submodule. Odysseus itself contains no application code.
 
 ---
 
@@ -46,11 +49,13 @@ contains no application code.
 
 ## Network Topology
 
-All inter-host traffic flows over **Tailscale** — a WireGuard mesh VPN. The mesh name is
-`tail8906b5.ts.net`. No inter-host port is exposed to the public internet; every service assumes
-Tailscale reachability for cross-node communication.
+All inter-host traffic flows over **Tailscale** — a WireGuard mesh VPN. The
+mesh name is `tail8906b5.ts.net`. No inter-host port is exposed to the public
+internet; every service assumes Tailscale reachability for cross-node
+communication.
 
-Intra-host communication uses BlazingMQ (via ProjectKeystone) and does not traverse the network.
+Intra-host communication uses BlazingMQ (via ProjectKeystone) and does not
+traverse the network.
 
 ---
 
@@ -125,9 +130,9 @@ Intra-host communication uses BlazingMQ (via ProjectKeystone) and does not trave
 User ↔ Odysseus ↔ Nestor ↔ Agamemnon ↔ Myrmidons workers
 ```
 
-Each hop is bidirectional. All communication flows **through** Keystone (invisible transport); no
-component holds a direct socket reference to another. Keystone is a transport detail, not a
-pipeline stage.
+Each hop is bidirectional. All communication flows **through** Keystone
+(invisible transport); no component holds a direct socket reference to another.
+Keystone is a transport detail, not a pipeline stage.
 
 ---
 
@@ -140,8 +145,8 @@ ProjectKeystone provides two transport backends, selected by deployment scope:
 | BlazingMQ | Intra-host | <500 ns | >2 M msg/sec | In-process / shared memory |
 | NATS JetStream | Cross-host | Network-bound | High | nats.c v3.12.0 over Tailscale |
 
-Components publish and subscribe to named subjects. They never hold a reference to Keystone
-itself; the transport is resolved at startup via configuration.
+Components publish and subscribe to named subjects. They never hold a reference
+to Keystone itself; the transport is resolved at startup via configuration.
 
 ---
 
@@ -164,64 +169,72 @@ All subjects use the `hi.` namespace prefix.
 
 ProjectArgus provides the full observability stack:
 
-- **Prometheus** — scrapes metrics from Agamemnon, Nestor, Keystone, Hermes, and Myrmidon workers.
-- **Loki + Promtail** — aggregates structured logs from all components via `hi.logs.>`.
+- **Prometheus** — scrapes metrics from Agamemnon, Nestor, Keystone, Hermes,
+  and Myrmidon workers.
+- **Loki + Promtail** — aggregates structured logs from all components via
+  `hi.logs.>`.
 - **Grafana** — dashboards surfaced to Odysseus for user-facing visibility.
 
-Argus does not control or coordinate components; it is read-only with respect to the rest of the
-system.
+Argus does not control or coordinate components; it is read-only with respect
+to the rest of the system.
 
 ---
 
 ## Provisioning
 
 ### Myrmidons repo (GitOps)
-YAML manifests in the Myrmidons repo describe the desired state of the agent mesh. Proteus
-dispatches `agamemnon-apply` on merge; Agamemnon reconciles live state against the manifests via
-its REST API. The Myrmidons repo is the authoritative source of container specs and agent
-templates (not ProjectMnemosyne).
+YAML manifests in the Myrmidons repo describe the desired state of the agent
+mesh. Proteus dispatches `agamemnon-apply` on merge; Agamemnon reconciles live
+state against the manifests via its REST API. The Myrmidons repo is the
+authoritative source of container specs and agent templates (not
+ProjectMnemosyne).
 
-**Current state:** Myrmidons supports single-host deployments with `local` and `docker` deployment
-types. Multi-host agent scheduling via Nomad is planned for a future phase and is tracked in
-HomericIntelligence/Myrmidons#5.
+**Current state:** Myrmidons supports single-host deployments with `local` and
+`docker` deployment types. Multi-host agent scheduling via Nomad is planned for
+a future phase and is tracked in HomericIntelligence/Myrmidons#5.
 
 ### AchaeanFleet
-All container images are defined and versioned in AchaeanFleet. Images run on the `homeric-mesh`
-Podman network. New agent types require a new Dockerfile (vessel) in AchaeanFleet before they can
-be scheduled.
+All container images are defined and versioned in AchaeanFleet. Images run on
+the `homeric-mesh` Podman network. New agent types require a new Dockerfile
+(vessel) in AchaeanFleet before they can be scheduled.
 
 ### ProjectProteus
-CI/CD pipelines written in Dagger TypeScript. On merge to main in any submodule repo, Proteus
-builds the relevant AchaeanFleet images and dispatches `agamemnon-apply` to apply any updated
-Myrmidons manifests.
+CI/CD pipelines written in Dagger TypeScript. On merge to main in any submodule
+repo, Proteus builds the relevant AchaeanFleet images and dispatches
+`agamemnon-apply` to apply any updated Myrmidons manifests.
 
 ---
 
 ## Testing
 
 ### ProjectScylla — Ablation Benchmarking
-AI agent ablation benchmarking framework. Evaluates agent architectures across tiered
-configurations (T0–T6). Scylla reports results back to Agamemnon task subjects.
+AI agent ablation benchmarking framework. Evaluates agent architectures across
+tiered configurations (T0–T6). Scylla reports results back to Agamemnon task
+subjects.
 
 ### ProjectCharybdis — Chaos Testing
-Injects faults and adverse conditions into the mesh via Agamemnon's `/v1/chaos/*` endpoints.
-Does not bypass Agamemnon to reach components directly.
+Injects faults and adverse conditions into the mesh via Agamemnon's
+`/v1/chaos/*` endpoints. Does not bypass Agamemnon to reach components
+directly.
 
 ---
 
 ## Shared Infrastructure
 
 ### ProjectMnemosyne
-Memory store for the `advise` and `learn` plugins only. Mnemosyne is not a template registry and
-does not hold agent specs; those live in the Myrmidons repo.
+Memory store for the `advise` and `learn` plugins only. Mnemosyne is not a
+template registry and does not hold agent specs; those live in the Myrmidons
+repo.
 
 ### ProjectHephaestus
-Shared utilities, Claude Code plugins, and the skills registry. Consumed by all HomericIntelligence
-repos. Includes changelog tooling, system-info helpers, and markdown utilities.
+Shared utilities, Claude Code plugins, and the skills registry. Consumed by all
+HomericIntelligence repos. Includes changelog tooling, system-info helpers, and
+markdown utilities.
 
 ### ProjectOdyssey
-Mojo ML research sandbox. Experimental work that is not production-ready lives here. When an
-experiment reaches stability it is promoted to AchaeanFleet as a new vessel.
+Mojo ML research sandbox. Experimental work that is not production-ready lives
+here. When an experiment reaches stability it is promoted to AchaeanFleet as a
+new vessel.
 
 ---
 
@@ -232,6 +245,7 @@ experiment reaches stability it is promoted to AchaeanFleet as a new vessel.
    `git submodule add <url> <category>/<RepoName>`
 3. Update `.gitmodules` and this document's Component Inventory table.
 4. Define any new NATS subjects in the schema above.
-5. Add a Dockerfile (vessel) to AchaeanFleet if the component runs as a container.
+5. Add a Dockerfile (vessel) to AchaeanFleet if the component runs as a
+   container.
 6. Add a YAML manifest to the Myrmidons repo for scheduling.
 7. Open an ADR if the component introduces a new architectural pattern.
