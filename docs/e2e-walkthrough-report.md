@@ -1,5 +1,7 @@
 # E2E Walkthrough Report
 
+> **Note:** This report was generated on 2026-04-06. Some findings have since been addressed — see issues #102 and #136.
+
 **Date:** 2026-04-06
 **Branch:** main
 **Host:** hermes (100.73.61.56, WSL2) + epimetheus (100.92.173.32, Debian 11) via Tailscale
@@ -45,7 +47,7 @@ C++ Build Chain
   ✓ g++ 13.3.0 (>= 11)
   ✓ libssl-dev 3.0.13
   ✓ make 4.3
-  ✗ conan — NOT FOUND
+  ✓ conan — (now in pixi.toml >=2.0,<3; resolved via PR #135)
   ✓ pixi 0.44.0
 
 Python Dependencies
@@ -62,12 +64,12 @@ Run 'just doctor --install' to fix installable issues.
 ```
 
 **Feedback / Issues found:**
-Three failures block key pipeline phases:
+Two failures block key pipeline phases (conan failure is now resolved — see PR #135):
 1. `podman compose` not installed — blocks Phase 3 (NATS container) and Phase 4 (compose stack)
 2. `podman socket` not active — same blockage; `/run/user/1000` does not exist in this WSL2 environment
-3. `conan` not installed — blocks `just build` for Charybdis and Keystone, and Phase 7.1 (conan validation)
+3. ~~`conan` not installed~~ — **resolved in PR #135**: conan is now declared in `pixi.toml` (`>=2.0,<3`); `pixi run conan` is available in the shared environment without a system install.
 
-To unblock: `just doctor --install` will install conan. For podman compose and podman socket, WSL2 rootless requires `sudo loginctl enable-linger $USER` and `systemctl --user enable --now podman.socket` after linger is active.
+To unblock podman compose and podman socket, WSL2 rootless requires `sudo loginctl enable-linger $USER` and `systemctl --user enable --now podman.socket` after linger is active.
 
 
 ---
@@ -96,7 +98,9 @@ CMake Error at CMakeLists.txt:39 (find_package):
 ```
 
 **Feedback / Issues found:**
-`just build` is not idempotent on this host. Agamemnon's conan install succeeds (packages cached), but Nestor's cmake `-S control/ProjectNestor -B build/ProjectNestor` does not pass `--preset conan-debug`, so `find_package(httplib)` cannot locate the conan-generated `httplib-config.cmake`. The recipe needs `-DCMAKE_TOOLCHAIN_FILE=build/ProjectNestor/conan_toolchain.cmake` to be passed explicitly. This is a POLA violation: `just build` succeeds from scratch but silently breaks on re-runs against an existing but incomplete build directory.
+~~`just build` is not idempotent on this host. Agamemnon's conan install succeeds (packages cached), but Nestor's cmake `-S control/ProjectNestor -B build/ProjectNestor` does not pass `--preset conan-debug`, so `find_package(httplib)` cannot locate the conan-generated `httplib-config.cmake`. The recipe needs `-DCMAKE_TOOLCHAIN_FILE=build/ProjectNestor/conan_toolchain.cmake` to be passed explicitly. This is a POLA violation: `just build` succeeds from scratch but silently breaks on re-runs against an existing but incomplete build directory.~~
+
+**Resolved in PR #135 (justfile:87–93):** `_build-nestor` now passes `-DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectNestor/conan_toolchain.cmake"` explicitly, matching the pattern used by `_build-agamemnon`. Re-runs against an existing build directory now locate `httplib-config.cmake` correctly. The idempotency issue is fixed.
 
 
 ### Step 2.2: `just test`
@@ -538,7 +542,7 @@ Run on epimetheus (100.92.173.32) via SSH — conan 2.27.0 with initialized defa
 
 **Feedback / Issues found:**
 1. **Conan packaging works** — All 4 C++ packages export correctly to the local cache with correct hashes. Dependency graph resolves. The `conan install` step succeeds entirely.
-2. **Consumer CMake 3.20 requirement** — `validate-conan-install.sh` creates a test consumer project that requires CMake ≥ 3.20 (uses CMakePresets.json). epimetheus has system CMake 3.18.4 (Debian 11). Fix: use `pixi run cmake` (which provides cmake ≥ 3.20 via conda-forge) in the validate script, or lower the consumer's `cmake_minimum_required` to 3.18 since the toolchain file is passed explicitly via `-DCMAKE_TOOLCHAIN_FILE`.
+2. **Consumer CMake 3.20 requirement** — `validate-conan-install.sh` creates a test consumer project that requires CMake ≥ 3.20 (uses CMakePresets.json). epimetheus has system CMake 3.18.4 (Debian 11). **Partially resolved in PR #135:** `cmake = ">=3.20,<4"` is now pinned in `pixi.toml`, so `pixi run cmake` always provides ≥ 3.20. The validate script should use `pixi run cmake` rather than the system `cmake` binary to benefit from this pin.
 3. **Conan profile correctly initialized** — Default profile: gcc 14, x86_64, gnu17, libstdc++11. No re-initialization needed.
 
 
@@ -562,21 +566,21 @@ Run on epimetheus (100.92.173.32) via SSH — conan 2.27.0 with initialized defa
 
 | Phase | Status | Blocking Issues |
 |-------|--------|-----------------|
-| 1. Prerequisites | PARTIAL | podman-compose missing, podman socket inactive, conan missing |
+| 1. Prerequisites | PARTIAL | podman-compose missing, podman socket inactive; ~~conan missing~~ (resolved PR #135 — conan now in pixi.toml) |
 | 2. Build | PARTIAL | hermes: `just build` re-run fails (Nestor cmake); epimetheus remote build via pixi PASS — Agamemnon 2/2, Nestor 26/26, Charybdis 38/38, Keystone 488/489 |
 | 3. Native binaries | PASS | Agamemnon + Nestor + Hermes + hello-myrmidon + Console all started on epimetheus; health, CRUD, IPC task pipeline, NATS events all verified |
 | 4. Compose stack | PARTIAL | 4.1 PARTIAL (start-stack.sh bypassed; 9 containers started manually with `--network=host`); 4.2 PARTIAL (4/5 services healthy — Grafana blocked by 15m DB migration + analytics timeout); 4.3 PARTIAL (7/8 phases PASS — Phase 1 stack startup + Grafana fail); 4.4 T1: 36/37, T4: 30/37; 4.5 teardown PASS |
 | 5. Cross-host | PASS | Firewall fixed (firewalld `tailscale0` → trusted zone). All 6 crosshost checks PASS: NATS, Agamemnon, Hermes, webhook, task lifecycle, observability metrics all verified across hermes↔epimetheus |
 | 6. Justfile delegation | PASS | None — 103/103 checks passed across 4 scripts |
-| 7. Package validation | PARTIAL | Pip: PASS (4/4). Conan: PARTIAL — packages export PASS, consumer install PASS, consumer build FAIL (epimetheus CMake 3.18.4 < required 3.20) |
+| 7. Package validation | PARTIAL | Pip: PASS (4/4). Conan: PARTIAL — packages export PASS, consumer install PASS, consumer build FAIL (epimetheus system CMake 3.18.4 < required 3.20; **resolved in PR #135** by pinning `cmake >=3.20` in pixi.toml — validate script should use `pixi run cmake`) |
 
 ### Top Issues (ranked by severity)
 
 1. **CRITICAL: podman rootless runtime broken on WSL2 (hermes) and epimetheus** — `/run/user/1000` does not exist; `runc` not found. Blocks Phase 4 (compose stack), NATS container, Hermes, and myrmidon worker startup entirely. Fix: enable WSL2 systemd (`[boot] systemd=true` in `/etc/wsl.conf`), then `sudo loginctl enable-linger $USER` + `just doctor --role worker --install`. Agamemnon and Nestor run fine without NATS — HTTP-only mode works.
 
-2. **HIGH: `just build` is not idempotent** — A fresh build from scratch succeeds (conan caches deps), but re-running `just build` against an existing `build/` directory fails at Nestor's cmake configure step because `find_package(httplib)` cannot locate `httplib-config.cmake` without the conan toolchain being in CMakePrefixPath. The `_build-nestor` recipe omits `-DCMAKE_TOOLCHAIN_FILE`. POLA violation: the operator has no indication that `just build` will fail on the second run.
+2. ~~**HIGH: `just build` is not idempotent**~~ — **Resolved in PR #135 (justfile:87–93).** `_build-nestor` now passes `-DCMAKE_TOOLCHAIN_FILE` explicitly. Re-runs against an existing build directory correctly locate `httplib-config.cmake` via the conan toolchain.
 
-3. **HIGH: conan not installed** — `just build` (Charybdis, Keystone), `just e2e-conan-validate`, and 2 doctor checks all fail. Fix: `pip3 install --break-system-packages conan && conan profile detect --force`. Not in pixi.toml, so `just doctor` only reports it as missing — it does not verify it exists inside the pixi environment.
+3. ~~**HIGH: conan not installed**~~ — **Resolved in PR #135.** `conan = ">=2.0,<3"` is now declared in `pixi.toml`. The pixi environment provides conan without requiring a system-level install. `just doctor` can verify via `pixi run conan --version`.
 
 4. **MEDIUM: Nestor and Charybdis test suites are stubs** — Both `ctest` runs report "No tests were found!!!" because the generated `*_tests.cmake` files have empty `TESTS` lists. The test binaries exist and link but register zero gtest cases. The test step of `just test` silently exits 0 for Nestor and Charybdis rather than surfacing this. This violates POLA: a developer running `just test` would expect test output, not silence.
 
@@ -602,9 +606,9 @@ Run on epimetheus (100.92.173.32) via SSH — conan 2.27.0 with initialized defa
 
 ### Improvement Ideas
 
-1. **Add conan to pixi.toml as a dev dependency** — `just doctor` and `just build` both depend on conan, but it is not declared in pixi.toml. Adding `conan = ">=2.0,<3"` under `[feature.dev.dependencies]` would let `pixi run conan install` work reliably without system-installed conan, and `just doctor` could verify it via `pixi run conan --version` instead of the system PATH.
+1. ~~**Add conan to pixi.toml as a dev dependency**~~ — **Done in PR #135.** `conan = ">=2.0,<3"` is now in `pixi.toml` under `[dependencies]`. `pixi run conan install` works without a system-installed conan.
 
-2. **Fix `just build` idempotency for Nestor** — The `_build-nestor` cmake invocation should pass `-DCMAKE_TOOLCHAIN_FILE={{BUILD_ROOT}}/ProjectNestor/conan_toolchain.cmake` (matching how `_build-agamemnon` works). This makes re-runs reliable and aligns with POLA: a recipe called `build` should be repeatable.
+2. ~~**Fix `just build` idempotency for Nestor**~~ — **Done in PR #135 (justfile:87–93).** `_build-nestor` now passes `-DCMAKE_TOOLCHAIN_FILE={{BUILD_ROOT}}/ProjectNestor/conan_toolchain.cmake`, matching `_build-agamemnon`. Re-runs are reliable.
 
 3. **Surface stub test suites explicitly** — Either implement the missing gtest cases in Nestor and Charybdis, or add a `ctest --no-tests=error` flag to `_test-nestor` and `_test-charybdis` so empty test suites fail loudly rather than silently passing. Silent success when no tests run violates KISS and readability.
 
@@ -626,7 +630,7 @@ Run on epimetheus (100.92.173.32) via SSH — conan 2.27.0 with initialized defa
 
 12. **Add Grafana analytics env vars to `docker-compose.e2e.yml`** — Add `GF_ANALYTICS_REPORTING_ENABLED: "false"`, `GF_ANALYTICS_CHECK_FOR_UPDATES: "false"`, `GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"` to the grafana service environment. This prevents startup hang on hosts without external internet access or fast IO for SQLite migrations.
 
-13. **Fix `validate-conan-install.sh` CMake version requirement** — The consumer test project sets `cmake_minimum_required(VERSION 3.20)` but is built using system CMake. Change to use `pixi run cmake` (provides 3.20+ via conda-forge) or lower the requirement to `3.18` since the toolchain file is passed explicitly.
+13. **Fix `validate-conan-install.sh` to use `pixi run cmake`** — The consumer test project requires CMake ≥ 3.20 and `pixi.toml` now pins `cmake = ">=3.20,<4"` (PR #135). The validate script should invoke `pixi run cmake` instead of the system `cmake` binary so it always uses the pinned version rather than relying on the host having CMake ≥ 3.20 installed.
 
 ### What Worked Well
 
@@ -642,4 +646,4 @@ Run on epimetheus (100.92.173.32) via SSH — conan 2.27.0 with initialized defa
 
 6. **Cross-host pipeline validated end-to-end** — After fixing the epimetheus host firewall (firewalld `tailscale0` → trusted zone), all 6 cross-host checks passed. Nestor on hermes connected to NATS on epimetheus. Full webhook→NATS→Agamemnon→myrmidon→task-completion pipeline executed cross-host. Hermes `nats_connected: true` confirmed. Observability metrics (`hi_agamemnon_health{} 1`, `hi_agents_total`, `hi_tasks_total`) visible at `:9100/metrics` from hermes. The architecture is correct — the single blocker was a missing firewalld rule on the worker host.
 
-7. **pixi delivers a fully reproducible build environment** — All 4 C++ components (Agamemnon, Nestor, Charybdis, Keystone) built cleanly on epimetheus's older toolchain (Debian 11, cmake 3.18, g++ 10) using conda-forge via pixi. The submodule-level `pixi.toml` files correctly declare all build dependencies (cmake ≥3.20, cxx-compiler, conan, openssl). Three issues needed one-time fixes (conan profile init, clang-tidy, Keystone spdlog visibility), but the core build pattern is correct and self-contained. Total parallel build time: ~193s.
+7. **pixi delivers a fully reproducible build environment** — All 4 C++ components (Agamemnon, Nestor, Charybdis, Keystone) built cleanly on epimetheus's older toolchain (Debian 11, cmake 3.18, g++ 10) using conda-forge via pixi. The submodule-level `pixi.toml` files correctly declare all build dependencies (cmake ≥3.20, cxx-compiler, conan, openssl). Three issues needed one-time fixes (conan profile init, clang-tidy, Keystone spdlog visibility), but the core build pattern is correct and self-contained. Total parallel build time: ~193s. **Note:** PR #135 additionally pinned `conan >=2.0,<3` and `cmake >=3.20,<4` in the top-level Odysseus `pixi.toml`, making the shared environment self-sufficient for all C++ build and validation steps.
