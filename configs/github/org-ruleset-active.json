@@ -1,0 +1,46 @@
+{
+  "name": "homeric-main-baseline",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": { "include": ["refs/heads/main"], "exclude": [] },
+    "repository_name": { "include": ["~ALL"], "exclude": [], "protected": true }
+  },
+  "bypass_actors": [
+    { "actor_id": 1, "actor_type": "OrganizationAdmin", "bypass_mode": "pull_request" },
+    { "actor_id": 49699333, "actor_type": "Integration", "bypass_mode": "pull_request" }
+  ],
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    { "type": "required_linear_history" },
+    { "type": "required_signatures" },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": false,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": true
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "required_status_checks": [
+          { "context": "lint" },
+          { "context": "unit-tests" },
+          { "context": "integration-tests" },
+          { "context": "security/dependency-scan" },
+          { "context": "security/secrets-scan" },
+          { "context": "build" },
+          { "context": "typecheck" },
+          { "context": "schema-validation" },
+          { "context": "deps/version-sync" }
+        ]
+      }
+    }
+  ]
+}

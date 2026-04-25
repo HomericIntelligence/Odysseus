@@ -1,0 +1,1101 @@
+[
+  {
+    "repo": "Odysseus",
+    "protection": {
+      "url": "https://api.github.com/repos/HomericIntelligence/Odysseus/branches/main/protection",
+      "required_status_checks": {
+        "url": "https://api.github.com/repos/HomericIntelligence/Odysseus/branches/main/protection/required_status_checks",
+        "strict": false,
+        "contexts": [
+          "Validate configs"
+        ],
+        "contexts_url": "https://api.github.com/repos/HomericIntelligence/Odysseus/branches/main/protection/required_status_checks/contexts",
+        "checks": [
+          {
+            "context": "Validate configs",
+            "app_id": 15368
+          }
+        ]
+      },
+      "required_pull_request_reviews": {
+        "url": "https://api.github.com/repos/HomericIntelligence/Odysseus/branches/main/protection/required_pull_request_reviews",
+        "dismiss_stale_reviews": false,
+        "require_code_owner_reviews": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0
+      },
+      "required_signatures": {
+        "url": "https://api.github.com/repos/HomericIntelligence/Odysseus/branches/main/protection/required_signatures",
+        "enabled": false
+      },
+      "enforce_admins": {
+        "url": "https://api.github.com/repos/HomericIntelligence/Odysseus/branches/main/protection/enforce_admins",
+        "enabled": false
+      },
+      "required_linear_history": {
+        "enabled": true
+      },
+      "allow_force_pushes": {
+        "enabled": false
+      },
+      "allow_deletions": {
+        "enabled": false
+      },
+      "block_creations": {
+        "enabled": false
+      },
+      "required_conversation_resolution": {
+        "enabled": true
+      },
+      "lock_branch": {
+        "enabled": false
+      },
+      "allow_fork_syncing": {
+        "enabled": false
+      }
+    }
+  },
+  {
+    "repo": "AchaeanFleet",
+    "protection": {
+      "url": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/branches/main/protection",
+      "required_status_checks": {
+        "url": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/branches/main/protection/required_status_checks",
+        "strict": false,
+        "contexts": [],
+        "contexts_url": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/branches/main/protection/required_status_checks/contexts",
+        "checks": []
+      },
+      "required_pull_request_reviews": {
+        "url": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/branches/main/protection/required_pull_request_reviews",
+        "dismiss_stale_reviews": false,
+        "require_code_owner_reviews": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0
+      },
+      "required_signatures": {
+        "url": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/branches/main/protection/required_signatures",
+        "enabled": false
+      },
+      "enforce_admins": {
+        "url": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/branches/main/protection/enforce_admins",
+        "enabled": false
+      },
+      "required_linear_history": {
+        "enabled": true
+      },
+      "allow_force_pushes": {
+        "enabled": false
+      },
+      "allow_deletions": {
+        "enabled": false
+      },
+      "block_creations": {
+        "enabled": false
+      },
+      "required_conversation_resolution": {
+        "enabled": true
+      },
+      "lock_branch": {
+        "enabled": false
+      },
+      "allow_fork_syncing": {
+        "enabled": false
+      }
+    }
+  },
+  {
+    "repo": "ProjectArgus",
+    "protection": {
+      "url": "https://api.github.com/repos/HomericIntelligence/ProjectArgus/branches/main/protection",
+      "required_status_checks": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectArgus/branches/main/protection/required_status_checks",
+        "strict": false,
+        "contexts": [
+          "Validate configs"
+        ],
+        "contexts_url": "https://api.github.com/repos/HomericIntelligence/ProjectArgus/branches/main/protection/required_status_checks/contexts",
+        "checks": [
+          {
+            "context": "Validate configs",
+            "app_id": 15368
+          }
+        ]
+      },
+      "required_pull_request_reviews": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectArgus/branches/main/protection/required_pull_request_reviews",
+        "dismiss_stale_reviews": false,
+        "require_code_owner_reviews": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0
+      },
+      "required_signatures": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectArgus/branches/main/protection/required_signatures",
+        "enabled": false
+      },
+      "enforce_admins": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectArgus/branches/main/protection/enforce_admins",
+        "enabled": false
+      },
+      "required_linear_history": {
+        "enabled": true
+      },
+      "allow_force_pushes": {
+        "enabled": false
+      },
+      "allow_deletions": {
+        "enabled": false
+      },
+      "block_creations": {
+        "enabled": false
+      },
+      "required_conversation_resolution": {
+        "enabled": true
+      },
+      "lock_branch": {
+        "enabled": false
+      },
+      "allow_fork_syncing": {
+        "enabled": false
+      }
+    }
+  },
+  {
+    "repo": "ProjectHermes",
+    "protection": {
+      "url": "https://api.github.com/repos/HomericIntelligence/ProjectHermes/branches/main/protection",
+      "required_status_checks": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectHermes/branches/main/protection/required_status_checks",
+        "strict": false,
+        "contexts": [
+          "Lint & Test",
+          "Integration Tests (NATS)",
+          "Secret Scanning (gitleaks)"
+        ],
+        "contexts_url": "https://api.github.com/repos/HomericIntelligence/ProjectHermes/branches/main/protection/required_status_checks/contexts",
+        "checks": [
+          {
+            "context": "Lint & Test",
+            "app_id": 15368
+          },
+          {
+            "context": "Integration Tests (NATS)",
+            "app_id": 15368
+          },
+          {
+            "context": "Secret Scanning (gitleaks)",
+            "app_id": 15368
+          }
+        ]
+      },
+      "required_pull_request_reviews": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectHermes/branches/main/protection/required_pull_request_reviews",
+        "dismiss_stale_reviews": false,
+        "require_code_owner_reviews": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0
+      },
+      "required_signatures": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectHermes/branches/main/protection/required_signatures",
+        "enabled": false
+      },
+      "enforce_admins": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectHermes/branches/main/protection/enforce_admins",
+        "enabled": false
+      },
+      "required_linear_history": {
+        "enabled": true
+      },
+      "allow_force_pushes": {
+        "enabled": false
+      },
+      "allow_deletions": {
+        "enabled": false
+      },
+      "block_creations": {
+        "enabled": false
+      },
+      "required_conversation_resolution": {
+        "enabled": true
+      },
+      "lock_branch": {
+        "enabled": false
+      },
+      "allow_fork_syncing": {
+        "enabled": false
+      }
+    }
+  },
+  {
+    "repo": "ProjectTelemachy",
+    "protection": {
+      "url": "https://api.github.com/repos/HomericIntelligence/ProjectTelemachy/branches/main/protection",
+      "required_status_checks": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectTelemachy/branches/main/protection/required_status_checks",
+        "strict": false,
+        "contexts": [],
+        "contexts_url": "https://api.github.com/repos/HomericIntelligence/ProjectTelemachy/branches/main/protection/required_status_checks/contexts",
+        "checks": []
+      },
+      "required_pull_request_reviews": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectTelemachy/branches/main/protection/required_pull_request_reviews",
+        "dismiss_stale_reviews": false,
+        "require_code_owner_reviews": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0
+      },
+      "required_signatures": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectTelemachy/branches/main/protection/required_signatures",
+        "enabled": false
+      },
+      "enforce_admins": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectTelemachy/branches/main/protection/enforce_admins",
+        "enabled": false
+      },
+      "required_linear_history": {
+        "enabled": true
+      },
+      "allow_force_pushes": {
+        "enabled": false
+      },
+      "allow_deletions": {
+        "enabled": false
+      },
+      "block_creations": {
+        "enabled": false
+      },
+      "required_conversation_resolution": {
+        "enabled": true
+      },
+      "lock_branch": {
+        "enabled": false
+      },
+      "allow_fork_syncing": {
+        "enabled": false
+      }
+    }
+  },
+  {
+    "repo": "ProjectKeystone",
+    "protection": {
+      "url": "https://api.github.com/repos/HomericIntelligence/ProjectKeystone/branches/main/protection",
+      "required_status_checks": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectKeystone/branches/main/protection/required_status_checks",
+        "strict": false,
+        "contexts": [
+          "Benchmarks",
+          "Code Coverage",
+          "Test (asan)",
+          "Test (lsan)",
+          "Test (ubsan)"
+        ],
+        "contexts_url": "https://api.github.com/repos/HomericIntelligence/ProjectKeystone/branches/main/protection/required_status_checks/contexts",
+        "checks": [
+          {
+            "context": "Benchmarks",
+            "app_id": 15368
+          },
+          {
+            "context": "Code Coverage",
+            "app_id": 15368
+          },
+          {
+            "context": "Test (asan)",
+            "app_id": 15368
+          },
+          {
+            "context": "Test (lsan)",
+            "app_id": 15368
+          },
+          {
+            "context": "Test (ubsan)",
+            "app_id": 15368
+          }
+        ]
+      },
+      "required_pull_request_reviews": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectKeystone/branches/main/protection/required_pull_request_reviews",
+        "dismiss_stale_reviews": false,
+        "require_code_owner_reviews": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0
+      },
+      "required_signatures": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectKeystone/branches/main/protection/required_signatures",
+        "enabled": false
+      },
+      "enforce_admins": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectKeystone/branches/main/protection/enforce_admins",
+        "enabled": false
+      },
+      "required_linear_history": {
+        "enabled": true
+      },
+      "allow_force_pushes": {
+        "enabled": false
+      },
+      "allow_deletions": {
+        "enabled": false
+      },
+      "block_creations": {
+        "enabled": false
+      },
+      "required_conversation_resolution": {
+        "enabled": true
+      },
+      "lock_branch": {
+        "enabled": false
+      },
+      "allow_fork_syncing": {
+        "enabled": false
+      }
+    }
+  },
+  {
+    "repo": "Myrmidons",
+    "protection": {
+      "url": "https://api.github.com/repos/HomericIntelligence/Myrmidons/branches/main/protection",
+      "required_status_checks": {
+        "url": "https://api.github.com/repos/HomericIntelligence/Myrmidons/branches/main/protection/required_status_checks",
+        "strict": false,
+        "contexts": [],
+        "contexts_url": "https://api.github.com/repos/HomericIntelligence/Myrmidons/branches/main/protection/required_status_checks/contexts",
+        "checks": []
+      },
+      "required_pull_request_reviews": {
+        "url": "https://api.github.com/repos/HomericIntelligence/Myrmidons/branches/main/protection/required_pull_request_reviews",
+        "dismiss_stale_reviews": false,
+        "require_code_owner_reviews": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0
+      },
+      "required_signatures": {
+        "url": "https://api.github.com/repos/HomericIntelligence/Myrmidons/branches/main/protection/required_signatures",
+        "enabled": false
+      },
+      "enforce_admins": {
+        "url": "https://api.github.com/repos/HomericIntelligence/Myrmidons/branches/main/protection/enforce_admins",
+        "enabled": true
+      },
+      "required_linear_history": {
+        "enabled": true
+      },
+      "allow_force_pushes": {
+        "enabled": false
+      },
+      "allow_deletions": {
+        "enabled": false
+      },
+      "block_creations": {
+        "enabled": false
+      },
+      "required_conversation_resolution": {
+        "enabled": true
+      },
+      "lock_branch": {
+        "enabled": false
+      },
+      "allow_fork_syncing": {
+        "enabled": false
+      }
+    }
+  },
+  {
+    "repo": "ProjectProteus",
+    "protection": {
+      "url": "https://api.github.com/repos/HomericIntelligence/ProjectProteus/branches/main/protection",
+      "required_status_checks": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectProteus/branches/main/protection/required_status_checks",
+        "strict": false,
+        "contexts": [
+          "Lint Shell Scripts",
+          "Validate Pipeline Configs"
+        ],
+        "contexts_url": "https://api.github.com/repos/HomericIntelligence/ProjectProteus/branches/main/protection/required_status_checks/contexts",
+        "checks": [
+          {
+            "context": "Lint Shell Scripts",
+            "app_id": 15368
+          },
+          {
+            "context": "Validate Pipeline Configs",
+            "app_id": 15368
+          }
+        ]
+      },
+      "required_pull_request_reviews": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectProteus/branches/main/protection/required_pull_request_reviews",
+        "dismiss_stale_reviews": false,
+        "require_code_owner_reviews": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0
+      },
+      "required_signatures": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectProteus/branches/main/protection/required_signatures",
+        "enabled": false
+      },
+      "enforce_admins": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectProteus/branches/main/protection/enforce_admins",
+        "enabled": false
+      },
+      "required_linear_history": {
+        "enabled": true
+      },
+      "allow_force_pushes": {
+        "enabled": false
+      },
+      "allow_deletions": {
+        "enabled": false
+      },
+      "block_creations": {
+        "enabled": false
+      },
+      "required_conversation_resolution": {
+        "enabled": true
+      },
+      "lock_branch": {
+        "enabled": false
+      },
+      "allow_fork_syncing": {
+        "enabled": false
+      }
+    }
+  },
+  {
+    "repo": "ProjectOdyssey",
+    "protection": {
+      "url": "https://api.github.com/repos/HomericIntelligence/ProjectOdyssey/branches/main/protection",
+      "required_status_checks": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectOdyssey/branches/main/protection/required_status_checks",
+        "strict": false,
+        "contexts": [
+          "pre-commit",
+          "Mojo Package Compilation",
+          "Code Quality Analysis",
+          "Gradient Checking Tests",
+          "Data Utilities Test Suite",
+          "Python Tests",
+          "Test Coverage Validation",
+          "Test Metrics",
+          "Audit Shared Links",
+          "Mojo Syntax Validation",
+          "build-and-push (ci)",
+          "build-and-push (production)",
+          "build-and-push (runtime)",
+          "lint-notebooks",
+          "mypy",
+          "python-syntax",
+          "security-scan",
+          "summary",
+          "test-images",
+          "validate-notebooks",
+          "Autograd",
+          "Base",
+          "Build Validation",
+          "Core Gradient",
+          "Core Loss",
+          "Core Tensors",
+          "Examples",
+          "Gradient Coverage Report",
+          "Core Layers",
+          "Core Types & Fuzz",
+          "Integration Tests",
+          "Other Workflow Property Checks",
+          "Security Workflow Property Checks",
+          "Data Core",
+          "Data Datasets",
+          "Data Loaders",
+          "Data Transforms",
+          "Data Samplers",
+          "Data Formats"
+        ],
+        "contexts_url": "https://api.github.com/repos/HomericIntelligence/ProjectOdyssey/branches/main/protection/required_status_checks/contexts",
+        "checks": [
+          {
+            "context": "pre-commit",
+            "app_id": 15368
+          },
+          {
+            "context": "Mojo Package Compilation",
+            "app_id": 15368
+          },
+          {
+            "context": "Code Quality Analysis",
+            "app_id": 15368
+          },
+          {
+            "context": "Gradient Checking Tests",
+            "app_id": 15368
+          },
+          {
+            "context": "Data Utilities Test Suite",
+            "app_id": 15368
+          },
+          {
+            "context": "Python Tests",
+            "app_id": 15368
+          },
+          {
+            "context": "Test Coverage Validation",
+            "app_id": 15368
+          },
+          {
+            "context": "Test Metrics",
+            "app_id": 15368
+          },
+          {
+            "context": "Audit Shared Links",
+            "app_id": 15368
+          },
+          {
+            "context": "Mojo Syntax Validation",
+            "app_id": 15368
+          },
+          {
+            "context": "build-and-push (ci)",
+            "app_id": 15368
+          },
+          {
+            "context": "build-and-push (production)",
+            "app_id": 15368
+          },
+          {
+            "context": "build-and-push (runtime)",
+            "app_id": 15368
+          },
+          {
+            "context": "lint-notebooks",
+            "app_id": 15368
+          },
+          {
+            "context": "mypy",
+            "app_id": 15368
+          },
+          {
+            "context": "python-syntax",
+            "app_id": 15368
+          },
+          {
+            "context": "security-scan",
+            "app_id": 15368
+          },
+          {
+            "context": "summary",
+            "app_id": 15368
+          },
+          {
+            "context": "test-images",
+            "app_id": 15368
+          },
+          {
+            "context": "validate-notebooks",
+            "app_id": 15368
+          },
+          {
+            "context": "Autograd",
+            "app_id": 15368
+          },
+          {
+            "context": "Base",
+            "app_id": 15368
+          },
+          {
+            "context": "Build Validation",
+            "app_id": 15368
+          },
+          {
+            "context": "Core Gradient",
+            "app_id": 15368
+          },
+          {
+            "context": "Core Loss",
+            "app_id": 15368
+          },
+          {
+            "context": "Core Tensors",
+            "app_id": 15368
+          },
+          {
+            "context": "Examples",
+            "app_id": 15368
+          },
+          {
+            "context": "Gradient Coverage Report",
+            "app_id": 15368
+          },
+          {
+            "context": "Core Layers",
+            "app_id": 15368
+          },
+          {
+            "context": "Core Types & Fuzz",
+            "app_id": 15368
+          },
+          {
+            "context": "Integration Tests",
+            "app_id": 15368
+          },
+          {
+            "context": "Other Workflow Property Checks",
+            "app_id": 15368
+          },
+          {
+            "context": "Security Workflow Property Checks",
+            "app_id": 15368
+          },
+          {
+            "context": "Data Core",
+            "app_id": 15368
+          },
+          {
+            "context": "Data Datasets",
+            "app_id": 15368
+          },
+          {
+            "context": "Data Loaders",
+            "app_id": 15368
+          },
+          {
+            "context": "Data Transforms",
+            "app_id": 15368
+          },
+          {
+            "context": "Data Samplers",
+            "app_id": 15368
+          },
+          {
+            "context": "Data Formats",
+            "app_id": 15368
+          }
+        ]
+      },
+      "required_pull_request_reviews": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectOdyssey/branches/main/protection/required_pull_request_reviews",
+        "dismiss_stale_reviews": false,
+        "require_code_owner_reviews": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0
+      },
+      "required_signatures": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectOdyssey/branches/main/protection/required_signatures",
+        "enabled": false
+      },
+      "enforce_admins": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectOdyssey/branches/main/protection/enforce_admins",
+        "enabled": false
+      },
+      "required_linear_history": {
+        "enabled": true
+      },
+      "allow_force_pushes": {
+        "enabled": false
+      },
+      "allow_deletions": {
+        "enabled": false
+      },
+      "block_creations": {
+        "enabled": false
+      },
+      "required_conversation_resolution": {
+        "enabled": true
+      },
+      "lock_branch": {
+        "enabled": false
+      },
+      "allow_fork_syncing": {
+        "enabled": false
+      }
+    }
+  },
+  {
+    "repo": "ProjectScylla",
+    "protection": {
+      "url": "https://api.github.com/repos/HomericIntelligence/ProjectScylla/branches/main/protection",
+      "required_status_checks": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectScylla/branches/main/protection/required_status_checks",
+        "strict": false,
+        "contexts": [
+          "pre-commit",
+          "test (unit, tests/unit)",
+          "Dependency vulnerability scan",
+          "Secrets scan (gitleaks)",
+          "test (integration, tests/integration)"
+        ],
+        "contexts_url": "https://api.github.com/repos/HomericIntelligence/ProjectScylla/branches/main/protection/required_status_checks/contexts",
+        "checks": [
+          {
+            "context": "pre-commit",
+            "app_id": 15368
+          },
+          {
+            "context": "test (unit, tests/unit)",
+            "app_id": 15368
+          },
+          {
+            "context": "Dependency vulnerability scan",
+            "app_id": 15368
+          },
+          {
+            "context": "Secrets scan (gitleaks)",
+            "app_id": 15368
+          },
+          {
+            "context": "test (integration, tests/integration)",
+            "app_id": 15368
+          }
+        ]
+      },
+      "required_pull_request_reviews": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectScylla/branches/main/protection/required_pull_request_reviews",
+        "dismiss_stale_reviews": false,
+        "require_code_owner_reviews": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0
+      },
+      "required_signatures": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectScylla/branches/main/protection/required_signatures",
+        "enabled": false
+      },
+      "enforce_admins": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectScylla/branches/main/protection/enforce_admins",
+        "enabled": false
+      },
+      "required_linear_history": {
+        "enabled": true
+      },
+      "allow_force_pushes": {
+        "enabled": false
+      },
+      "allow_deletions": {
+        "enabled": false
+      },
+      "block_creations": {
+        "enabled": false
+      },
+      "required_conversation_resolution": {
+        "enabled": true
+      },
+      "lock_branch": {
+        "enabled": false
+      },
+      "allow_fork_syncing": {
+        "enabled": false
+      }
+    }
+  },
+  {
+    "repo": "ProjectMnemosyne",
+    "protection": {
+      "url": "https://api.github.com/repos/HomericIntelligence/ProjectMnemosyne/branches/main/protection",
+      "required_status_checks": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectMnemosyne/branches/main/protection/required_status_checks",
+        "strict": false,
+        "contexts": [
+          "validate"
+        ],
+        "contexts_url": "https://api.github.com/repos/HomericIntelligence/ProjectMnemosyne/branches/main/protection/required_status_checks/contexts",
+        "checks": [
+          {
+            "context": "validate",
+            "app_id": 15368
+          }
+        ]
+      },
+      "required_pull_request_reviews": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectMnemosyne/branches/main/protection/required_pull_request_reviews",
+        "dismiss_stale_reviews": false,
+        "require_code_owner_reviews": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0
+      },
+      "required_signatures": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectMnemosyne/branches/main/protection/required_signatures",
+        "enabled": false
+      },
+      "enforce_admins": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectMnemosyne/branches/main/protection/enforce_admins",
+        "enabled": false
+      },
+      "required_linear_history": {
+        "enabled": true
+      },
+      "allow_force_pushes": {
+        "enabled": false
+      },
+      "allow_deletions": {
+        "enabled": false
+      },
+      "block_creations": {
+        "enabled": false
+      },
+      "required_conversation_resolution": {
+        "enabled": true
+      },
+      "lock_branch": {
+        "enabled": false
+      },
+      "allow_fork_syncing": {
+        "enabled": false
+      }
+    }
+  },
+  {
+    "repo": "ProjectHephaestus",
+    "protection": {
+      "url": "https://api.github.com/repos/HomericIntelligence/ProjectHephaestus/branches/main/protection",
+      "required_status_checks": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectHephaestus/branches/main/protection/required_status_checks",
+        "strict": false,
+        "contexts": [
+          "test (ubuntu-latest, 3.12, integration)",
+          "test (ubuntu-latest, 3.12, unit)",
+          "lint"
+        ],
+        "contexts_url": "https://api.github.com/repos/HomericIntelligence/ProjectHephaestus/branches/main/protection/required_status_checks/contexts",
+        "checks": [
+          {
+            "context": "test (ubuntu-latest, 3.12, integration)",
+            "app_id": 15368
+          },
+          {
+            "context": "test (ubuntu-latest, 3.12, unit)",
+            "app_id": 15368
+          },
+          {
+            "context": "lint",
+            "app_id": 15368
+          }
+        ]
+      },
+      "required_pull_request_reviews": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectHephaestus/branches/main/protection/required_pull_request_reviews",
+        "dismiss_stale_reviews": false,
+        "require_code_owner_reviews": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0
+      },
+      "required_signatures": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectHephaestus/branches/main/protection/required_signatures",
+        "enabled": false
+      },
+      "enforce_admins": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectHephaestus/branches/main/protection/enforce_admins",
+        "enabled": false
+      },
+      "required_linear_history": {
+        "enabled": true
+      },
+      "allow_force_pushes": {
+        "enabled": false
+      },
+      "allow_deletions": {
+        "enabled": false
+      },
+      "block_creations": {
+        "enabled": false
+      },
+      "required_conversation_resolution": {
+        "enabled": true
+      },
+      "lock_branch": {
+        "enabled": false
+      },
+      "allow_fork_syncing": {
+        "enabled": false
+      }
+    }
+  },
+  {
+    "repo": "ProjectAgamemnon",
+    "protection": {
+      "url": "https://api.github.com/repos/HomericIntelligence/ProjectAgamemnon/branches/main/protection",
+      "required_status_checks": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectAgamemnon/branches/main/protection/required_status_checks",
+        "strict": false,
+        "contexts": [
+          "All Build/Test Checks",
+          "All Static Analysis Checks"
+        ],
+        "contexts_url": "https://api.github.com/repos/HomericIntelligence/ProjectAgamemnon/branches/main/protection/required_status_checks/contexts",
+        "checks": [
+          {
+            "context": "All Build/Test Checks",
+            "app_id": 15368
+          },
+          {
+            "context": "All Static Analysis Checks",
+            "app_id": 15368
+          }
+        ]
+      },
+      "required_pull_request_reviews": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectAgamemnon/branches/main/protection/required_pull_request_reviews",
+        "dismiss_stale_reviews": false,
+        "require_code_owner_reviews": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0
+      },
+      "required_signatures": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectAgamemnon/branches/main/protection/required_signatures",
+        "enabled": false
+      },
+      "enforce_admins": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectAgamemnon/branches/main/protection/enforce_admins",
+        "enabled": false
+      },
+      "required_linear_history": {
+        "enabled": true
+      },
+      "allow_force_pushes": {
+        "enabled": false
+      },
+      "allow_deletions": {
+        "enabled": false
+      },
+      "block_creations": {
+        "enabled": false
+      },
+      "required_conversation_resolution": {
+        "enabled": true
+      },
+      "lock_branch": {
+        "enabled": false
+      },
+      "allow_fork_syncing": {
+        "enabled": false
+      }
+    }
+  },
+  {
+    "repo": "ProjectNestor",
+    "protection": {
+      "url": "https://api.github.com/repos/HomericIntelligence/ProjectNestor/branches/main/protection",
+      "required_status_checks": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectNestor/branches/main/protection/required_status_checks",
+        "strict": false,
+        "contexts": [
+          "All Build/Test Checks",
+          "All Static Analysis Checks",
+          "All Coverage Checks"
+        ],
+        "contexts_url": "https://api.github.com/repos/HomericIntelligence/ProjectNestor/branches/main/protection/required_status_checks/contexts",
+        "checks": [
+          {
+            "context": "All Build/Test Checks",
+            "app_id": 15368
+          },
+          {
+            "context": "All Static Analysis Checks",
+            "app_id": 15368
+          },
+          {
+            "context": "All Coverage Checks",
+            "app_id": 15368
+          }
+        ]
+      },
+      "required_pull_request_reviews": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectNestor/branches/main/protection/required_pull_request_reviews",
+        "dismiss_stale_reviews": false,
+        "require_code_owner_reviews": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0
+      },
+      "required_signatures": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectNestor/branches/main/protection/required_signatures",
+        "enabled": false
+      },
+      "enforce_admins": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectNestor/branches/main/protection/enforce_admins",
+        "enabled": false
+      },
+      "required_linear_history": {
+        "enabled": true
+      },
+      "allow_force_pushes": {
+        "enabled": false
+      },
+      "allow_deletions": {
+        "enabled": false
+      },
+      "block_creations": {
+        "enabled": false
+      },
+      "required_conversation_resolution": {
+        "enabled": true
+      },
+      "lock_branch": {
+        "enabled": false
+      },
+      "allow_fork_syncing": {
+        "enabled": false
+      }
+    }
+  },
+  {
+    "repo": "ProjectCharybdis",
+    "protection": {
+      "url": "https://api.github.com/repos/HomericIntelligence/ProjectCharybdis/branches/main/protection",
+      "required_status_checks": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectCharybdis/branches/main/protection/required_status_checks",
+        "strict": false,
+        "contexts": [
+          "All Build/Test Checks",
+          "All Static Analysis Checks",
+          "All Coverage Checks"
+        ],
+        "contexts_url": "https://api.github.com/repos/HomericIntelligence/ProjectCharybdis/branches/main/protection/required_status_checks/contexts",
+        "checks": [
+          {
+            "context": "All Build/Test Checks",
+            "app_id": 15368
+          },
+          {
+            "context": "All Static Analysis Checks",
+            "app_id": 15368
+          },
+          {
+            "context": "All Coverage Checks",
+            "app_id": 15368
+          }
+        ]
+      },
+      "required_pull_request_reviews": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectCharybdis/branches/main/protection/required_pull_request_reviews",
+        "dismiss_stale_reviews": false,
+        "require_code_owner_reviews": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0
+      },
+      "required_signatures": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectCharybdis/branches/main/protection/required_signatures",
+        "enabled": false
+      },
+      "enforce_admins": {
+        "url": "https://api.github.com/repos/HomericIntelligence/ProjectCharybdis/branches/main/protection/enforce_admins",
+        "enabled": false
+      },
+      "required_linear_history": {
+        "enabled": true
+      },
+      "allow_force_pushes": {
+        "enabled": false
+      },
+      "allow_deletions": {
+        "enabled": false
+      },
+      "block_creations": {
+        "enabled": false
+      },
+      "required_conversation_resolution": {
+        "enabled": true
+      },
+      "lock_branch": {
+        "enabled": false
+      },
+      "allow_fork_syncing": {
+        "enabled": false
+      }
+    }
+  }
+]
