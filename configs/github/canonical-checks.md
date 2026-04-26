@@ -31,26 +31,11 @@ The GitHub status check name is `<workflow.name> / <job.name>`.
 The `_required.yml` workflow is named `Required Checks` and each job's `name:` field
 is set to the canonical context string exactly (e.g. `name: lint`).
 
-This means each context in the org ruleset resolves to:
+This means each context in the ruleset JSON is the workflow-prefixed string:
 `Required Checks / lint`, `Required Checks / unit-tests`, etc.
 
-**Wait** — this means the required_status_checks contexts in org-ruleset.json must be
-updated to include the workflow prefix. Check the GitHub docs: org ruleset
-`required_status_checks` entries use the full check name as GitHub reports it, which
-for Actions is `<workflow name> / <job name>`.
-
-Actually, re-check: for GitHub rulesets (not classic branch protection), the
-`required_status_checks` `context` field matches the check name exactly as it appears
-in the PR checks list. For GitHub Actions, that is `<workflow-name> / <job-name>` when
-the job has a `name:` field, or just `<job-id>` when it doesn't. So if the workflow
-`name:` is `Required Checks` and the job `name:` is `lint`, the context is
-`Required Checks / lint`.
-
-The `org-ruleset.json` contexts above assume the job names are used directly as contexts.
-If the workflow adds a prefix, update the JSON accordingly. Verify by opening one test PR
-after the first `_required.yml` lands and reading `gh pr checks` output to see the exact
-strings GitHub reports.
-
-For now, write the JSON with bare names (`lint`, `unit-tests`, etc.) as placeholders.
-After Wave 1 PRs merge and a test PR is opened, the exact context strings will be
-confirmed and the JSON updated if needed before the ruleset is applied in Phase 3.
+**Verified** (2026-04-26): `repo-ruleset.json` and `repo-ruleset-active.json` use the
+prefixed form `Required Checks / <job>`. This was confirmed by inspecting the active
+`homeric-main-baseline` rulesets on all 15 repos via `gh api repos/.../ rulesets/<id>`.
+Keystone's ruleset was the only divergence (bare names, 13 contexts); it is being
+normalized to the canonical 9 prefixed contexts in PR #482.
