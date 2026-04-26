@@ -15,8 +15,12 @@ if [[ ! -f "$JSON_FILE" ]]; then
 fi
 
 # Check for existing ruleset with this name
-existing_id=$(gh api "orgs/$ORG/rulesets" --paginate \
-  --jq ".[] | select(.name == \"$RULESET_NAME\") | .id" 2>/dev/null || echo "")
+list_response=$(gh api "orgs/$ORG/rulesets" --paginate 2>&1) || {
+  echo "ERROR: Could not list org rulesets: $list_response" >&2
+  exit 1
+}
+
+existing_id=$(echo "$list_response" | jq -r ".[] | select(.name == \"$RULESET_NAME\") | .id" 2>/dev/null || echo "")
 
 if [[ -z "$existing_id" ]]; then
   echo "Creating new org ruleset '$RULESET_NAME'..."
