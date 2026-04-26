@@ -1,10 +1,9 @@
 {
   "name": "homeric-main-baseline",
   "target": "branch",
-  "enforcement": "evaluate",
+  "enforcement": "active",
   "conditions": {
-    "ref_name": { "include": ["refs/heads/main"], "exclude": [] },
-    "repository_name": { "include": ["~ALL"], "exclude": [], "protected": true }
+    "ref_name": { "include": ["refs/heads/main"], "exclude": [] }
   },
   "bypass_actors": [
     { "actor_id": 1, "actor_type": "OrganizationAdmin", "bypass_mode": "pull_request" },

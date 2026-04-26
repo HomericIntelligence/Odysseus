@@ -582,6 +582,14 @@ protection-snapshot:
 ruleset-apply FILE="configs/github/org-ruleset.json":
     ./tools/github/apply-org-ruleset.sh "{{FILE}}"
 
+# Create or update the per-repo branch ruleset on all 15 repos (evaluate mode)
+repo-rulesets-apply:
+    ./tools/github/apply-repo-rulesets.sh
+
+# Create or update the per-repo branch ruleset on all 15 repos (active/enforcing mode)
+repo-rulesets-activate:
+    ./tools/github/apply-repo-rulesets.sh --active
+
 # Validate the live org ruleset against the canonical JSON and print current enforcement + checks
 ruleset-validate:
     #!/usr/bin/env bash

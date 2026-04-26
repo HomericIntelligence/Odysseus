@@ -30,15 +30,15 @@
       "parameters": {
         "strict_required_status_checks_policy": false,
         "required_status_checks": [
-          { "context": "lint" },
-          { "context": "unit-tests" },
-          { "context": "integration-tests" },
-          { "context": "security/dependency-scan" },
-          { "context": "security/secrets-scan" },
-          { "context": "build" },
-          { "context": "typecheck" },
-          { "context": "schema-validation" },
-          { "context": "deps/version-sync" }
+          { "context": "Required Checks / lint" },
+          { "context": "Required Checks / unit-tests" },
+          { "context": "Required Checks / integration-tests" },
+          { "context": "Required Checks / security/dependency-scan" },
+          { "context": "Required Checks / security/secrets-scan" },
+          { "context": "Required Checks / build" },
+          { "context": "Required Checks / typecheck" },
+          { "context": "Required Checks / schema-validation" },
+          { "context": "Required Checks / deps/version-sync" }
         ]
       }
     }
