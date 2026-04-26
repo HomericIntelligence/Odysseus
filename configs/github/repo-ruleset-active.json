@@ -6,8 +6,7 @@
     "ref_name": { "include": ["refs/heads/main"], "exclude": [] }
   },
   "bypass_actors": [
-    { "actor_id": 1, "actor_type": "OrganizationAdmin", "bypass_mode": "pull_request" },
-    { "actor_id": 49699333, "actor_type": "Integration", "bypass_mode": "pull_request" }
+    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request" }
   ],
   "rules": [
     { "type": "deletion" },
