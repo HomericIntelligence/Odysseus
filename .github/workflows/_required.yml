@@ -94,7 +94,7 @@ jobs:
         run: |
           git submodule foreach 'git ls-remote --exit-code origin HEAD > /dev/null && echo "OK: $name" || echo "WARN: $name unreachable"'
 
-  security/dependency-scan:
+  security-dependency-scan:
     name: security/dependency-scan
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -109,7 +109,7 @@ jobs:
           exit-code: 0
           format: table
 
-  security/secrets-scan:
+  security-secrets-scan:
     name: security/secrets-scan
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -185,7 +185,7 @@ jobs:
       - name: Validate org-ruleset.json is valid JSON
         run: jq . configs/github/org-ruleset.json > /dev/null && echo "org-ruleset.json is valid JSON"
 
-  deps/version-sync:
+  deps-version-sync:
     name: deps/version-sync
     runs-on: ubuntu-latest
     timeout-minutes: 10
