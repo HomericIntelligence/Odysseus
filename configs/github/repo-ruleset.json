@@ -26,15 +26,14 @@
       "parameters": {
         "strict_required_status_checks_policy": false,
         "required_status_checks": [
-          { "context": "Required Checks / lint" },
-          { "context": "Required Checks / unit-tests" },
-          { "context": "Required Checks / integration-tests" },
-          { "context": "Required Checks / security/dependency-scan" },
-          { "context": "Required Checks / security/secrets-scan" },
-          { "context": "Required Checks / build" },
-          { "context": "Required Checks / typecheck" },
-          { "context": "Required Checks / schema-validation" },
-          { "context": "Required Checks / deps/version-sync" }
+          { "context": "lint",                    "integration_id": 15368 },
+          { "context": "unit-tests",              "integration_id": 15368 },
+          { "context": "integration-tests",       "integration_id": 15368 },
+          { "context": "security/dependency-scan","integration_id": 15368 },
+          { "context": "security/secrets-scan",   "integration_id": 15368 },
+          { "context": "build",                   "integration_id": 15368 },
+          { "context": "schema-validation",       "integration_id": 15368 },
+          { "context": "deps/version-sync",       "integration_id": 15368 }
         ]
       }
     }

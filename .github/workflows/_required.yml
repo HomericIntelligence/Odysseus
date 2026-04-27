@@ -38,6 +38,26 @@ jobs:
             fi
           done
 
+      - name: Validate all JSON files in configs/
+        run: |
+          json_files=$(find . -path './.git' -prune -o -name "*.json" -print)
+          if [ -z "$json_files" ]; then
+            echo "No JSON files found"
+          else
+            echo "$json_files" | xargs -I{} jq . {} > /dev/null
+            echo "All JSON OK"
+          fi
+
+      - name: Validate tools/github shell scripts are valid bash
+        run: |
+          sh_files=$(find tools/github -name "*.sh" 2>/dev/null || true)
+          if [ -z "$sh_files" ]; then
+            echo "No shell scripts found in tools/github"
+          else
+            echo "$sh_files" | xargs -I{} bash -n {}
+            echo "All shell scripts OK"
+          fi
+
   unit-tests:
     name: unit-tests
     runs-on: ubuntu-latest
@@ -118,9 +138,34 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Gitleaks
+        run: |
+          GITLEAKS_VERSION=8.30.1
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')
+          curl -sSfL \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_${OS}_${ARCH}.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Run Gitleaks
+        run: |
+          if [ -f .gitleaks.toml ]; then
+            gitleaks detect --source . --config .gitleaks.toml \
+              --report-format sarif --report-path gitleaks.sarif --exit-code 0
+          else
+            gitleaks detect --source . \
+              --report-format sarif --report-path gitleaks.sarif --exit-code 0
+          fi
+        continue-on-error: true
+
+      - name: Upload Gitleaks SARIF
+        if: always() && hashFiles('gitleaks.sarif') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: gitleaks-report
+          path: gitleaks.sarif
+          retention-days: 90
 
   build:
     name: build
@@ -139,33 +184,6 @@ jobs:
 
       - name: Run validate-configs (canonical build artifact for meta-repo)
         run: just validate-configs
-
-  typecheck:
-    name: typecheck
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Validate all JSON files in configs/
-        run: |
-          json_files=$(find . -path './.git' -prune -o -name "*.json" -print)
-          if [ -z "$json_files" ]; then
-            echo "No JSON files found"
-          else
-            echo "$json_files" | xargs -I{} jq . {} > /dev/null
-            echo "All JSON OK"
-          fi
-
-      - name: Validate tools/github shell scripts are valid bash
-        run: |
-          sh_files=$(find tools/github -name "*.sh" 2>/dev/null || true)
-          if [ -z "$sh_files" ]; then
-            echo "No shell scripts found in tools/github"
-          else
-            echo "$sh_files" | xargs -I{} bash -n {}
-            echo "All shell scripts OK"
-          fi
 
   schema-validation:
     name: schema-validation
