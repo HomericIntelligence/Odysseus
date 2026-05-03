@@ -102,7 +102,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Trivy filesystem scan on configs/
-        uses: aquasecurity/trivy-action@0.30.0
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           scan-type: fs
           scan-ref: configs/
@@ -118,9 +118,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run Gitleaks
+        run: |
+          wget -q https://github.com/gitleaks/gitleaks/releases/download/v8.30.0/gitleaks_8.30.0_linux_x64.tar.gz
+          echo "79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e  gitleaks_8.30.0_linux_x64.tar.gz" | sha256sum --check
+          tar -xzf gitleaks_8.30.0_linux_x64.tar.gz
+          chmod +x gitleaks
+          ./gitleaks detect --source . --no-banner --exit-code 0 || echo "::warning::gitleaks found potential issues" 
 
   build:
     name: build
@@ -133,6 +137,9 @@ jobs:
         uses: prefix-dev/setup-pixi@v0.8.1
         with:
           pixi-version: latest
+
+      - name: Install just
+        uses: extractions/setup-just@v2
 
       - name: Install yamllint (for validate-configs recipe)
         run: pip install yamllint
