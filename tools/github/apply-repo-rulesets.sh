@@ -1,19 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# apply-repo-rulesets.sh [--active]
+# apply-repo-rulesets.sh [--active] [--repos repo1,repo2,...]
 # Creates or updates the homeric-main-baseline branch ruleset on every repo.
-# Requires: gh with repo scope and GitHub Team/Enterprise plan.
 # Usage:
-#   ./tools/github/apply-repo-rulesets.sh           # evaluate mode
-#   ./tools/github/apply-repo-rulesets.sh --active  # active (enforcing) mode
+#   ./tools/github/apply-repo-rulesets.sh                    # evaluate mode, all repos
+#   ./tools/github/apply-repo-rulesets.sh --active           # active (enforcing) mode, all repos
+#   ./tools/github/apply-repo-rulesets.sh --repos Foo,Bar    # evaluate mode, specific repos only
 
 ORG="HomericIntelligence"
 RULESET_NAME="homeric-main-baseline"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-if [[ "${1:-}" == "--active" ]]; then
+ENFORCEMENT="evaluate"
+REPOS_OVERRIDE=""
+
+while [[ $# -gt 0 ]]; do
+  case "${1:-}" in
+    --active)        ENFORCEMENT="active"; shift ;;
+    --repos)         REPOS_OVERRIDE="$2"; shift 2 ;;
+    --repos=*)       REPOS_OVERRIDE="${1#--repos=}"; shift ;;
+    *) echo "Unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+if [[ "$ENFORCEMENT" == "active" ]]; then
   JSON_FILE="$REPO_ROOT/configs/github/repo-ruleset-active.json"
   echo "Applying in ACTIVE (enforcing) mode"
 else
@@ -21,23 +33,19 @@ else
   echo "Applying in EVALUATE mode"
 fi
 
-REPOS=(
-  Odysseus
-  AchaeanFleet
-  ProjectArgus
-  ProjectHermes
-  ProjectTelemachy
-  ProjectKeystone
-  Myrmidons
-  ProjectProteus
-  ProjectOdyssey
-  ProjectScylla
-  ProjectMnemosyne
-  ProjectHephaestus
-  ProjectAgamemnon
-  ProjectNestor
-  ProjectCharybdis
-)
+if [[ -n "$REPOS_OVERRIDE" ]]; then
+  IFS=',' read -ra REPOS <<< "$REPOS_OVERRIDE"
+  echo "Targeting ${#REPOS[@]} repo(s) from --repos override: ${REPOS[*]}"
+else
+  mapfile -t REPOS < <(gh repo list "$ORG" --json name,isArchived --limit 100 \
+    --jq '[.[] | select(.isArchived == false) | .name] | sort | .[]')
+  echo "Discovered ${#REPOS[@]} active repo(s) via gh repo list"
+fi
+
+if [[ ${#REPOS[@]} -eq 0 ]]; then
+  echo "ERROR: no repos resolved (gh API failure or --repos was empty)" >&2
+  exit 1
+fi
 
 ok=0
 fail=0
@@ -55,7 +63,7 @@ for repo in "${REPOS[@]}"; do
       echo "  Created."
       ok=$((ok + 1))
     else
-      echo "  FAILED (plan restriction?)"
+      echo "  FAILED"
       fail=$((fail + 1))
     fi
   else
@@ -64,7 +72,7 @@ for repo in "${REPOS[@]}"; do
       echo "  Updated."
       ok=$((ok + 1))
     else
-      echo "  FAILED (plan restriction?)"
+      echo "  FAILED"
       fail=$((fail + 1))
     fi
   fi
