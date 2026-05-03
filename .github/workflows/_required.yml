@@ -102,7 +102,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Trivy filesystem scan on configs/
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: configs/
@@ -124,7 +124,7 @@ jobs:
           echo "79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e  gitleaks_8.30.0_linux_x64.tar.gz" | sha256sum --check
           tar -xzf gitleaks_8.30.0_linux_x64.tar.gz
           chmod +x gitleaks
-          ./gitleaks detect --source . --no-banner --exit-code 0 || echo "::warning::gitleaks found potential issues" 
+          ./gitleaks detect --source . --no-banner --exit-code 0 || echo "::warning::gitleaks found potential issues"
 
   build:
     name: build
