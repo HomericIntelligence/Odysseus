@@ -649,3 +649,23 @@ atlas-review-status MILESTONE TEAM SHA AGAMEMNON_URL="http://localhost:8080":
         -f context="atlas / review-wave ({{MILESTONE}})" \
         -f description="Review wave incomplete — see team {{TEAM}} in Agamemnon"
     fi
+
+# ===========================================================================
+# Install
+# ===========================================================================
+
+# Install the full HomericIntelligence ecosystem (production)
+install role="all":
+    bash install.sh --install --role {{role}}
+
+# Install development tooling (linters, test frameworks, debug builds)
+install-dev role="all":
+    bash install_dev.sh --install --role {{role}}
+
+# Check what's missing without installing
+install-check role="all":
+    bash install.sh --check --role {{role}}
+
+# Run container-based install tests
+test-install os="all" role="worker":
+    bash tests/install/run_install_tests.sh {{os}} {{role}}
