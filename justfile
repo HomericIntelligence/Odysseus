@@ -129,16 +129,15 @@ _build-keystone:
 # Build ProjectOdyssey (Mojo — outputs to submodule build/ directory)
 # Skipped when SKIP_ODYSSEY_BUILD=true or when podman is not available (e.g. CI).
 _build-odyssey:
-    @echo "--- Building research/ProjectOdyssey (Mojo) ---"
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "${SKIP_ODYSSEY_BUILD:-}" = "true" ]; then
-      echo "  SKIP: SKIP_ODYSSEY_BUILD=true"
-      exit 0
+        echo "  SKIP: SKIP_ODYSSEY_BUILD=true"
+        exit 0
     fi
     if ! podman info >/dev/null 2>&1; then
-      echo "  SKIP: podman not available in this environment"
-      exit 0
+        echo "  SKIP: podman not available in this environment"
+        exit 0
     fi
     cd research/ProjectOdyssey
     BUILD_ROOT="{{BUILD_ROOT}}/ProjectOdyssey" just build
