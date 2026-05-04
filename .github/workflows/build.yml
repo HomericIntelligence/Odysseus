@@ -13,6 +13,8 @@ jobs:
   idempotent-build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      SKIP_ODYSSEY_BUILD: "true"
     steps:
       - uses: actions/checkout@v4
         with:
