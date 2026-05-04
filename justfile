@@ -651,19 +651,19 @@ atlas-review-status MILESTONE TEAM SHA AGAMEMNON_URL="http://localhost:8080":
     fi
 
 # ===========================================================================
-# Install
+# Ecosystem Install
 # ===========================================================================
 
 # Install the full HomericIntelligence ecosystem (production)
-install role="all":
+ecosystem-install role="all":
     bash install.sh --install --role {{role}}
 
 # Install development tooling (linters, test frameworks, debug builds)
-install-dev role="all":
+ecosystem-install-dev role="all":
     bash install_dev.sh --install --role {{role}}
 
 # Check what's missing without installing
-install-check role="all":
+ecosystem-install-check role="all":
     bash install.sh --check --role {{role}}
 
 # Run container-based install tests
