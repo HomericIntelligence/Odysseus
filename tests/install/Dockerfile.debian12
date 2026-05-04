@@ -1,11 +1,20 @@
 FROM debian:12-slim
 
-RUN apt-get update && apt-get install -y sudo && rm -rf /var/lib/apt/lists/*
+# Only pre-install sudo and git — install.sh bootstraps everything else
+RUN apt-get update && apt-get install -y sudo git ca-certificates && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash tester && \
     echo "tester ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/tester
 
 USER tester
-WORKDIR /home/tester/Projects/Odysseus
+WORKDIR /home/tester
 
-COPY --chown=tester:tester . .
+# Clone Odysseus from GitHub (clean, no submodule .git symlink issues)
+# --no-recurse-submodules: install.sh phase 30 handles submodule init
+ARG ODYSSEUS_REF=main
+RUN git clone --depth 1 --branch "${ODYSSEUS_REF}" \
+    --recurse-submodules --shallow-submodules \
+    https://github.com/HomericIntelligence/Odysseus.git \
+    /home/tester/Projects/Odysseus
+
+WORKDIR /home/tester/Projects/Odysseus

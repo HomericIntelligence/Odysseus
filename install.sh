@@ -145,9 +145,11 @@ run_phase() {
 }
 
 # ─── Run production phases ────────────────────────────────────────────────────
+# Phase 10 first (system apt deps), then 30 (submodules — makes ProjectHephaestus
+# available), then 20 (base tooling delegates to ProjectHephaestus installer).
 run_phase "10"
-run_phase "20"
 run_phase "30"
+run_phase "20"
 run_phase "40"
 run_phase "50"
 

@@ -1,11 +1,20 @@
 FROM ubuntu:22.04
 
-RUN apt-get update && apt-get install -y sudo && rm -rf /var/lib/apt/lists/*
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Only pre-install sudo and git — install.sh bootstraps everything else
+RUN apt-get update && apt-get install -y sudo git ca-certificates && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash tester && \
     echo "tester ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/tester
 
 USER tester
-WORKDIR /home/tester/Projects/Odysseus
+WORKDIR /home/tester
 
-COPY --chown=tester:tester . .
+ARG ODYSSEUS_REF=main
+RUN git clone --depth 1 --branch "${ODYSSEUS_REF}" \
+    --recurse-submodules --shallow-submodules \
+    https://github.com/HomericIntelligence/Odysseus.git \
+    /home/tester/Projects/Odysseus
+
+WORKDIR /home/tester/Projects/Odysseus

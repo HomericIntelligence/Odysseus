@@ -25,7 +25,7 @@ declare -A SENTINEL_FILES=(
     ["provisioning/Myrmidons"]="provisioning/Myrmidons/pixi.toml"
     ["research/ProjectOdyssey"]="research/ProjectOdyssey/pixi.toml"
     ["research/ProjectScylla"]="research/ProjectScylla/pixi.toml"
-    ["shared/ProjectMnemosyne"]="shared/ProjectMnemosyne/pixi.toml"
+    ["shared/ProjectMnemosyne"]="shared/ProjectMnemosyne/scripts/validate_plugins.py"
     ["testing/ProjectCharybdis"]="testing/ProjectCharybdis/CMakeLists.txt"
     ["ci-cd/ProjectProteus"]="ci-cd/ProjectProteus/pixi.toml"
 )

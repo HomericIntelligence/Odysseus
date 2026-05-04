@@ -27,6 +27,8 @@ ODYSSEUS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OS="${1:-all}"
 ROLE="${2:-worker}"
 DEV=""
+# Branch/ref to clone inside container (default: main; override to test pre-merge branches)
+ODYSSEUS_REF="${ODYSSEUS_REF:-main}"
 
 # Allow --dev as third positional or anywhere in args
 for arg in "$@"; do
@@ -49,11 +51,14 @@ run_test() {
     echo -e "${CYAN}════════════════════════════════════════${NC}"
 
     # ── Build image ──────────────────────────────────────────────────────────
-    echo -e "${YELLOW}Building image ${image}...${NC}"
+    # Build context is just the Dockerfile directory — the image clones
+    # Odysseus from GitHub at build time to avoid submodule .git symlink issues.
+    echo -e "${YELLOW}Building image ${image} (ref=${ODYSSEUS_REF})...${NC}"
     "$RUNTIME" build \
         -t "$image" \
         -f "$dockerfile" \
-        "$ODYSSEUS_ROOT" 2>&1 | tail -5
+        --build-arg "ODYSSEUS_REF=${ODYSSEUS_REF}" \
+        "$(dirname "$dockerfile")" 2>&1 | tail -5
 
     # ── Run 1: first install ──────────────────────────────────────────────────
     echo -e "${YELLOW}Run 1: install.sh --install --role ${role}${NC}"
