@@ -610,3 +610,31 @@ ruleset-validate:
 # Remove classic branch protection from ALL 15 repos (requires confirmation; run after ruleset is active)
 protection-remove-all:
     ./tools/github/remove-classic-protection.sh --all
+
+# ===========================================================================
+# Atlas review wave
+# ===========================================================================
+
+# Dispatch 6-dimension review wave for an Atlas milestone PR via Agamemnon
+atlas-review-dispatch MILESTONE PR AGAMEMNON_URL="http://localhost:8080":
+    infrastructure/ProjectArgus/dashboard/scripts/atlas-review-dispatch.sh {{MILESTONE}} {{PR}} {{AGAMEMNON_URL}}
+
+# Aggregate review wave results — exits 0 when 6/6 dimensions approved
+atlas-review-aggregate MILESTONE TEAM AGAMEMNON_URL="http://localhost:8080":
+    infrastructure/ProjectArgus/dashboard/scripts/atlas-review-aggregate.sh {{MILESTONE}} {{TEAM}} {{AGAMEMNON_URL}}
+
+# Post GitHub commit status for the review wave outcome
+atlas-review-status MILESTONE TEAM SHA AGAMEMNON_URL="http://localhost:8080":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if just atlas-review-aggregate {{MILESTONE}} {{TEAM}} {{AGAMEMNON_URL}}; then
+      gh api repos/HomericIntelligence/Odysseus/statuses/{{SHA}} \
+        -f state=success \
+        -f context="atlas / review-wave ({{MILESTONE}})" \
+        -f description="6/6 dimensions approved"
+    else
+      gh api repos/HomericIntelligence/Odysseus/statuses/{{SHA}} \
+        -f state=failure \
+        -f context="atlas / review-wave ({{MILESTONE}})" \
+        -f description="Review wave incomplete — see team {{TEAM}} in Agamemnon"
+    fi
