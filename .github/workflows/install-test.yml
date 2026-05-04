@@ -1,22 +1,8 @@
 name: Install test
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - install.sh
-      - install_dev.sh
-      - scripts/install/**
-      - tests/install/**
-      - .gitmodules
-  pull_request:
-    branches: [main]
-    paths:
-      - install.sh
-      - install_dev.sh
-      - scripts/install/**
-      - tests/install/**
-      - .gitmodules
+  schedule:
+    - cron: "0 6 * * 1"  # Every Monday at 06:00 UTC
   workflow_dispatch:
     inputs:
       ref:
