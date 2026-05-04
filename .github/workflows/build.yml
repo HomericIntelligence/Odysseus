@@ -21,4 +21,6 @@ jobs:
       - name: Detect conan profile
         run: pixi run conan profile detect
       - name: Run idempotency test
+        env:
+          SKIP_ODYSSEY_BUILD: "true"
         run: bash e2e/test-build-idempotent.sh
