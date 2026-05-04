@@ -29,13 +29,15 @@ CPP_REPOS=(
 
 RUNTIME_PREFIX="${ODYSSEUS_RUNTIME_PREFIX:-$HOME/.local}"
 
-if ! has_cmd cmake; then
-    check_fail "cmake not found — install it first (phase 10/20)"
+if ! has_cmd pixi; then
+    check_fail "pixi not found — install it first (phase 20/40)"
     return 0 2>/dev/null || exit 0
 fi
 
-if ! has_cmd pixi; then
-    check_fail "pixi not found — install it first (phase 20/40)"
+# cmake may live in the pixi conda env rather than system PATH; that's fine —
+# all build commands below use `pixi run -- cmake` which resolves it correctly.
+if ! has_cmd cmake && ! pixi run -- cmake --version >/dev/null 2>&1; then
+    check_fail "cmake not found (neither on PATH nor via pixi run) — install it first"
     return 0 2>/dev/null || exit 0
 fi
 
