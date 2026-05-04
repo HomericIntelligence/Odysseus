@@ -68,3 +68,4 @@ jobs:
           else
             echo "scripts/verify_claude_read_permissions.py not present — skipping"
           fi
+
