@@ -150,6 +150,20 @@ run_phase() {
 run_phase "10"
 run_phase "30"
 run_phase "20"
+
+# Extend PATH to pick up tools installed by phase 20 (pixi, just, nats-server, etc.)
+# These are added to ~/.bashrc by the Hephaestus installer but won't propagate to
+# this running shell without explicitly extending PATH here.
+for _p in \
+    "$HOME/.pixi/bin" \
+    "$HOME/.local/bin" \
+    "/home/linuxbrew/.linuxbrew/bin" \
+    "/usr/local/go/bin"
+do
+    [[ -d "$_p" ]] && [[ ":$PATH:" != *":$_p:"* ]] && export PATH="$_p:$PATH"
+done
+unset _p
+
 run_phase "40"
 run_phase "50"
 
