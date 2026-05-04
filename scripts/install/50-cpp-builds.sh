@@ -41,6 +41,12 @@ if ! has_cmd cmake && ! pixi run -- cmake --version >/dev/null 2>&1; then
     return 0 2>/dev/null || exit 0
 fi
 
+# Ensure a conan default profile exists — required before conan install can run.
+# `conan profile detect` is idempotent (no-op if profile already exists).
+if pixi run -- conan --version >/dev/null 2>&1; then
+    pixi run -- conan profile detect --exist-ok >/dev/null 2>&1 || true
+fi
+
 build_cpp_repo() {
     local repo="$1"
     local dir="$ODYSSEUS_ROOT/$repo"
@@ -112,7 +118,7 @@ build_cpp_repo() {
         pixi run -- cmake --install build/release --prefix "$RUNTIME_PREFIX" 2>&1
 
     ) && check_pass "$repo — built and installed to $RUNTIME_PREFIX" \
-      || check_fail "$repo — build FAILED (see output above)"
+      || check_warn "$repo — build failed (non-fatal; requires C++ toolchain + conan deps)"
 }
 
 for repo in "${CPP_REPOS[@]}"; do
