@@ -51,8 +51,10 @@ if [[ "${INSTALL:-false}" != "true" ]]; then
     return 0 2>/dev/null || exit 0
 fi
 
-echo -e "    ${BLUE}→${NC} Running: git submodule update --init --recursive"
-if git -C "$ODYSSEUS_ROOT" submodule update --init --recursive; then
+# Use --depth 1 --recommend-shallow so submodule fetches work correctly
+# when the parent Odysseus repo was itself cloned with --depth 1.
+echo -e "    ${BLUE}→${NC} Running: git submodule update --init --recursive --depth 1 --recommend-shallow"
+if git -C "$ODYSSEUS_ROOT" submodule update --init --recursive --depth 1 --recommend-shallow; then
     # Re-verify sentinels after init
     STILL_MISSING=()
     for mod in "${UNINITIALIZED[@]}"; do
