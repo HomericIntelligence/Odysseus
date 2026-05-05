@@ -67,22 +67,28 @@ else
 fi
 
 # ─── Fix cache ownership ──────────────────────────────────────────────────────
-# Hephaestus installs pixi (and pixi creates ~/.cache/rattler/) while running
-# as root under sudo -E. The cache directories are then root-owned, causing
-# permission errors when Phase 3 runs pixi as the regular user.
-# Fix: hand ownership back to the invoking user for all relevant caches.
+# Hephaestus installs pixi while running as root (sudo -E). Pixi lazily
+# creates ~/.cache/rattler/cache/{pkgs,repodata} on first use — which happens
+# inside the root subprocess — making those dirs root-owned. Phase 3 then
+# fails every pixi invocation with "Permission denied".
+#
+# Fix: pre-create the rattler cache tree as root, then immediately hand all
+# relevant dirs to the invoking user. This way pixi finds the dirs already
+# present and user-owned when it runs in Phase 3.
 _real_user="${SUDO_USER:-}"
 if [[ -n "$_real_user" ]]; then
     for _cache_dir in \
-        "$HOME/.cache/rattler" \
+        "$HOME/.cache/rattler/cache/pkgs" \
+        "$HOME/.cache/rattler/cache/repodata" \
+        "$HOME/.cache/uv" \
         "$HOME/.pixi" \
-        "$HOME/.local/bin" \
-        "$HOME/.cache/uv"
+        "$HOME/.local/bin"
     do
-        if [[ -e "$_cache_dir" ]]; then
-            chown -R "$_real_user" "$_cache_dir" 2>/dev/null || true
-        fi
+        mkdir -p "$_cache_dir" 2>/dev/null || true
+        chown -R "$_real_user" "$_cache_dir" 2>/dev/null || true
     done
-    check_pass "Cache ownership restored to $_real_user"
+    # Also fix the parent dirs
+    chown "$_real_user" "$HOME/.cache/rattler" "$HOME/.cache/rattler/cache" 2>/dev/null || true
+    check_pass "Cache dirs pre-created and ownership set to $_real_user"
 fi
 unset _real_user _cache_dir
