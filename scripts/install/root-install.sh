@@ -65,3 +65,24 @@ else
     # shellcheck source=20-base-tooling.sh
     source "$(dirname "${BASH_SOURCE[0]}")/20-base-tooling.sh"
 fi
+
+# ─── Fix cache ownership ──────────────────────────────────────────────────────
+# Hephaestus installs pixi (and pixi creates ~/.cache/rattler/) while running
+# as root under sudo -E. The cache directories are then root-owned, causing
+# permission errors when Phase 3 runs pixi as the regular user.
+# Fix: hand ownership back to the invoking user for all relevant caches.
+_real_user="${SUDO_USER:-}"
+if [[ -n "$_real_user" ]]; then
+    for _cache_dir in \
+        "$HOME/.cache/rattler" \
+        "$HOME/.pixi" \
+        "$HOME/.local/bin" \
+        "$HOME/.cache/uv"
+    do
+        if [[ -e "$_cache_dir" ]]; then
+            chown -R "$_real_user" "$_cache_dir" 2>/dev/null || true
+        fi
+    done
+    check_pass "Cache ownership restored to $_real_user"
+fi
+unset _real_user _cache_dir
