@@ -97,12 +97,21 @@ build_cpp_repo() {
         # ── Step 2: CMake configure (release preset) ──────────────────────────
         # The preset sets generator=Ninja and toolchainFile=build/release/conan_toolchain.cmake.
         # Both are satisfied: pixi env has Ninja on PATH and conan install wrote the toolchain.
+        #
+        # Clang-tidy: each repo uses ${PROJECT_NAME}_ENABLE_CLANG_TIDY. Pass all four to cover
+        # every repo; cmake silently ignores unknown cache vars. The conda cross-compiler sysroot
+        # causes 'stddef.h not found' when clang-tidy runs during build (it uses clang's headers
+        # but the sysroot wchar.h tries to find stddef.h via a path clang doesn't know).
+        #
         # NATS_BUILD_LIBS_SHARED=OFF: nats.c FetchContent cmake_install unconditionally
         # references libnats.so even when BUILD_SHARED_LIBS=OFF (set by conan toolchain),
-        # causing cmake --install to fail. Override here to suppress the shared lib rule.
+        # causing cmake --install to fail.
         echo -e "      ${DIM}cmake --preset release...${NC}"
         pixi run -- cmake --preset release \
-            -DENABLE_CLANG_TIDY=OFF \
+            -DProjectAgamemnon_ENABLE_CLANG_TIDY=OFF \
+            -DProjectNestor_ENABLE_CLANG_TIDY=OFF \
+            -DProjectKeystone_ENABLE_CLANG_TIDY=OFF \
+            -DProjectCharybdis_ENABLE_CLANG_TIDY=OFF \
             -DNATS_BUILD_LIBS_SHARED=OFF \
             2>&1
 
