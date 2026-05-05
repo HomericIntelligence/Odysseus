@@ -147,6 +147,26 @@ _detect_phase() {
 _detect_phase "10"
 _detect_phase "20"
 
+# Phase 20 delegates to Hephaestus as a subprocess (not sourced), so its
+# failures never increment _FAIL — _detect_phase records it as MISSING=false
+# even when pixi/just/nats-server are absent.  Override: check directly.
+_p20_ok=true
+for _t in pixi just nats-server; do
+    command -v "$_t" >/dev/null 2>&1 && continue
+    # Also check install locations not yet on PATH
+    [[ -x "$HOME/.pixi/bin/$_t" || -x "$HOME/.local/bin/$_t" ]] && continue
+    _p20_ok=false; break
+done
+if [[ "$_p20_ok" == "false" ]]; then
+    # Replace the entry written by _detect_phase or append if absent
+    if grep -q "^PHASE_20_MISSING=" "$STATE_FILE" 2>/dev/null; then
+        sed -i 's/^PHASE_20_MISSING=.*/PHASE_20_MISSING=true/' "$STATE_FILE"
+    else
+        echo "PHASE_20_MISSING=true" >> "$STATE_FILE"
+    fi
+fi
+unset _p20_ok _t
+
 # User-space phases
 _detect_phase "30"
 _detect_phase "40"
