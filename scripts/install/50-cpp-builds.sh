@@ -97,9 +97,13 @@ build_cpp_repo() {
         # ── Step 2: CMake configure (release preset) ──────────────────────────
         # The preset sets generator=Ninja and toolchainFile=build/release/conan_toolchain.cmake.
         # Both are satisfied: pixi env has Ninja on PATH and conan install wrote the toolchain.
+        # NATS_BUILD_LIBS_SHARED=OFF: nats.c FetchContent cmake_install unconditionally
+        # references libnats.so even when BUILD_SHARED_LIBS=OFF (set by conan toolchain),
+        # causing cmake --install to fail. Override here to suppress the shared lib rule.
         echo -e "      ${DIM}cmake --preset release...${NC}"
         pixi run -- cmake --preset release \
             -DENABLE_CLANG_TIDY=OFF \
+            -DNATS_BUILD_LIBS_SHARED=OFF \
             2>&1
 
         # ── Step 3: Build ─────────────────────────────────────────────────────
