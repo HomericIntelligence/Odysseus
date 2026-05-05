@@ -41,11 +41,10 @@ if ! has_cmd cmake && ! pixi run -- cmake --version >/dev/null 2>&1; then
     return 0 2>/dev/null || exit 0
 fi
 
-# Ensure a conan default profile exists — required before conan install can run.
-# `conan profile detect` is idempotent (no-op if profile already exists).
-if pixi run -- conan --version >/dev/null 2>&1; then
-    pixi run -- conan profile detect --exist-ok >/dev/null 2>&1 || true
-fi
+# Ensure a system-level conan default profile exists so conan doesn't error
+# when neither a system default nor a repo-local profile is available.
+# This is a no-op if the system default profile already exists.
+pixi run -- conan profile detect --exist-ok >/dev/null 2>&1 || true
 
 build_cpp_repo() {
     local repo="$1"
@@ -77,41 +76,31 @@ build_cpp_repo() {
         cd "$dir"
 
         # ── Step 1: Conan deps ────────────────────────────────────────────────
-        if has_cmd conan; then
-            CONAN_PROFILE_ARGS=(-pr:h default -pr:b default)
-            # Use repo-local release profile if it exists
-            if [[ -f "conan/profiles/release" ]]; then
-                CONAN_PROFILE_ARGS=(-pr:h conan/profiles/release -pr:b conan/profiles/release)
-            fi
-            echo -e "      ${DIM}conan install...${NC}"
-            conan install . --build=missing -of build/conan "${CONAN_PROFILE_ARGS[@]}" \
-                >/dev/null 2>&1 || true  # non-fatal — cmake will fail if truly missing
-        else
-            # Try via pixi run
-            pixi run -- conan install . --build=missing -of build/conan \
-                -pr:h default -pr:b default >/dev/null 2>&1 || true
+        # Output folder must match CMakePresets.json toolchainFile path:
+        #   build/${presetName}/conan_toolchain.cmake → -of build/release
+        # Prefer the repo-local conan/profiles/default (has correct compiler
+        # settings) over the system default which may not exist in the container.
+        local CONAN_PROFILE="default"
+        if [[ -f "conan/profiles/default" ]]; then
+            CONAN_PROFILE="conan/profiles/default"
         fi
+        echo -e "      ${DIM}conan install (profile: $CONAN_PROFILE)...${NC}"
+        pixi run -- conan install . --build=missing \
+            -of build/release \
+            -pr:h "$CONAN_PROFILE" -pr:b "$CONAN_PROFILE" \
+            2>&1 || true  # non-fatal — cmake will report the real error
 
         # ── Step 2: CMake configure (release preset) ──────────────────────────
+        # The preset sets generator=Ninja and toolchainFile=build/release/conan_toolchain.cmake.
+        # Both are satisfied: pixi env has Ninja on PATH and conan install wrote the toolchain.
         echo -e "      ${DIM}cmake --preset release...${NC}"
-        if pixi run -- cmake --preset release \
-            -DProjectAgamemnon_ENABLE_CLANG_TIDY=OFF \
-            -DProjectNestor_ENABLE_CLANG_TIDY=OFF \
+        pixi run -- cmake --preset release \
             -DENABLE_CLANG_TIDY=OFF \
-            2>&1; then
-            : # success
-        else
-            # Fallback: plain cmake without preset (in case toolchain file path differs)
-            echo -e "      ${YELLOW}Preset failed — trying plain cmake...${NC}"
-            pixi run -- cmake -B build/release \
-                -DCMAKE_BUILD_TYPE=Release \
-                -DENABLE_CLANG_TIDY=OFF \
-                2>&1
-        fi
+            2>&1
 
         # ── Step 3: Build ─────────────────────────────────────────────────────
         echo -e "      ${DIM}cmake --build...${NC}"
-        pixi run -- cmake --build build/release -j"$(nproc)" 2>&1
+        pixi run -- cmake --build --preset release -j"$(nproc)" 2>&1
 
         # ── Step 4: Install ───────────────────────────────────────────────────
         echo -e "      ${DIM}cmake --install to $RUNTIME_PREFIX...${NC}"
