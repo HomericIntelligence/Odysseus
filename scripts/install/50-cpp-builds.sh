@@ -29,6 +29,10 @@ CPP_REPOS=(
 
 RUNTIME_PREFIX="${ODYSSEUS_RUNTIME_PREFIX:-$HOME/.local}"
 
+# Pre-create install tree so nats.c FetchContent install doesn't fail trying
+# to mkdir lib/pkgconfig inside cmake --install.
+mkdir -p "$RUNTIME_PREFIX/bin" "$RUNTIME_PREFIX/lib/pkgconfig" "$RUNTIME_PREFIX/include" 2>/dev/null || true
+
 if ! has_cmd pixi; then
     check_fail "pixi not found — install it first (phase 20/40)"
     return 0 2>/dev/null || exit 0
