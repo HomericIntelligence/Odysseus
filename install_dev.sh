@@ -53,6 +53,19 @@ if ! ODYSSEUS_ROOT="$(_find_odysseus_root)"; then
 fi
 export ODYSSEUS_ROOT
 
+# ─── Extend PATH for tools installed by install.sh ───────────────────────────
+# install.sh writes pixi/just/brew binaries to user-local dirs added to ~/.bashrc.
+# This non-interactive shell doesn't source .bashrc, so add them explicitly.
+for _p in \
+    "$HOME/.pixi/bin" \
+    "$HOME/.local/bin" \
+    "/home/linuxbrew/.linuxbrew/bin" \
+    "/usr/local/go/bin"
+do
+    [[ -d "$_p" ]] && [[ ":$PATH:" != *":$_p:"* ]] && export PATH="$_p:$PATH"
+done
+unset _p
+
 # ─── Prerequisite check ───────────────────────────────────────────────────────
 PREREQ_ERRORS=()
 
