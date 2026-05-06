@@ -1,0 +1,96 @@
+name: Install test
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"  # Every Monday at 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch/SHA to clone inside containers
+        required: false
+        default: ""
+
+jobs:
+  install-test:
+    name: Install (${{ matrix.os }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [debian12, ubuntu2404, ubuntu2204]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine branch ref for container clone
+        id: ref
+        run: |
+          # workflow_dispatch override → manual ref
+          if [[ -n "${{ inputs.ref }}" ]]; then
+            echo "odysseus_ref=${{ inputs.ref }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "odysseus_ref=${{ github.head_ref }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "odysseus_ref=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build install test image (cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: tests/install
+          file: tests/install/Dockerfile.${{ matrix.os }}
+          build-args: ODYSSEUS_REF=${{ steps.ref.outputs.odysseus_ref }}
+          load: true
+          tags: odysseus-install-test-${{ matrix.os }}:ci
+          # Cache keyed on OS + branch so PRs get warm cache from prior runs
+          cache-from: |
+            type=gha,scope=install-${{ matrix.os }}-${{ steps.ref.outputs.odysseus_ref }}
+            type=gha,scope=install-${{ matrix.os }}-main
+          cache-to: type=gha,scope=install-${{ matrix.os }}-${{ steps.ref.outputs.odysseus_ref }},mode=max
+
+      - name: Run 1 — install.sh --install --role worker
+        id: run1
+        run: |
+          docker run --rm odysseus-install-test-${{ matrix.os }}:ci \
+            bash install.sh --install --role worker 2>&1 \
+            | tee /tmp/install-${{ matrix.os }}-run1.log
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Assert run 1 exit 0
+        run: |
+          grep -q "Install complete" /tmp/install-${{ matrix.os }}-run1.log || \
+            { echo "ERROR: 'Install complete' not found in run 1 output"; exit 1; }
+          echo "Run 1: OK"
+
+      - name: Run 2 — idempotency check
+        run: |
+          docker run --rm odysseus-install-test-${{ matrix.os }}:ci bash -c "
+            bash install.sh --install --role worker >/dev/null 2>&1
+            bash install.sh --install --role worker 2>&1
+            echo EXIT2:\$?
+          " | tee /tmp/install-${{ matrix.os }}-run2.log
+          grep -q "Install complete" /tmp/install-${{ matrix.os }}-run2.log || \
+            { echo "ERROR: idempotency run did not reach 'Install complete'"; exit 1; }
+          echo "Idempotency: OK"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Install test — ${{ matrix.os }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E "▶ Phase|Install complete|Passed checks|Failed checks|Warnings" \
+            /tmp/install-${{ matrix.os }}-run1.log 2>/dev/null \
+            | sed 's/\x1b\[[0-9;]*m//g' >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload install logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-logs-${{ matrix.os }}
+          path: /tmp/install-${{ matrix.os }}-*.log
+          retention-days: 7

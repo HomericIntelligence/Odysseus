@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 # HomericIntelligence Odysseus — Production Installer
 #
-# Orchestrates installation phases 10–60 for the HomericIntelligence ecosystem.
+# Three-phase install:
+#   Phase 1 (detect):       Probe every component; record what is missing.
+#   Phase 2 (root):         Install missing root-required components (apt, Hephaestus)
+#                           by re-invoking scripts/install/root-install.sh as sudo.
+#   Phase 3 (user):         Install missing user-space components (submodules, pixi,
+#                           C++ builds, Claude tooling) without privilege escalation.
 #
 # Usage:
 #   bash install.sh                        # Check-only mode (default)
-#   bash install.sh --install              # Install missing dependencies
+#   bash install.sh --install              # Run all three phases
 #   bash install.sh --install --role all   # All roles (default)
 #   bash install.sh --install --role worker
 #   bash install.sh --install --role control
-#   bash install.sh --only 30             # Run only phase 30
+#   bash install.sh --only 30             # Run only phase 30 (user-install sub-script)
 #   bash install.sh --skip 50             # Skip phase 50
 #   bash install.sh --no-claude-tooling   # Skip phase 60
 #
@@ -42,7 +47,6 @@ done
 export INSTALL ROLE NO_CLAUDE_TOOLING
 
 # ─── Locate Odysseus root ─────────────────────────────────────────────────────
-# Walk up from the directory of this script to find .gitmodules
 _find_odysseus_root() {
     local dir
     dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -94,66 +98,154 @@ echo -e "  Install: ${CYAN}${INSTALL}${NC}"
 [[ -n "$ONLY_PHASE" ]] && echo -e "  Only:    ${CYAN}phase ${ONLY_PHASE}${NC}"
 [[ ${#SKIP_PHASES[@]} -gt 0 ]] && echo -e "  Skip:    ${CYAN}${SKIP_PHASES[*]}${NC}"
 
-# ─── Phase runner ────────────────────────────────────────────────────────────
-PHASE_RESULTS=()
-
+# ─── Phase filter helpers ─────────────────────────────────────────────────────
 _should_run_phase() {
     local phase="$1"
-    # If --only is set, only run that phase
     if [[ -n "$ONLY_PHASE" ]]; then
         [[ "$phase" == "$ONLY_PHASE" ]] && return 0 || return 1
     fi
-    # Check skip list
     for skip in "${SKIP_PHASES[@]:-}"; do
         [[ "$phase" == "$skip" ]] && return 1
     done
     return 0
 }
 
-run_phase() {
+# ─── State file ──────────────────────────────────────────────────────────────
+# Written by Phase 1 (detect), consumed by Phase 2 (root) and Phase 3 (user).
+# Format: simple KEY=true/false shell assignments, safe to source.
+STATE_FILE="${TMPDIR:-/tmp}/odysseus-install-state-$$.env"
+trap 'rm -f "$STATE_FILE"' EXIT
+
+# ─── Phase 1: Detect ─────────────────────────────────────────────────────────
+echo ""
+echo -e "${BOLD}${CYAN}━━━ Phase 1: Detect ━━━${NC}"
+echo -e "${DIM}Probing every component — no changes made${NC}"
+
+# Run each phase script in check-only mode and record _FAIL deltas.
+# We temporarily force INSTALL=false regardless of CLI flags so probing is
+# always read-only.
+_saved_INSTALL="$INSTALL"
+INSTALL=false
+
+_detect_phase() {
     local phase_num="$1"
-    # Glob expansion to find the phase script
     local script
     script="$(echo "$ODYSSEUS_ROOT"/scripts/install/"${phase_num}"-*.sh 2>/dev/null | head -1)"
-
-    if [[ ! -f "$script" ]]; then
-        check_warn "Phase $phase_num: script not found (skipped)"
-        PHASE_RESULTS+=("WARN:$phase_num")
-        return 0
-    fi
-
-    if ! _should_run_phase "$phase_num"; then
-        check_skip "Phase $phase_num: skipped"
-        PHASE_RESULTS+=("SKIP:$phase_num")
-        return 0
-    fi
+    [[ ! -f "$script" ]] && return 0
 
     echo ""
     echo -e "${BOLD}▶ Phase ${phase_num}${NC} — $(basename "$script" .sh | sed 's/^[0-9]*-//')"
-
-    # Reset counters before each phase (we track per-phase failures via subshell exit)
     local pre_fail=$_FAIL
     # shellcheck source=/dev/null
     source "$script"
     local post_fail=$_FAIL
-
-    if [[ $post_fail -gt $pre_fail ]]; then
-        PHASE_RESULTS+=("FAIL:$phase_num")
-    else
-        PHASE_RESULTS+=("PASS:$phase_num")
-    fi
+    [[ $post_fail -gt $pre_fail ]] && echo "PHASE_${phase_num}_MISSING=true" >> "$STATE_FILE" \
+                                   || echo "PHASE_${phase_num}_MISSING=false" >> "$STATE_FILE"
 }
 
-# ─── Run production phases ────────────────────────────────────────────────────
-# Phase 10 first (system apt deps), then 30 (submodules — makes ProjectHephaestus
-# available), then 20 (base tooling delegates to ProjectHephaestus installer).
-run_phase "10"
-run_phase "30"
-run_phase "20"
+# Root-required phases
+_detect_phase "10"
+_detect_phase "20"
 
-# Extend PATH to pick up tools installed by phase 20 (pixi, just, nats-server, etc.)
-# These are added to ~/.bashrc by the Hephaestus installer but won't propagate to
-# this running shell without explicitly extending PATH here.
+# Phase 20 delegates to Hephaestus as a subprocess (not sourced), so its
+# failures never increment _FAIL — _detect_phase records it as MISSING=false
+# even when pixi/just/nats-server are absent.  Override: check directly.
+_p20_ok=true
+for _t in pixi just nats-server; do
+    command -v "$_t" >/dev/null 2>&1 && continue
+    # Also check install locations not yet on PATH
+    [[ -x "$HOME/.pixi/bin/$_t" || -x "$HOME/.local/bin/$_t" ]] && continue
+    _p20_ok=false; break
+done
+if [[ "$_p20_ok" == "false" ]]; then
+    # Replace the entry written by _detect_phase or append if absent
+    if grep -q "^PHASE_20_MISSING=" "$STATE_FILE" 2>/dev/null; then
+        sed -i 's/^PHASE_20_MISSING=.*/PHASE_20_MISSING=true/' "$STATE_FILE"
+    else
+        echo "PHASE_20_MISSING=true" >> "$STATE_FILE"
+    fi
+fi
+unset _p20_ok _t
+
+# User-space phases
+_detect_phase "30"
+_detect_phase "40"
+_detect_phase "50"
+if [[ "$NO_CLAUDE_TOOLING" != "true" ]]; then
+    _detect_phase "60"
+else
+    echo "PHASE_60_MISSING=false" >> "$STATE_FILE"
+fi
+
+INSTALL="$_saved_INSTALL"
+
+# Derive aggregate flags consumed by sub-scripts
+# shellcheck source=/dev/null
+source "$STATE_FILE"
+
+NEEDS_ROOT=false
+NEEDS_USER=false
+for _v in PHASE_10_MISSING PHASE_20_MISSING; do
+    [[ "${!_v:-false}" == "true" ]] && NEEDS_ROOT=true
+done
+for _v in PHASE_30_MISSING PHASE_40_MISSING PHASE_50_MISSING PHASE_60_MISSING; do
+    [[ "${!_v:-false}" == "true" ]] && NEEDS_USER=true
+done
+{
+    echo "NEEDS_ROOT=$NEEDS_ROOT"
+    echo "NEEDS_USER=$NEEDS_USER"
+} >> "$STATE_FILE"
+
+echo ""
+echo -e "${BOLD}Detection summary:${NC}"
+echo -e "  Root install needed:  $( [[ "$NEEDS_ROOT" == "true" ]] && echo -e "${YELLOW}yes${NC}" || echo -e "${GREEN}no${NC}" )"
+echo -e "  User install needed:  $( [[ "$NEEDS_USER" == "true" ]] && echo -e "${YELLOW}yes${NC}" || echo -e "${GREEN}no${NC}" )"
+
+if [[ "$INSTALL" != "true" ]]; then
+    echo ""
+    echo -e "${YELLOW}Check-only mode — run with --install to apply changes.${NC}"
+    if [[ "$NEEDS_ROOT" == "true" || "$NEEDS_USER" == "true" ]]; then
+        exit 1
+    fi
+    echo -e "${GREEN}All components present.${NC}"
+    exit 0
+fi
+
+# ─── Phase 2: Root install ────────────────────────────────────────────────────
+ROOT_SCRIPT="$ODYSSEUS_ROOT/scripts/install/root-install.sh"
+
+if [[ "$NEEDS_ROOT" == "true" ]]; then
+    echo ""
+    echo -e "${BOLD}${CYAN}━━━ Phase 2: Root install ━━━${NC}"
+    echo -e "${DIM}Running as sudo — apt packages and base tooling${NC}"
+
+    if [[ ! -f "$ROOT_SCRIPT" ]]; then
+        echo -e "  ${RED}✗${NC} scripts/install/root-install.sh not found" >&2
+        exit 1
+    fi
+
+    # Pass state file path and all relevant env vars via -E + positional args.
+    # We use sudo -E so HOME/USER remain the real user's (needed by Hephaestus).
+    if sudo -E \
+        ODYSSEUS_ROOT="$ODYSSEUS_ROOT" \
+        INSTALL=true \
+        ROLE="$ROLE" \
+        STATE_FILE="$STATE_FILE" \
+        bash "$ROOT_SCRIPT" "${SKIP_PHASES[@]+"${SKIP_PHASES[@]}"}"; then
+        echo -e "  ${GREEN}✓${NC} Root install complete"
+    else
+        echo -e "  ${RED}✗${NC} Root install failed — check output above" >&2
+        exit 1
+    fi
+else
+    echo ""
+    echo -e "${BOLD}${CYAN}━━━ Phase 2: Root install ━━━${NC}"
+    echo -e "  ${DIM}–${NC} All root-managed components already present — skipped"
+fi
+
+# ─── Extend PATH after root install ──────────────────────────────────────────
+# The Hephaestus installer writes to ~/.bashrc but won't propagate to this
+# running shell; extend PATH explicitly so Phase 3 can find pixi/just/etc.
 for _p in \
     "$HOME/.pixi/bin" \
     "$HOME/.local/bin" \
@@ -164,41 +256,45 @@ do
 done
 unset _p
 
-run_phase "40"
-run_phase "50"
+# ─── Phase 3: User install ────────────────────────────────────────────────────
+USER_SCRIPT="$ODYSSEUS_ROOT/scripts/install/user-install.sh"
 
-if [[ "$NO_CLAUDE_TOOLING" != "true" ]]; then
-    run_phase "60"
+if [[ "$NEEDS_USER" == "true" ]]; then
+    echo ""
+    echo -e "${BOLD}${CYAN}━━━ Phase 3: User install ━━━${NC}"
+    echo -e "${DIM}Running as current user — submodules, pixi, builds, Claude tooling${NC}"
+
+    if [[ ! -f "$USER_SCRIPT" ]]; then
+        echo -e "  ${RED}✗${NC} scripts/install/user-install.sh not found" >&2
+        exit 1
+    fi
+
+    SKIP_PHASES_ARG=""
+    [[ ${#SKIP_PHASES[@]} -gt 0 ]] && SKIP_PHASES_ARG="${SKIP_PHASES[*]}"
+
+    if ODYSSEUS_ROOT="$ODYSSEUS_ROOT" \
+       INSTALL=true \
+       ROLE="$ROLE" \
+       NO_CLAUDE_TOOLING="$NO_CLAUDE_TOOLING" \
+       STATE_FILE="$STATE_FILE" \
+       bash "$USER_SCRIPT" "${SKIP_PHASES[@]+"${SKIP_PHASES[@]}"}"; then
+        echo -e "  ${GREEN}✓${NC} User install complete"
+    else
+        echo -e "  ${RED}✗${NC} User install failed — check output above" >&2
+        exit 1
+    fi
 else
-    check_skip "Phase 60: claude-tooling skipped (--no-claude-tooling)"
-    PHASE_RESULTS+=("SKIP:60")
+    echo ""
+    echo -e "${BOLD}${CYAN}━━━ Phase 3: User install ━━━${NC}"
+    echo -e "  ${DIM}–${NC} All user-space components already present — skipped"
 fi
 
-# ─── Summary ─────────────────────────────────────────────────────────────────
-PHASES_PASSED=0; PHASES_FAILED=0; PHASES_WARNED=0
-for r in "${PHASE_RESULTS[@]}"; do
-    case "$r" in
-        PASS:*)  (( PHASES_PASSED++ )) ;;
-        FAIL:*)  (( PHASES_FAILED++ )) ;;
-        WARN:*|SKIP:*)  (( PHASES_WARNED++ )) ;;
-    esac
-done
-
+# ─── Final summary ────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}═══════════════════════════════════════${NC}"
-echo -e "Install complete: ${GREEN}${PHASES_PASSED} passed${NC}, ${RED}${PHASES_FAILED} failed${NC}, ${YELLOW}${PHASES_WARNED} warnings${NC}"
+echo -e "Install complete"
 echo -e "  ${GREEN}✓${NC} Passed checks:  ${_PASS}"
-[[ $_FAIL -gt 0 ]]  && echo -e "  ${RED}✗${NC} Failed checks:  ${_FAIL}"
-[[ $_WARN -gt 0 ]]  && echo -e "  ${YELLOW}⚠${NC} Warnings:       ${_WARN}"
-[[ $_SKIP -gt 0 ]]  && echo -e "  ${DIM}–${NC} Skipped:        ${_SKIP}"
-
-if [[ $PHASES_FAILED -gt 0 ]]; then
-    if [[ "$INSTALL" != "true" ]]; then
-        echo -e "${YELLOW}Run with --install to attempt automatic installation of missing dependencies.${NC}"
-    else
-        echo -e "${YELLOW}Some installs may require opening a new shell to take effect (PATH changes).${NC}"
-    fi
-    exit 1
-fi
-
+[[ $_FAIL -gt 0 ]] && echo -e "  ${RED}✗${NC} Failed checks:  ${_FAIL}"
+[[ $_WARN -gt 0 ]] && echo -e "  ${YELLOW}⚠${NC} Warnings:       ${_WARN}"
+[[ $_SKIP -gt 0 ]] && echo -e "  ${DIM}–${NC} Skipped:        ${_SKIP}"
 echo -e "${GREEN}All phases passed.${NC}"
