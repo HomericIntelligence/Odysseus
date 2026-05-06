@@ -5,10 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   validate:
-    name: Validate configs
+    name: validate configs
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -22,47 +23,49 @@ jobs:
           find configs/ -name '*.yml' -o -name '*.yaml' -o -name '*.json' | sort
           find configs/ -name '*.yml' -o -name '*.yaml' | xargs --no-run-if-empty yamllint -d "{extends: default, rules: {line-length: {max: 200}, truthy: disable, document-start: disable}}"
 
-  harden:
-    name: Harden checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [validate]
-    steps:
-      - uses: actions/checkout@v4
+      - name: Install markdownlint-cli
+        run: npm install -g markdownlint-cli
+
+      - name: Lint documentation markdown
+        run: markdownlint docs/architecture.md docs/adr/*.md
 
       - name: Install pixi
         uses: prefix-dev/setup-pixi@v0.8.1
         with:
-          pixi-version: latest
+          run-install: false
 
-      - name: Install markdownlint-cli
-        run: npm install -g markdownlint-cli
-
-      - name: Lint Markdown docs
-        run: |
-          markdownlint docs/architecture.md docs/adr/*.md
-
-      - name: Validate pixi manifest
+      - name: Validate pixi.toml
         run: pixi info --manifest-path pixi.toml
 
-      - name: Validate justfile
-        run: pixi run just --summary
+      - name: Install just
+        run: curl -fsSL https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+
+      - name: Validate justfile (parse round-trip)
+        run: just --summary
 
       - name: Symlink integrity audit
         run: |
-          broken=$(find . -not -path './.git/*' -type l ! -exec test -e {} \; -print)
-          if [ -n "$broken" ]; then
-            echo "Broken symlinks found:"
-            echo "$broken"
-            exit 1
-          fi
-          echo "All symlinks are valid."
+          broken=0
+          while IFS= read -r -d '' link; do
+            if [ ! -e "$link" ]; then
+              echo "BROKEN: $link -> $(readlink "$link")"
+              broken=1
+            fi
+          done < <(find . -type l -print0)
+          [ "$broken" -eq 0 ] || exit 1
 
-      - name: Verify Claude read permissions (if present)
+  verify-scripts:
+    name: verify-scripts — Claude read permissions (if present)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run verify_claude_read_permissions.py (skip if absent)
         run: |
           if [ -f scripts/verify_claude_read_permissions.py ]; then
-            python scripts/verify_claude_read_permissions.py
+            python3 scripts/verify_claude_read_permissions.py
           else
-            echo "scripts/verify_claude_read_permissions.py not present — skipping."
+            echo "scripts/verify_claude_read_permissions.py not present — skipping"
           fi
 
