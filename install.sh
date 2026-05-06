@@ -116,6 +116,21 @@ _should_run_phase() {
 STATE_FILE="${TMPDIR:-/tmp}/odysseus-install-state-$$.env"
 trap 'rm -f "$STATE_FILE"' EXIT
 
+# ─── Extend PATH for previously-installed tools ──────────────────────────────
+# Tools installed by prior runs (pixi, just, brew, go) write to user-local dirs
+# that are added to PATH via ~/.bashrc — but install.sh runs in a non-interactive
+# bash that doesn't source .bashrc. Without this, Phase 1 detect falsely reports
+# already-installed tools as missing on every re-run.
+for _p in \
+    "$HOME/.pixi/bin" \
+    "$HOME/.local/bin" \
+    "/home/linuxbrew/.linuxbrew/bin" \
+    "/usr/local/go/bin"
+do
+    [[ -d "$_p" ]] && [[ ":$PATH:" != *":$_p:"* ]] && export PATH="$_p:$PATH"
+done
+unset _p
+
 # ─── Phase 1: Detect ─────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${CYAN}━━━ Phase 1: Detect ━━━${NC}"
