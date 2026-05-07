@@ -31,6 +31,7 @@ node_modules/
 
 # Temporary files
 .claude/worktrees/
+.claude/scheduled_tasks.lock
 .issue_implementer/
 *.tmp
 
