@@ -1,6 +1,6 @@
 [workspace]
 name = "odysseus"
-version = "0.1.0"
+version = "0.1.1"
 description = "Meta-repo and unified architecture hub for the HomericIntelligence distributed agent mesh"
 channels = ["conda-forge"]
 platforms = ["linux-64"]
