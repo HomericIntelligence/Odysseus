@@ -7,6 +7,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- `install.sh` and `install_dev.sh` bootstrap scripts with container-based CI
+  validation (#260, #265).
+- E2E CI harden-job verification script (#276).
+- Unified org ruleset source-of-truth, tooling, and per-repo ruleset configs.
+- Unified required-checks workflow at the meta-repo level.
+- `.gitignore` entry for `scheduled_tasks.lock`.
+
+### Changed
+- Bumped `ProjectArgus` submodule pin through Atlas M2/M3/M4/M5/M6 and
+  v0.2.0 security patch (#266, #268, #269, #272, #273, #275).
+- Refreshed submodule pins to latest `main` SHAs on 2026-05-03, 2026-05-06,
+  and 2026-05-09 (#259, #274, #277).
+- Extended CI workflow with markdownlint, pixi, justfile, and symlink checks
+  (#22, #256).
+- Reformatted ADRs to 80-char line limit and replaced markdownlint config.
+
+### Fixed
+- `install.sh` now extends `PATH` before Phase 1 detection so prior-installed
+  tools are found (#271).
+- CI: skip `ProjectOdyssey` in idempotent-build when Podman is unavailable
+  (#262).
+- CI: install `just` in build, update trivy, replace gitleaks-action (#254).
+- CI: harden Odysseus workflow and split harden checks into a dedicated job
+  per issue #22 spec.
+
 ---
 
 ## [0.4.0] - 2026-03-29

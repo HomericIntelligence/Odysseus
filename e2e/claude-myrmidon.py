@@ -23,10 +23,12 @@ Environment:
 """
 
 import asyncio
+import glob
 import json
 import os
 import resource
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -202,13 +204,11 @@ def _build_container_cmd(claude_args: list[str], cwd: str = WORKING_DIR) -> list
     # Ensure .claude directory files are readable by the container's agent user.
     # Podman rootless maps the host user to root in the container namespace,
     # making o+r required for the agent user (uid=1000 in container) to read creds.
-    import glob as _glob
-    import stat as _stat
-    for _path in _glob.glob(f"{home}/.claude/**", recursive=True) + [f"{home}/.claude.json"]:
+    for _path in glob.glob(f"{home}/.claude/**", recursive=True) + [f"{home}/.claude.json"]:
         try:
             _st = os.stat(_path)
-            if not (_st.st_mode & _stat.S_IROTH):
-                os.chmod(_path, _st.st_mode | _stat.S_IROTH)
+            if not (_st.st_mode & stat.S_IROTH):
+                os.chmod(_path, _st.st_mode | stat.S_IROTH)
         except OSError:
             pass
 
@@ -217,8 +217,7 @@ def _build_container_cmd(claude_args: list[str], cwd: str = WORKING_DIR) -> list
     standalone = os.path.join(home, ".local/share/claude/versions/2.1.120")
     if not os.path.exists(standalone):
         # Fallback: find any available standalone version
-        import glob as _g
-        versions = sorted(_g.glob(os.path.join(home, ".local/share/claude/versions/*")))
+        versions = sorted(glob.glob(os.path.join(home, ".local/share/claude/versions/*")))
         standalone = versions[-1] if versions else ""
 
     cmd = [
@@ -280,8 +279,8 @@ def invoke_claude(prompt: str, cwd: str = WORKING_DIR, stage: str = "",
             return "ERROR: Claude returned empty output"
         return output
     except subprocess.TimeoutExpired:
-        log("claude", f"{RED}Timed out after 600s{NC}")
-        return "ERROR: Claude invocation timed out after 10 minutes"
+        log("claude", f"{RED}Timed out after 1800s{NC}")
+        return "ERROR: Claude invocation timed out after 30 minutes"
     except FileNotFoundError:
         log("claude", f"{RED}{CONTAINER_RUNTIME} not found in PATH{NC}")
         return f"ERROR: {CONTAINER_RUNTIME} not found"

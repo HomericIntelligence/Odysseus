@@ -11,10 +11,20 @@
     "shared/**",
     "ci-cd/**"
   ],
+  "git-submodules": {
+    "enabled": true,
+    "schedule": ["before 5am on Monday"]
+  },
   "packageRules": [
     {
       "matchManagers": ["github-actions"],
       "automerge": true
+    },
+    {
+      "matchManagers": ["git-submodules"],
+      "groupName": "submodule pins",
+      "commitMessageTopic": "submodule {{depName}}",
+      "automerge": false
     }
   ]
 }
