@@ -141,6 +141,19 @@ the lint guard scans only committed `*.sh`/`*.bash`/`*.yml`/`*.yaml`/`*.hcl`/
 this runbook) is not scanned. Use the runbook's quoted examples as fenced
 code in PR descriptions or issue comments when explaining the rule.
 
+Inside the scanned files, the guard recognises `|| true` at any control-flow
+boundary: end-of-line, before `#` (trailing comment), before `)` (closing
+substitution or subshell), before `;`, before `&&` or `||`. Comment lines
+(starting with optional whitespace then `#`) are exempt so that this runbook
+can quote the idiom for teaching. The regex used is:
+
+```
+^(?!\s*#).*\|\|\s*true(\s*$|\s*[#);&|])
+```
+
+If you discover a control-flow boundary not covered by this regex, file a
+follow-up and widen the pattern — the guard is meant to be inclusive.
+
 ## Adding new files
 
 When you add a new shell script, YAML workflow, or Dockerfile:

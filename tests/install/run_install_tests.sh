@@ -16,8 +16,15 @@
 set -euo pipefail
 
 # ─── Runtime detection ────────────────────────────────────────────────────────
-RUNTIME=$(command -v podman 2>/dev/null || command -v docker 2>/dev/null || true)
-if [[ -z "$RUNTIME" ]]; then
+# `command -v` exits non-zero when the binary isn't found; under set -e we need
+# to capture both attempts without aborting. An explicit if-chain makes the
+# "missing is OK, both missing is fatal" semantics clear.
+RUNTIME=""
+if RUNTIME=$(command -v podman 2>/dev/null); then
+    :
+elif RUNTIME=$(command -v docker 2>/dev/null); then
+    :
+else
     echo "ERROR: Neither podman nor docker found on PATH." >&2
     exit 1
 fi
