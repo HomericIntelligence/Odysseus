@@ -117,6 +117,35 @@ jobs:
           fi
           echo 'OK: no "continue-on-error: true" found'
 
+      - name: "Reject advisory annotation pattern"
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files -- '.github/workflows/*.yml' '.github/workflows/*.yaml')
+          # The advisory-annotation pattern in workflow run blocks is morally
+          # equivalent to continue-on-error: true: it lets a tool fail without
+          # failing the CI step. The runbook (Bucket F) requires every tool
+          # to be fail-fast. The only legitimate annotation is informational
+          # text not tied to a tool's exit code — those should use
+          # echo "WARN:" to stdout instead. See docs/runbooks/no-silent-failures.md.
+          declare -a scan_files=()
+          for f in "${files[@]}"; do
+            # Exempt this workflow file (heredoc would otherwise self-match).
+            case "$f" in
+              .github/workflows/_required.yml) continue ;;
+            esac
+            scan_files+=("$f")
+          done
+          if [ "${#scan_files[@]}" -eq 0 ]; then
+            echo "No files to scan"
+            exit 0
+          fi
+          if grep -nF '::warning::' "${scan_files[@]}"; then
+            echo ""
+            echo '::error::Found advisory annotations above. Make the underlying tool fail-fast or use echo "WARN:" to stdout. See docs/runbooks/no-silent-failures.md Bucket F.'
+            exit 1
+          fi
+          echo 'OK: no advisory annotations found'
+
   unit-tests:
     name: unit-tests
     runs-on: ubuntu-latest
@@ -203,7 +232,9 @@ jobs:
           echo "79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e  gitleaks_8.30.0_linux_x64.tar.gz" | sha256sum --check
           tar -xzf gitleaks_8.30.0_linux_x64.tar.gz
           chmod +x gitleaks
-          ./gitleaks detect --source . --no-banner --exit-code 0 || echo "::warning::gitleaks found potential issues"
+          # Fail-fast on findings — if gitleaks reports a leak, revoke the secret
+          # and remove it from the commit history before merging. No advisory mode.
+          ./gitleaks detect --source . --no-banner
 
   build:
     name: build
