@@ -31,7 +31,10 @@ RUNTIME_PREFIX="${ODYSSEUS_RUNTIME_PREFIX:-$HOME/.local}"
 
 # Pre-create install tree so nats.c FetchContent install doesn't fail trying
 # to mkdir lib/pkgconfig inside cmake --install.
-mkdir -p "$RUNTIME_PREFIX/bin" "$RUNTIME_PREFIX/lib/pkgconfig" "$RUNTIME_PREFIX/include" 2>/dev/null || true
+if ! mkdir -p "$RUNTIME_PREFIX/bin" "$RUNTIME_PREFIX/lib/pkgconfig" "$RUNTIME_PREFIX/include"; then
+    check_fail "Cannot create install tree under $RUNTIME_PREFIX (check write permissions)"
+    return 0 2>/dev/null || exit 1
+fi
 
 if ! has_cmd pixi; then
     check_fail "pixi not found — install it first (phase 20/40)"
@@ -47,8 +50,12 @@ fi
 
 # Ensure a system-level conan default profile exists so conan doesn't error
 # when neither a system default nor a repo-local profile is available.
-# This is a no-op if the system default profile already exists.
-pixi run -- conan profile detect --exist-ok >/dev/null 2>&1 || true
+# `--exist-ok` makes this a true no-op when the profile already exists; a
+# non-zero exit then signals a real problem (e.g. broken pixi env), so we
+# warn but continue — the per-repo build step will surface the real cause.
+if ! pixi run -- conan profile detect --exist-ok >/dev/null 2>&1; then
+    check_warn "conan profile detect failed (pixi env may be broken); continuing"
+fi
 
 build_cpp_repo() {
     local repo="$1"
@@ -89,10 +96,14 @@ build_cpp_repo() {
             CONAN_PROFILE="conan/profiles/default"
         fi
         echo -e "      ${DIM}conan install (profile: $CONAN_PROFILE)...${NC}"
-        pixi run -- conan install . --build=missing \
+        # Non-fatal: cmake will report the real error if conan failed to
+        # resolve deps. Wrap in `if` to make the suppression explicit.
+        if ! pixi run -- conan install . --build=missing \
             -of build/release \
             -pr:h "$CONAN_PROFILE" -pr:b "$CONAN_PROFILE" \
-            2>&1 || true  # non-fatal — cmake will report the real error
+            2>&1; then
+            echo -e "      ${DIM}conan install failed (will retry implicitly via cmake)${NC}"
+        fi
 
         # ── Step 2: CMake configure (release preset) ──────────────────────────
         # The preset sets generator=Ninja and toolchainFile=build/release/conan_toolchain.cmake.

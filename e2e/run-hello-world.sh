@@ -36,7 +36,17 @@ fi
 # Colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 pass() { echo -e "  ${GREEN}✓ PASS${NC}: $1"; }
-fail() { echo -e "  ${RED}✗ FAIL${NC}: $1"; echo ""; echo "Logs from stack:"; $COMPOSE_CMD -f "$COMPOSE_FILE" logs --tail=50 2>/dev/null || true; exit 1; }
+fail() {
+  echo -e "  ${RED}✗ FAIL${NC}: $1"
+  echo ""
+  echo "Logs from stack:"
+  # Logs are diagnostic — a logs failure here must not mask the original
+  # failure, so we guard with `if` instead of `|| true`.
+  if ! $COMPOSE_CMD -f "$COMPOSE_FILE" logs --tail=50 2>&1; then
+    echo "  (could not capture compose logs)"
+  fi
+  exit 1
+}
 info() { echo -e "\n${BLUE}══${NC} ${YELLOW}$1${NC}"; }
 
 echo ""
@@ -53,7 +63,12 @@ if curl -sf http://localhost:8080/v1/health >/dev/null 2>&1; then
 else
   $COMPOSE_CMD -f "$COMPOSE_FILE" up -d --build 2>&1 | tail -20
   echo "  Waiting for services to be healthy..."
-  $COMPOSE_CMD -f "$COMPOSE_FILE" wait nats agamemnon nestor hermes 2>/dev/null || true
+  # `compose wait` exits non-zero if any of the listed services don't reach
+  # a healthy state. That's surfaced to the user as a warning here, with the
+  # actual health verification handled by the explicit curl loops in Phase 2.
+  if ! $COMPOSE_CMD -f "$COMPOSE_FILE" wait nats agamemnon nestor hermes 2>/dev/null; then
+    echo "  warn: 'compose wait' reported a service not healthy; continuing to explicit health checks"
+  fi
   sleep 5
 fi
 

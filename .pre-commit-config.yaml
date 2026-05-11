@@ -1,0 +1,36 @@
+# Pre-commit hooks for the Odysseus meta-repo.
+#
+# The forbid-silent-failures hook below is the regression guard for
+# /home/mvillmow/.claude/plans/i-want-to-remove-glimmering-hellman.md — it
+# rejects `|| true` and `continue-on-error: true` in source-of-truth files so
+# the workarounds-removal sweep does not regress.
+#
+# See docs/runbooks/no-silent-failures.md for the rule, classification
+# framework, and (intentionally narrow) escape hatches.
+
+repos:
+  - repo: local
+    hooks:
+      - id: forbid-or-true
+        name: "forbid silent-failure workaround in shell/YAML/Dockerfile/justfile/HCL"
+        description: >
+          Rejects the `or-true` idiom (and its whitespace variants) in shell,
+          YAML, Dockerfile, justfile, and HCL sources. Refactor to an explicit
+          `if`-guard, a real conditional, or a documented `set +e`/`set -e`
+          bracket. See docs/runbooks/no-silent-failures.md.
+        language: pygrep
+        entry: '\|\|\s*true(\s*$|\s+#)'
+        files: \.(sh|bash|yml|yaml|hcl)$|(^|/)Dockerfile[^/]*$|(^|/)[Jj]ustfile$
+        types: [text]
+        pass_filenames: true
+
+      - id: forbid-continue-on-error
+        name: "forbid continue-on-error workflow opt-out"
+        description: >
+          GitHub Actions `continue-on-error true` (truthy form) hides real CI
+          failures. Fix the underlying job/step instead. See
+          docs/runbooks/no-silent-failures.md.
+        language: pygrep
+        entry: '^\s*continue-on-error:\s*true\s*$'
+        files: ^\.github/workflows/.*\.ya?ml$
+        pass_filenames: true
