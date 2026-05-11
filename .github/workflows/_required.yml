@@ -95,7 +95,7 @@ jobs:
             echo "No files to scan"
             exit 0
           fi
-          if grep -nE '\|\|[[:space:]]*true([[:space:]]*$|[[:space:]]+#)' "${scan_files[@]}"; then
+          if grep -nP '^(?!\s*#).*\|\|\s*true(\s*$|\s*[#);&|])' "${scan_files[@]}"; then
             echo ""
             echo '::error::Found silent-failure workarounds above. Refactor per docs/runbooks/no-silent-failures.md.'
             exit 1
