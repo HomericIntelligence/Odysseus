@@ -51,8 +51,10 @@ for _ in range(60):
 print(' '.join(sorted(states)))
 ")
 
-# Only pending and completed should be observed
-BAD_STATES=$(echo "$OBSERVED_STATES" | tr ' ' '\n' | grep -v "^pending$\|^completed$" || true)
+# Only pending and completed should be observed.
+# `awk` always exits 0; an empty result is the success case (no bad states),
+# which is the natural representation here without `|| true`.
+BAD_STATES=$(printf '%s\n' "$OBSERVED_STATES" | tr ' ' '\n' | awk '$0 != "" && $0 != "pending" && $0 != "completed"')
 [ -z "$BAD_STATES" ] && \
     pass "C09: Only observed states: $OBSERVED_STATES (no intermediate)" || \
     fail "C09: Unexpected intermediate states: $BAD_STATES"

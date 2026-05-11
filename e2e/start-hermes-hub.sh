@@ -90,8 +90,19 @@ MYRMIDONS_DIR=\$MYRMIDONS_DIR
 PODMAN_SOCK=\$PODMAN_SOCK
 EOF
 
-# Kill stale aardvark-dns if present (WSL2/rootless podman DNS workaround)
-kill \$(cat "\${XDG_RUNTIME_DIR:-/run/user/\$(id -u)}/containers/networks/aardvark-dns/aardvark.pid" 2>/dev/null) 2>/dev/null || true
+# Kill stale aardvark-dns if present (WSL2/rootless podman DNS workaround).
+# Missing pid file / not-running pid is the common case on fresh hosts, so we
+# guard with explicit existence checks instead of swallowing kill's exit code.
+_aardvark_pid_file="\${XDG_RUNTIME_DIR:-/run/user/\$(id -u)}/containers/networks/aardvark-dns/aardvark.pid"
+if [ -f "\$_aardvark_pid_file" ]; then
+  _aardvark_pid="\$(cat "\$_aardvark_pid_file" 2>/dev/null)"
+  if [ -n "\$_aardvark_pid" ] && kill -0 "\$_aardvark_pid" 2>/dev/null; then
+    if ! kill "\$_aardvark_pid" 2>/dev/null; then
+      echo "  warn: failed to kill stale aardvark-dns (pid \$_aardvark_pid)" >&2
+    fi
+  fi
+fi
+unset _aardvark_pid_file _aardvark_pid
 
 echo "  Running: podman compose -f docker-compose.e2e.yml -f e2e/docker-compose.hermes-hub.yml up -d --build"
 podman compose \\
@@ -179,8 +190,14 @@ cd ~/Odysseus
 git submodule update --init provisioning/Myrmidons --quiet
 echo "  Myrmidons submodule ready"
 
-# Stop any stale worker
-pkill -f "provisioning/Myrmidons/hello-world/main.py" 2>/dev/null || true
+# Stop any stale worker. pkill exits 1 when no processes match, which is the
+# expected case on a clean host — guard with pgrep so a real pkill failure
+# (permission denied, etc.) propagates.
+if pgrep -f "provisioning/Myrmidons/hello-world/main.py" >/dev/null 2>&1; then
+  if ! pkill -f "provisioning/Myrmidons/hello-world/main.py"; then
+    echo "  warn: pkill of stale hello-world myrmidon failed" >&2
+  fi
+fi
 sleep 1
 
 # Launch

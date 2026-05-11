@@ -35,8 +35,12 @@ else
     has_cmd() { command -v "$1" >/dev/null 2>&1; }
 
     get_version() {
-        # get_version <cmd> [args…] — extract first version string from output
-        "$@" 2>&1 | grep -oP '\d+\.\d+[\.\d]*' | head -1 || true
+        # get_version <cmd> [args…] — extract first version string from output.
+        # Captures output once to avoid `cmd | grep | head || true` swallowing
+        # the real exit code of cmd; empty result means "no version found".
+        local _out
+        _out="$("$@" 2>&1)" || _out=''
+        printf '%s\n' "$_out" | grep -oP '\d+\.\d+[\.\d]*' | head -1 || printf ''
     }
 
     version_gte() {

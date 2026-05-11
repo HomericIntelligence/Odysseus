@@ -10,18 +10,36 @@ register_pid() {
     _BG_PIDS+=("$1")
 }
 
-# Kill all registered PIDs (SIGTERM first, SIGKILL after 5s)
+# Kill all registered PIDs (SIGTERM first, SIGKILL after 5s).
+# Each helper is explicit about "process not running" being expected, and
+# escalates a real (unexpected) kill failure to stderr instead of swallowing it.
+_kill_if_alive() {
+    local pid="$1" sig="$2"
+    if [[ -z "${pid:-}" ]] || ! kill -0 "$pid" 2>/dev/null; then
+        return 0  # already gone — nothing to do
+    fi
+    if ! kill "$sig" "$pid" 2>/dev/null; then
+        echo "warn: kill $sig $pid failed (pid still alive?)" >&2
+    fi
+}
+
 cleanup_pids() {
-    for pid in "${_BG_PIDS[@]}"; do
-        kill -0 "$pid" 2>/dev/null && kill "$pid" 2>/dev/null || true
+    for pid in "${_BG_PIDS[@]:-}"; do
+        _kill_if_alive "$pid" -TERM
     done
     sleep 5
-    for pid in "${_BG_PIDS[@]}"; do
-        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+    for pid in "${_BG_PIDS[@]:-}"; do
+        _kill_if_alive "$pid" -KILL
     done
-    # Wait to suppress "Killed" messages from bash job control
-    for pid in "${_BG_PIDS[@]}"; do
-        wait "$pid" 2>/dev/null || true
+    # Reap children to suppress "Killed" messages from bash job control.
+    # `wait` on a not-our-child or already-reaped pid returns 127 — that's
+    # expected here, so we ignore wait's exit via an explicit if.
+    for pid in "${_BG_PIDS[@]:-}"; do
+        if [[ -n "${pid:-}" ]]; then
+            if wait "$pid" 2>/dev/null; then
+                :
+            fi
+        fi
     done
     _BG_PIDS=()
 }

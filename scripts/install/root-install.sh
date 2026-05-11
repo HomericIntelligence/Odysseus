@@ -77,6 +77,7 @@ fi
 # present and user-owned when it runs in Phase 3.
 _real_user="${SUDO_USER:-}"
 if [[ -n "$_real_user" ]]; then
+    _chown_failed=0
     for _cache_dir in \
         "$HOME/.cache/rattler/cache/pkgs" \
         "$HOME/.cache/rattler/cache/repodata" \
@@ -84,11 +85,30 @@ if [[ -n "$_real_user" ]]; then
         "$HOME/.pixi" \
         "$HOME/.local/bin"
     do
-        mkdir -p "$_cache_dir" 2>/dev/null || true
-        chown -R "$_real_user" "$_cache_dir" 2>/dev/null || true
+        if ! mkdir -p "$_cache_dir" 2>/dev/null; then
+            check_warn "mkdir -p $_cache_dir failed (may already exist with different owner)"
+            _chown_failed=1
+            continue
+        fi
+        if ! chown -R "$_real_user" "$_cache_dir" 2>/dev/null; then
+            check_warn "chown -R $_real_user $_cache_dir failed"
+            _chown_failed=1
+        fi
     done
-    # Also fix the parent dirs
-    chown "$_real_user" "$HOME/.cache/rattler" "$HOME/.cache/rattler/cache" 2>/dev/null || true
-    check_pass "Cache dirs pre-created and ownership set to $_real_user"
+    # Also fix the parent dirs — only if they exist
+    for _parent in "$HOME/.cache/rattler" "$HOME/.cache/rattler/cache"; do
+        if [[ -d "$_parent" ]]; then
+            if ! chown "$_real_user" "$_parent" 2>/dev/null; then
+                check_warn "chown $_real_user $_parent failed"
+                _chown_failed=1
+            fi
+        fi
+    done
+    if [[ "$_chown_failed" -eq 0 ]]; then
+        check_pass "Cache dirs pre-created and ownership set to $_real_user"
+    else
+        check_warn "Cache dir ownership setup completed with warnings (see above)"
+    fi
+    unset _chown_failed _parent
 fi
 unset _real_user _cache_dir

@@ -3,7 +3,17 @@
 set -euo pipefail
 
 cleanup() {
-    kill "$MYRMIDON_PID" "$AGAMEMNON_PID" "$NATS_PID" 2>/dev/null || true
+    # Trap handler — some PIDs may not be set yet (early failure) or already
+    # gone (clean exit). Guard each one explicitly instead of swallowing the
+    # whole kill's exit code.
+    for pid_var in MYRMIDON_PID AGAMEMNON_PID NATS_PID; do
+        local pid="${!pid_var:-}"
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            if ! kill "$pid" 2>/dev/null; then
+                echo "warn: failed to kill $pid_var ($pid)" >&2
+            fi
+        fi
+    done
 }
 trap cleanup EXIT
 

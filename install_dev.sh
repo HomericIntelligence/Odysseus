@@ -98,7 +98,11 @@ else
     _PASS=0; _FAIL=0; _WARN=0; _SKIP=0
 
     has_cmd() { command -v "$1" >/dev/null 2>&1; }
-    get_version() { "$@" 2>&1 | grep -oP '\d+\.\d+[\.\d]*' | head -1 || true; }
+    get_version() {
+        local _out
+        _out="$("$@" 2>&1)" || _out=''
+        printf '%s\n' "$_out" | grep -oP '\d+\.\d+[\.\d]*' | head -1 || printf ''
+    }
     version_gte() {
         local a="$1" b="$2"
         [[ "$(printf '%s\n' "$a" "$b" | sort -V | head -1)" == "$b" ]]

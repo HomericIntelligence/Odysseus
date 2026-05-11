@@ -138,9 +138,12 @@ if [ "$TASK_STATUS" = "completed" ]; then
   pass "Myrmidon (epimetheus) completed task ${TASK_ID} in ${ELAPSED}s"
   pass "Cross-host dispatch loop verified: NATS hermes → Tailscale → myrmidon epimetheus → NATS hermes → Agamemnon"
 else
-  # Show epimetheus log for debugging before failing
+  # Show epimetheus log for debugging before failing. The log dump is purely
+  # diagnostic; a failure here must not mask the real fail() message below.
   echo "  epimetheus myrmidon log (last 20 lines):"
-  ssh "$EPI_SSH" "tail -20 /tmp/hello-myrmidon.log 2>/dev/null" | sed 's/^/    /' || true
+  if ! ssh "$EPI_SSH" "tail -20 /tmp/hello-myrmidon.log 2>/dev/null" | sed 's/^/    /'; then
+    echo "    (could not read /tmp/hello-myrmidon.log on epimetheus)"
+  fi
   fail "Task ${TASK_ID} not completed after ${MAX_WAIT}s (status=${TASK_STATUS})"
 fi
 

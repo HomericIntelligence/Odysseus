@@ -98,7 +98,7 @@ if has_cmd git; then
     check_pass "git $(get_version git --version)"
 else
     check_fail "git — NOT FOUND"
-    apt_install git && check_pass "git installed" || true
+    if apt_install git; then check_pass "git installed"; fi
 fi
 
 # just
@@ -124,7 +124,7 @@ if has_cmd python3; then
     check_pass "python3 $(get_version python3 --version)"
 else
     check_fail "python3 — NOT FOUND"
-    apt_install python3 && check_pass "python3 installed" || true
+    if apt_install python3; then check_pass "python3 installed"; fi
 fi
 
 # pip3
@@ -132,7 +132,7 @@ if has_cmd pip3; then
     check_pass "pip3 $(get_version pip3 --version)"
 else
     check_fail "pip3 — NOT FOUND"
-    apt_install python3-pip && check_pass "pip3 installed" || true
+    if apt_install python3-pip; then check_pass "pip3 installed"; fi
 fi
 
 # curl
@@ -140,7 +140,7 @@ if has_cmd curl; then
     check_pass "curl $(get_version curl --version)"
 else
     check_fail "curl — NOT FOUND"
-    apt_install curl && check_pass "curl installed" || true
+    if apt_install curl; then check_pass "curl installed"; fi
 fi
 
 # jq
@@ -148,7 +148,7 @@ if has_cmd jq; then
     check_pass "jq $(get_version jq --version)"
 else
     check_fail "jq — NOT FOUND"
-    apt_install jq && check_pass "jq installed" || true
+    if apt_install jq; then check_pass "jq installed"; fi
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -191,9 +191,10 @@ if should_check_worker && has_cmd firewall-cmd && systemctl is-active --quiet fi
     else
         check_fail "firewalld tailscale0 not in trusted zone (zone: ${ZONE:-unknown})"
         if [ "$INSTALL" = "true" ]; then
-            sudo firewall-cmd --permanent --zone=trusted --add-interface=tailscale0 \
-                && sudo firewall-cmd --reload \
-                && check_pass "firewalld tailscale0 added to trusted zone" || true
+            if sudo firewall-cmd --permanent --zone=trusted --add-interface=tailscale0 \
+                && sudo firewall-cmd --reload; then
+                check_pass "firewalld tailscale0 added to trusted zone"
+            fi
         fi
     fi
 fi
@@ -226,7 +227,7 @@ if should_check_worker; then
         check_pass "podman $(get_version podman --version)"
     else
         check_fail "podman — NOT FOUND"
-        apt_install podman && check_pass "podman installed" || true
+        if apt_install podman; then check_pass "podman installed"; fi
     fi
 
     # podman compose
@@ -235,7 +236,7 @@ if should_check_worker; then
         check_pass "podman compose ${COMPOSE_VER}"
     else
         check_fail "podman compose — NOT FOUND"
-        apt_install podman-compose && check_pass "podman-compose installed" || true
+        if apt_install podman-compose; then check_pass "podman-compose installed"; fi
     fi
 
     # podman socket
@@ -293,9 +294,11 @@ if should_check_worker; then
         if [[ -n "$AARDVARK_PID" ]] && ! kill -0 "$AARDVARK_PID" 2>/dev/null; then
             check_warn "aardvark-dns PID stale (PID $AARDVARK_PID not running)"
             if $INSTALL; then
-                rm -f "$AARDVARK_PID_DIR/aardvark.pid" 2>/dev/null \
-                    && check_pass "stale aardvark-dns PID cleared" \
-                    || true
+                if rm -f "$AARDVARK_PID_DIR/aardvark.pid"; then
+                    check_pass "stale aardvark-dns PID cleared"
+                else
+                    check_warn "could not clear stale aardvark-dns PID file"
+                fi
             fi
         else
             check_pass "aardvark-dns OK"
@@ -325,7 +328,7 @@ if should_check_control; then
         fi
     else
         check_fail "cmake — NOT FOUND"
-        apt_install cmake && check_pass "cmake installed" || true
+        if apt_install cmake; then check_pass "cmake installed"; fi
     fi
 
     # ninja
@@ -333,7 +336,7 @@ if should_check_control; then
         check_pass "ninja $(get_version ninja --version)"
     else
         check_fail "ninja — NOT FOUND"
-        apt_install ninja-build && check_pass "ninja installed" || true
+        if apt_install ninja-build; then check_pass "ninja installed"; fi
     fi
 
     # g++ >= 11
@@ -346,7 +349,7 @@ if should_check_control; then
         fi
     else
         check_fail "g++ — NOT FOUND"
-        apt_install g++ && check_pass "g++ installed" || true
+        if apt_install g++; then check_pass "g++ installed"; fi
     fi
 
     # libssl-dev
@@ -355,7 +358,7 @@ if should_check_control; then
         check_pass "libssl-dev $LIBSSL_VER"
     else
         check_fail "libssl-dev — NOT FOUND (required by nats.c TLS)"
-        apt_install libssl-dev && check_pass "libssl-dev installed" || true
+        if apt_install libssl-dev; then check_pass "libssl-dev installed"; fi
     fi
 
     # make (needed for gtest CMake recipe)
@@ -363,7 +366,7 @@ if should_check_control; then
         check_pass "make $(get_version make --version)"
     else
         check_fail "make — NOT FOUND (required by gtest CMake recipe)"
-        apt_install make && check_pass "make installed" || true
+        if apt_install make; then check_pass "make installed"; fi
     fi
 
     # conan >= 2.0
@@ -444,8 +447,9 @@ section "Submodule Health"
 # Check if we're in the Odysseus repo
 if [[ -f "$ODYSSEUS_ROOT/.gitmodules" ]]; then
     # Check submodules initialized
-    UNINIT_COUNT=$(cd "$ODYSSEUS_ROOT" && git submodule status 2>/dev/null | grep -c '^-' || true)
-    TOTAL_SUBS=$(cd "$ODYSSEUS_ROOT" && git submodule status 2>/dev/null | wc -l)
+    SUBMODULE_STATUS=$(cd "$ODYSSEUS_ROOT" && git submodule status 2>/dev/null || printf '')
+    UNINIT_COUNT=$(printf '%s\n' "$SUBMODULE_STATUS" | awk 'NF && /^-/{n++} END{print n+0}')
+    TOTAL_SUBS=$(printf '%s\n' "$SUBMODULE_STATUS" | awk 'NF{n++} END{print n+0}')
     if [[ "$UNINIT_COUNT" -eq 0 ]]; then
         check_pass "All $TOTAL_SUBS submodules initialized"
     else
@@ -461,7 +465,7 @@ if [[ -f "$ODYSSEUS_ROOT/.gitmodules" ]]; then
     # Check Myrmidons not targeting ai-maestro (#77)
     MYRMIDONS_DIR="$ODYSSEUS_ROOT/provisioning/Myrmidons"
     if [[ -d "$MYRMIDONS_DIR/scripts" ]]; then
-        STALE_REFS=$(grep -rE '(ai[-_]maestro|MAESTRO_URL|\baim_[a-z]+\()' "$MYRMIDONS_DIR/scripts/" 2>/dev/null | wc -l || true)
+        STALE_REFS=$(grep -rE '(ai[-_]maestro|MAESTRO_URL|\baim_[a-z]+\()' "$MYRMIDONS_DIR/scripts/" 2>/dev/null | awk 'END{print NR+0}')
         if [[ "$STALE_REFS" -eq 0 ]]; then
             check_pass "Myrmidons targets Agamemnon (not ai-maestro)"
         else

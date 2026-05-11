@@ -80,12 +80,19 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          echo "### Install test — ${{ matrix.os }}" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          grep -E "▶ Phase|Install complete|Passed checks|Failed checks|Warnings" \
-            /tmp/install-${{ matrix.os }}-run1.log 2>/dev/null \
-            | sed 's/\x1b\[[0-9;]*m//g' >> "$GITHUB_STEP_SUMMARY" || true
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          log=/tmp/install-${{ matrix.os }}-run1.log
+          {
+            echo "### Install test — ${{ matrix.os }}"
+            echo '```'
+            if [ -f "$log" ]; then
+              # `awk` always exits 0; matching zero lines is not an error.
+              awk '/▶ Phase|Install complete|Passed checks|Failed checks|Warnings/' "$log" \
+                | sed 's/\x1b\[[0-9;]*m//g'
+            else
+              echo "(no install log captured — earlier step failed before writing $log)"
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload install logs
         if: always()

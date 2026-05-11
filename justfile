@@ -67,7 +67,7 @@ _build-agamemnon:
         --profile=conan/profiles/debug \
         --build=missing
     @echo "--- Building control/ProjectAgamemnon ---"
-    @rm -rf "{{BUILD_ROOT}}/ProjectAgamemnon/CMakeCache.txt" "{{BUILD_ROOT}}/ProjectAgamemnon/CMakeFiles" "{{BUILD_ROOT}}/ProjectAgamemnon/_deps" 2>/dev/null || true
+    @if [ -d "{{BUILD_ROOT}}/ProjectAgamemnon" ]; then rm -rf "{{BUILD_ROOT}}/ProjectAgamemnon/CMakeCache.txt" "{{BUILD_ROOT}}/ProjectAgamemnon/CMakeFiles" "{{BUILD_ROOT}}/ProjectAgamemnon/_deps"; fi
     pixi run cmake -S control/ProjectAgamemnon -B "{{BUILD_ROOT}}/ProjectAgamemnon" \
         -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectAgamemnon/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
@@ -84,7 +84,7 @@ _build-nestor:
         --profile=conan/profiles/debug \
         --build=missing
     @echo "--- Building control/ProjectNestor ---"
-    @rm -rf "{{BUILD_ROOT}}/ProjectNestor/CMakeCache.txt" "{{BUILD_ROOT}}/ProjectNestor/CMakeFiles" "{{BUILD_ROOT}}/ProjectNestor/_deps" 2>/dev/null || true
+    @if [ -d "{{BUILD_ROOT}}/ProjectNestor" ]; then rm -rf "{{BUILD_ROOT}}/ProjectNestor/CMakeCache.txt" "{{BUILD_ROOT}}/ProjectNestor/CMakeFiles" "{{BUILD_ROOT}}/ProjectNestor/_deps"; fi
     pixi run cmake -S control/ProjectNestor -B "{{BUILD_ROOT}}/ProjectNestor" \
         -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectNestor/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
@@ -101,7 +101,7 @@ _build-charybdis:
         --profile=conan/profiles/debug \
         --build=missing
     @echo "--- Building testing/ProjectCharybdis ---"
-    @rm -rf "{{BUILD_ROOT}}/ProjectCharybdis/CMakeCache.txt" "{{BUILD_ROOT}}/ProjectCharybdis/CMakeFiles" "{{BUILD_ROOT}}/ProjectCharybdis/_deps" 2>/dev/null || true
+    @if [ -d "{{BUILD_ROOT}}/ProjectCharybdis" ]; then rm -rf "{{BUILD_ROOT}}/ProjectCharybdis/CMakeCache.txt" "{{BUILD_ROOT}}/ProjectCharybdis/CMakeFiles" "{{BUILD_ROOT}}/ProjectCharybdis/_deps"; fi
     pixi run cmake -S testing/ProjectCharybdis -B "{{BUILD_ROOT}}/ProjectCharybdis" \
         -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectCharybdis/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
@@ -118,7 +118,7 @@ _build-keystone:
         --profile=conan/profiles/debug \
         --build=missing
     @echo "--- Building provisioning/ProjectKeystone ---"
-    @rm -rf "{{BUILD_ROOT}}/ProjectKeystone/CMakeCache.txt" "{{BUILD_ROOT}}/ProjectKeystone/CMakeFiles" "{{BUILD_ROOT}}/ProjectKeystone/_deps" 2>/dev/null || true
+    @if [ -d "{{BUILD_ROOT}}/ProjectKeystone" ]; then rm -rf "{{BUILD_ROOT}}/ProjectKeystone/CMakeCache.txt" "{{BUILD_ROOT}}/ProjectKeystone/CMakeFiles" "{{BUILD_ROOT}}/ProjectKeystone/_deps"; fi
     pixi run cmake -S provisioning/ProjectKeystone -B "{{BUILD_ROOT}}/ProjectKeystone" \
         -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectKeystone/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
@@ -170,9 +170,34 @@ _test-keystone:
 # Lint
 # ===========================================================================
 
-# Run linters across all submodules that have a lint recipe
+# Run linters across all submodules that have a lint recipe.
+# A submodule without a `lint` recipe is treated as a pass (skipped); any other
+# non-zero exit (linter found violations, broken justfile, etc.) propagates and
+# fails the aggregate.
 lint:
-    @git submodule foreach --recursive 'just lint 2>/dev/null && true || true'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    failed=()
+    while IFS= read -r submodule_path; do
+        [[ -z "$submodule_path" ]] && continue
+        if [[ ! -f "$submodule_path/justfile" && ! -f "$submodule_path/Justfile" ]]; then
+            echo "--- $submodule_path: no justfile, skipping ---"
+            continue
+        fi
+        if ! ( cd "$submodule_path" && just --justfile justfile --summary 2>/dev/null | tr ' ' '\n' | grep -qx lint ); then
+            echo "--- $submodule_path: no 'lint' recipe, skipping ---"
+            continue
+        fi
+        echo "--- $submodule_path: running lint ---"
+        if ! ( cd "$submodule_path" && just lint ); then
+            failed+=("$submodule_path")
+        fi
+    done < <(git submodule --quiet foreach --recursive 'echo "$displaypath"')
+    if (( ${#failed[@]} > 0 )); then
+        echo ""
+        echo "ERROR: lint failed in: ${failed[*]}" >&2
+        exit 1
+    fi
 
 # ===========================================================================
 # Clean
@@ -186,10 +211,19 @@ clean:
 # Quality
 # ===========================================================================
 
-# Validate HCL syntax for Nomad configs
+# Validate HCL syntax for Nomad configs and lint configs/ YAML.
+# Both checks must pass; nomad is allowed to be absent (it's optional locally),
+# but yamllint is a required tool and a yamllint failure is a real lint
+# violation that must be fixed in configs/, not suppressed.
 validate-configs:
-    nomad fmt -check configs/nomad/client.hcl configs/nomad/server.hcl || echo "Note: install nomad to validate HCL syntax"
-    yamllint -d "{extends: default, rules: {line-length: {max: 200}, truthy: disable, document-start: disable}}" configs/ || true
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v nomad >/dev/null 2>&1; then
+        nomad fmt -check configs/nomad/client.hcl configs/nomad/server.hcl
+    else
+        echo "Note: install nomad to validate HCL syntax (skipping HCL check)"
+    fi
+    yamllint -d "{extends: default, rules: {line-length: {max: 200}, truthy: disable, document-start: disable}}" configs/
 
 # Run all CI checks locally
 ci: lint validate-configs

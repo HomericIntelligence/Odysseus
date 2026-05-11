@@ -27,8 +27,13 @@ case "$ACTION" in
         ;;
 
     stop)
-        # Container is --rm, nothing to stop
-        "$CONTAINER_CMD" rmi "$IMAGE_NAME" 2>/dev/null || true
+        # Container is --rm, nothing to stop. Image removal is idempotent
+        # via an explicit existence check.
+        if "$CONTAINER_CMD" image exists "$IMAGE_NAME" 2>/dev/null; then
+            if ! "$CONTAINER_CMD" rmi "$IMAGE_NAME"; then
+                echo "warn: failed to remove image $IMAGE_NAME" >&2
+            fi
+        fi
         ;;
 
     *)

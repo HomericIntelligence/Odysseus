@@ -68,8 +68,19 @@ case "$ACTION" in
         ;;
 
     teardown)
-        tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
-        rm -rf /tmp/hi-ipc-nats 2>/dev/null || true
+        # tmux exits 1 when the session does not exist — guard with has-session.
+        if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+            if ! tmux kill-session -t "$SESSION_NAME"; then
+                echo "warn: failed to kill tmux session $SESSION_NAME" >&2
+            fi
+        fi
+        # rm of a non-existent path under -rf is silent and exits 0; the only
+        # remaining failure mode is permission denied, which we want to surface.
+        if [ -e /tmp/hi-ipc-nats ]; then
+            if ! rm -rf /tmp/hi-ipc-nats; then
+                echo "warn: failed to remove /tmp/hi-ipc-nats" >&2
+            fi
+        fi
         echo "Tmux session '$SESSION_NAME' terminated."
         ;;
 
