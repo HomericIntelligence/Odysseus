@@ -19,7 +19,14 @@ repos:
           `if`-guard, a real conditional, or a documented `set +e`/`set -e`
           bracket. See docs/runbooks/no-silent-failures.md.
         language: pygrep
-        entry: '\|\|\s*true(\s*$|\s+#)'
+        # Matches `|| true` at a control-flow boundary: end of line, before a
+        # trailing `#` comment, or before `)` `;` `&` `|`. Documentation lines
+        # that quote the pattern inside backticks or other characters are not
+        # matched. The leading negative-lookbehind keeps the regex from firing
+        # on lines that are themselves a comment (start with optional whitespace
+        # then `#`), since the runbook quotes the idiom verbatim as a teaching
+        # example.
+        entry: '^(?!\s*#).*\|\|\s*true(\s*$|\s*[#);&|])'
         files: \.(sh|bash|yml|yaml|hcl)$|(^|/)Dockerfile[^/]*$|(^|/)[Jj]ustfile$
         types: [text]
         pass_filenames: true
