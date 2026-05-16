@@ -91,7 +91,9 @@ repos:
               fi
             else
               # Manual invocation — check unpushed commits on current branch
-              upstream=$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null || true)
+              if ! upstream=$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null); then
+                upstream=""
+              fi
               if [ -n "$upstream" ]; then
                 range="$upstream..HEAD"
               else
