@@ -20,6 +20,8 @@ Odysseus itself contains no application code. Its value is coordination: it ensu
 Odysseus/
 ├── docs/
 │   ├── architecture.md           # System-wide architecture overview and component map
+│   ├── deployment.md             # Deployment runbook for a fresh control host
+│   ├── onboarding.md             # Contributor onboarding + recipe cheatsheet
 │   ├── adr/
 │   │   ├── README.md
 │   │   ├── template.md
@@ -34,6 +36,8 @@ Odysseus/
 │       ├── add-new-host.md
 │       ├── add-new-agent-type.md
 │       └── disaster-recovery.md
+├── e2e/                          # End-to-end Compose stacks + claude-myrmidon harness
+├── tools/                        # Console scripts + GitHub helper CLIs (no submodules)
 ├── configs/
 │   ├── nomad/
 │   │   ├── client.hcl

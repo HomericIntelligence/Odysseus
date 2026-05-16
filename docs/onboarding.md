@@ -229,7 +229,7 @@ just --list
 | `just build` | Build all C++/CMake/Mojo components |
 | `just setup` | One-command setup (bootstrap + build) |
 | `just update-submodules` | Pull latest from all upstream submodule remotes |
-| `just agamemnon-start` | Start ProjectAgamemnon (control plane) |
+| `just start-agamemnon` | Start ProjectAgamemnon (control plane) |
 | `just nestor-start` | Start ProjectNestor (research service) |
 | `just keystone-start` | Start ProjectKeystone (event bus) |
 | `just hermes-start` | Start ProjectHermes (external bridge) |
