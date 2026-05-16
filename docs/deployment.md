@@ -262,7 +262,7 @@ podman logs keystone
 ProjectAgamemnon is the central orchestration engine. It coordinates planning, reconciliation, and HMAS (Hierarchical Multi-Agent System) orchestration.
 
 ```bash
-just agamemnon-start
+just start-agamemnon
 ```
 
 This task:
