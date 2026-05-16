@@ -1,10 +1,9 @@
 # HomericIntelligence System Architecture
 
 > **Post-migration architecture.** This document reflects the state after
-> ADR-006 was implemented.
-> ai-maestro has been replaced by native HomericIntelligence components. The
-> `infrastructure/ai-maestro` submodule remains pinned for backward
-> compatibility but carries no active role and will be removed.
+> ADR-006 was implemented. ai-maestro has been replaced by native
+> HomericIntelligence components and is fully removed from the meta-repo
+> (no entry in `.gitmodules`, no `infrastructure/ai-maestro/` directory).
 > See [ADR-006](adr/006-decouple-from-ai-maestro.md).
 
 ---
@@ -43,7 +42,7 @@ a git submodule. Odysseus itself contains no application code.
 | **ProjectMnemosyne** | shared | Memory store for `advise` and `learn` plugins only. Not a template registry. |
 | **ProjectHephaestus** | shared | Shared utilities, Claude Code plugins, and skills registry. Used across all repos. |
 | **ProjectOdyssey** | research | Mojo ML research sandbox. Stable work graduates to AchaeanFleet. |
-| ~~ai-maestro~~ | deprecated | Removed per ADR-006. Submodule pinned at `infrastructure/ai-maestro` for backward compatibility only. Do not add new dependencies. |
+| ~~ai-maestro~~ | removed | Removed per [ADR-006](adr/006-decouple-from-ai-maestro.md). No submodule entry and no `infrastructure/ai-maestro/` directory. Do not reintroduce. |
 
 ---
 
