@@ -299,3 +299,22 @@ jobs:
       - name: Verify submodule SHAs reference valid commits
         run: |
           git submodule foreach 'git log --oneline -1 HEAD'
+
+      # Validate that pixi.lock is in sync with pixi.toml (issue #200). A
+      # stale lockfile silently lets local and CI environments diverge.
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@v0.9.5
+        with:
+          pixi-version: v0.67.2
+          cache: false
+      - name: Validate pixi.lock is in sync with pixi.toml
+        run: |
+          if [ ! -f pixi.toml ]; then
+            echo "::notice::No pixi.toml in repo, skipping pixi.lock validation"
+            exit 0
+          fi
+          if [ ! -f pixi.lock ]; then
+            echo "::error::pixi.toml present but pixi.lock missing"
+            exit 1
+          fi
+          pixi install --frozen
