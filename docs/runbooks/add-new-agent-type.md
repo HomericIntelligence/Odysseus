@@ -1,15 +1,18 @@
 # Runbook: Add a New Agent Type to the HomericIntelligence Ecosystem
 
-## Important: Symlink-Based Submodule Layout
+## Important: Submodule Layout (Accepted: ADR-007)
 
-Per ADR-007, the subdirectories referenced in this runbook (`infrastructure/AchaeanFleet`, `provisioning/Myrmidons`, `shared/ProjectMnemosyne`) are **symlinks to standalone git repositories**, not git submodule worktrees. When making changes to these repos, you must:
+Per [ADR-007 — Replace Symlinks with Real Git Submodules](../adr/007-symlinks-over-submodules.md) (**Accepted**), every subdirectory referenced in this runbook (`infrastructure/AchaeanFleet`, `provisioning/Myrmidons`, `shared/ProjectMnemosyne`, etc.) is now a real git submodule (`git ls-files -s` reports mode `160000`). When making changes to these repos, the recommended workflow is:
 
-1. Clone or navigate to the actual repository (not via the Odysseus symlink).
-2. Make your commits in that standalone repo clone.
-3. Push changes to that repo's GitHub remote.
-4. Return to Odysseus and update the submodule pin if tracking a specific commit SHA.
+1. `cd` into the submodule path inside the Odysseus checkout (e.g. `cd infrastructure/AchaeanFleet`) — it has its own `.git` link and acts as a normal repo clone of the submodule's branch.
+2. Make commits and push to the submodule's GitHub remote.
+3. Return to the Odysseus root and `git add` the submodule path to bump the recorded gitlink SHA.
+4. Commit and push the submodule SHA bump in Odysseus.
 
-Do not attempt `cd infrastructure/AchaeanFleet && git add ...` — the symlink does not have its own `.git/` directory.
+> Older versions of this runbook described a symlink-based layout (the
+> situation before ADR-007 was accepted). If you encounter a checkout where
+> these paths are still symlinks, re-run `just bootstrap` to materialise the
+> real submodule worktrees.
 
 ## Prerequisites
 
@@ -111,14 +114,15 @@ Edit `marketplace.json` to add an entry for the new agent type. Include:
 
 ### 6. Commit and push changes
 
-Because the subdirectories in Odysseus are symlinks (ADR-007), you must commit changes in each repo's standalone clone, not in the symlinked paths:
+Per [ADR-007](../adr/007-symlinks-over-submodules.md) (**Accepted**), the
+submodule paths are real git submodule worktrees. You can `cd` into each
+submodule path inside the Odysseus checkout and commit there directly; the
+final step is to bump the recorded submodule SHA in the Odysseus root:
 
-#### 6a. Commit in AchaeanFleet standalone clone
-
-Navigate to your AchaeanFleet repository clone (not the Odysseus symlink):
+#### 6a. Commit in AchaeanFleet submodule
 
 ```bash
-cd /path/to/AchaeanFleet
+cd infrastructure/AchaeanFleet
 git add vessels/<agent-name>/
 git commit -m "feat: add <agent-name> vessel"
 git push origin main

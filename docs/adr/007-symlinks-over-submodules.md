@@ -1,6 +1,9 @@
 # ADR 007: Replace Symlinks with Real Git Submodules
 
-**Status:** Proposed
+**Status:** Accepted (2026-05-16)
+
+> All 14 submodule entries are now real gitlinks (`git ls-files -s` reports
+> mode `160000` for every path), so the decision in this ADR is in effect.
 
 ---
 
