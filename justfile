@@ -186,10 +186,10 @@ lint:
     if command -v shellcheck >/dev/null 2>&1; then
         echo "--- root: running shellcheck on tracked shell scripts ---"
         # Limit scope to first-party shell scripts; ignore submodules.
+        # Use awk to filter so empty result yields exit 0 (no need for `|| true`).
         mapfile -t shell_targets < <(
             git ls-files -- '*.sh' \
-                | grep -Ev '^(infrastructure|control|provisioning|ci-cd|research|shared|testing)/' \
-                || true
+                | awk '!/^(infrastructure|control|provisioning|ci-cd|research|shared|testing)\//'
         )
         if (( ${#shell_targets[@]} > 0 )); then
             if ! shellcheck --severity=warning "${shell_targets[@]}"; then
