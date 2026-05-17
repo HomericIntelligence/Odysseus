@@ -178,6 +178,30 @@ lint:
     #!/usr/bin/env bash
     set -euo pipefail
     failed=()
+
+    # Lint our own shell scripts with shellcheck (issue #195). shellcheck
+    # is declared in pixi.toml but was previously not invoked anywhere, so
+    # the `eval "$cmd"` pattern and other shell issues in e2e/lib/ slipped
+    # through. Treat shellcheck failures as a lint failure for the root.
+    if command -v shellcheck >/dev/null 2>&1; then
+        echo "--- root: running shellcheck on tracked shell scripts ---"
+        # Limit scope to first-party shell scripts; ignore submodules.
+        # Use awk to filter so empty result yields exit 0 (no need for `|| true`).
+        mapfile -t shell_targets < <(
+            git ls-files -- '*.sh' \
+                | awk '!/^(infrastructure|control|provisioning|ci-cd|research|shared|testing)\//'
+        )
+        if (( ${#shell_targets[@]} > 0 )); then
+            if ! shellcheck --severity=warning "${shell_targets[@]}"; then
+                failed+=("root:shellcheck")
+            fi
+        else
+            echo "--- root: no tracked shell scripts to check ---"
+        fi
+    else
+        echo "--- root: shellcheck not on PATH, skipping (declared in pixi.toml) ---"
+    fi
+
     while IFS= read -r submodule_path; do
         [[ -z "$submodule_path" ]] && continue
         if [[ ! -f "$submodule_path/justfile" && ! -f "$submodule_path/Justfile" ]]; then

@@ -34,7 +34,10 @@ DEFAULT_SUBJECTS = [
     "hi.agents.>",
     "hi.logs.>",
     "hi.research.>",
-    "hi.myrmidon.>",
+    # 'hi.myrmidon.>' was here but ADR-005's NATS subject schema does not
+    # define an 'hi.myrmidon' namespace — the subscription silently
+    # received nothing (issue #211). Re-add only when a real subject is
+    # documented in ADR-005.
 ]
 
 RETRY_INTERVAL = 3  # seconds between initial connection attempts
