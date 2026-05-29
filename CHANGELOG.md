@@ -14,6 +14,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Unified org ruleset source-of-truth, tooling, and per-repo ruleset configs.
 - Unified required-checks workflow at the meta-repo level.
 - `.gitignore` entry for `scheduled_tasks.lock`.
+- Scheduled submodule-drift detection: `.github/workflows/submodule-update-check.yml`
+  (weekly + manual), `scripts/check-submodule-drift.sh`, and the
+  `just check-submodule-drift` recipe. Detects stale submodule pins and opens a
+  draft (never auto-merged) bump PR (#46).
 
 ### Changed
 - Bumped `ProjectArgus` submodule pin through Atlas M2/M3/M4/M5/M6 and

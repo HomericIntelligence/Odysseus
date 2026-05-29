@@ -17,6 +17,7 @@ shellcheck = ">=0.9,<1"
 [tasks]
 bootstrap = "just bootstrap"
 status = "just status"
+check-submodule-drift = "just check-submodule-drift"
 build = "just build"
 test = "just test"
 clean = "just clean"

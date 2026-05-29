@@ -1,0 +1,86 @@
+name: Submodule Update Check
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Monday 09:00 UTC — weekly drift check
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-drift:
+    name: check submodule drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      has_drift: ${{ steps.drift.outputs.has_drift }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Run drift check
+        id: drift
+        run: bash scripts/check-submodule-drift.sh --ci
+
+      - name: Upload drift report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: submodule-drift-report
+          path: drift-report.json
+          retention-days: 30
+
+  create-update-pr:
+    name: open draft submodule-bump PR
+    needs: check-drift
+    if: needs.check-drift.outputs.has_drift == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Bump stale submodule pins
+        run: |
+          set -uo pipefail
+          BRANCH="chore/submodule-updates-$(date +%Y-%m-%d)"
+          # Skip if a branch for today's run already exists (idempotency).
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "Branch $BRANCH already exists — skipping."
+            echo "skip=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git submodule update --remote
+          echo "branch=$BRANCH" >> "$GITHUB_ENV"
+
+      - name: Open draft PR
+        if: env.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          if git diff --quiet; then
+            echo "No submodule pin changes after update --remote — nothing to PR."
+            exit 0
+          fi
+          DATESTR="$(date +%Y-%m-%d)"
+          git add -A
+          git commit -m "chore(submodules): bump stale submodule pins (${DATESTR})"
+          git push -u origin "$branch"
+          gh pr create \
+            --draft \
+            --title "chore(submodules): bump stale submodule pins (${DATESTR})" \
+            --body "Automated draft PR opened by the Submodule Update Check workflow. One or more submodule pins were behind their upstream default branch. Review the changes and the attached drift report before merging. This PR is **not** auto-merged."
