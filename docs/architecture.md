@@ -41,7 +41,7 @@ a git submodule. Odysseus itself contains no application code.
 | **ProjectCharybdis** | testing | Chaos and resilience testing. Injects faults via Agamemnon `/v1/chaos/*` endpoints. |
 | **ProjectMnemosyne** | shared | Skills marketplace / team-knowledge memory store for the `advise` and `learn` plugins only. Not an agent-template registry. |
 | **ProjectHephaestus** | shared | Shared utilities, Claude Code plugins, and skills registry. Used across all repos. |
-| **ProjectOdyssey** | research | Mojo-based ML training framework (tensor ops, training loops, optimizers, metrics) used as a research sandbox. Stable work graduates to AchaeanFleet. |
+| **ProjectOdyssey** | research | Standalone Mojo ML training framework. Reproduces classic AI/ML research papers; provides reusable tensor ops, autograd, and training infrastructure. Not integrated with the agent mesh; implementations live entirely in-repo as Mojo libraries and executables. |
 | ~~ai-maestro~~ | removed | Removed per [ADR-006](adr/006-decouple-from-ai-maestro.md). No submodule entry and no `infrastructure/ai-maestro/` directory. Do not reintroduce. |
 
 ---
@@ -118,7 +118,7 @@ traverse the network.
   ProjectScylla     ──► ablation benchmarking (T0–T6 tiers)
   ProjectMnemosyne  ──► advise/learn plugins only
   ProjectHephaestus ──► shared utilities, skills registry (all repos)
-  ProjectOdyssey    ──► research sandbox ──► graduates to AchaeanFleet
+  ProjectOdyssey    ──► standalone Mojo ML framework (paper reproductions, in-repo only)
 ```
 
 ---
@@ -231,10 +231,13 @@ HomericIntelligence repos. Includes changelog tooling, system-info helpers, and
 markdown utilities.
 
 ### ProjectOdyssey
-Mojo-based ML training framework — tensor operations, training loops,
-optimizers, and metrics — used as a research sandbox. Experimental work that is
-not production-ready lives here. When an experiment reaches stability it is
-promoted to AchaeanFleet as a new vessel.
+Standalone Mojo ML training framework for reproducing classic AI/ML research
+papers. Provides a reusable shared library of SIMD-optimised tensor operations,
+an autograd engine, and full training infrastructure — all implemented in Mojo.
+Paper implementations live entirely in-repo as Mojo libraries and executables.
+ProjectOdyssey is not integrated with the agent mesh (no NATS, no Agamemnon
+REST API, no promotion path to AchaeanFleet); the only "agents" it uses are
+Claude Code automation in `.claude/agents/` for development workflow.
 
 ---
 
