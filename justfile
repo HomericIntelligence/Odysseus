@@ -40,6 +40,10 @@ status:
     @echo "=== Submodule status ==="
     @git submodule foreach --recursive 'echo "--- $name ---" && git status --short && echo ""'
 
+# Check whether any submodule pins are behind their upstream default branch
+check-submodule-drift:
+    bash scripts/check-submodule-drift.sh
+
 # ===========================================================================
 # Build
 # ===========================================================================
