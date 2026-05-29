@@ -60,3 +60,59 @@ Closes #N
 ```
 
 Common types: `feat`, `fix`, `docs`, `config`, `build`, `ci`, `refactor`, `test`, `chore`
+
+## Developer Tooling Standards
+
+These requirements apply to **every** HomericIntelligence repository. They were
+formalised as ecosystem conventions following the cross-repo audit (Odysseus
+[#42](https://github.com/HomericIntelligence/Odysseus/issues/42)).
+
+### Justfile (all repos)
+
+Every repository **must** have a `justfile` at the repo root that provides a
+consistent developer experience regardless of the underlying build system. The
+`justfile` wraps all tasks that an engineer needs:
+
+| Recipe | Description |
+|--------|-------------|
+| `default` | Lists available recipes (`@just --list`) |
+| `bootstrap` | Installs all dependencies (e.g. `pixi install`) |
+| `test` | Runs the full test suite |
+| `lint` | Runs linters (ruff, clang-tidy, etc.) |
+| `format` | Auto-formats source code |
+| `build` | Builds the package or binary |
+
+Additional repo-specific recipes are allowed and encouraged. Use `pixi run
+<task>` inside recipes rather than direct tool invocations so that toolchain
+versions are governed by `pixi.toml`.
+
+**Rationale:** Before this standard, each repo had different entry points
+(`make`, `pixi run`, bare scripts). The unified `just` interface means any
+engineer can run `just test` in any repo without reading the README.
+
+### pixi.toml (all repos)
+
+Every repository **must** have a `pixi.toml` at the repo root using the
+`[dependencies]` key (not `[workspace.dependencies]`). At minimum:
+
+```toml
+[dependencies]
+# runtime tools the justfile recipes need
+
+[tasks]
+# optional: delegate pixi tasks to just for users who prefer pixi run
+test = "just test"
+lint = "just lint"
+```
+
+Include `just = ">=1.13"` in `[dependencies]` if the repo's CI environment
+does not already provide `just` via the system.
+
+### Python Repo Layout
+
+Python repositories use **flat layout** by default — the package directory
+sits directly at the repo root (e.g. `hephaestus/`, not `src/hephaestus/`).
+This is intentional: src-layout was evaluated and reverted in ProjectHephaestus
+because it conflicted with hatchling VCS versioning and editable-install
+expectations in the pixi environment. Do **not** migrate Python repos to
+src-layout without a new ADR.
