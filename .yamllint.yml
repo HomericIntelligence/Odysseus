@@ -1,0 +1,20 @@
+---
+# yamllint configuration for the Odysseus meta-repo
+# Compatible with GitHub Actions YAML syntax (truthy "on:", etc.)
+extends: default
+
+rules:
+  # Allow longer lines in configs and workflows
+  line-length:
+    max: 200
+    level: warning
+
+  # GitHub Actions uses 'on:' as a key (truthy value); disable the check
+  truthy: disable
+
+  # Don't require document-start '---' markers
+  document-start: disable
+
+  # Allow either style for indent sequences
+  indentation:
+    indent-sequences: whatever
