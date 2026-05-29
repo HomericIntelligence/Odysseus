@@ -45,6 +45,18 @@ check-submodule-drift:
     bash scripts/check-submodule-drift.sh
 
 # ===========================================================================
+# Ecosystem Health
+# ===========================================================================
+
+# Check health of all HomericIntelligence repos and print a status report
+ecosystem-health:
+    @bash scripts/ecosystem-health.sh
+
+# Check health and write the report to docs/ecosystem-status.md
+ecosystem-health-update:
+    @bash scripts/ecosystem-health.sh --output docs/ecosystem-status.md
+
+# ===========================================================================
 # Build
 # ===========================================================================
 

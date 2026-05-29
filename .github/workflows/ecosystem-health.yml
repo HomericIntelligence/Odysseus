@@ -1,0 +1,58 @@
+name: Ecosystem Health Dashboard
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Monday 06:00 UTC — weekly health check
+  workflow_dispatch:
+    inputs:
+      update_status_doc:
+        description: 'Commit the report to docs/ecosystem-status.md'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  health-check:
+    name: ecosystem health
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write  # only used by the manual-trigger doc-update step
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ecosystem health checks
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifacts
+          bash scripts/ecosystem-health.sh \
+            --output artifacts/ecosystem-status.md \
+            --github-summary
+
+      - name: Upload health report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecosystem-health-report
+          path: artifacts/ecosystem-status.md
+          retention-days: 30
+
+      - name: Update docs/ecosystem-status.md (manual trigger only)
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.update_status_doc == true
+        run: |
+          cp artifacts/ecosystem-status.md docs/ecosystem-status.md
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/ecosystem-status.md
+          git diff --cached --quiet || \
+            git commit -m "docs: update ecosystem health status [skip ci]"
+          git push
