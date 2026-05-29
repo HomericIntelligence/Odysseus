@@ -23,6 +23,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Extended CI workflow with markdownlint, pixi, justfile, and symlink checks
   (#22, #256).
 - Reformatted ADRs to 80-char line limit and replaced markdownlint config.
+- Sharpened `docs/architecture.md` ProjectMnemosyne (skills marketplace / team-
+  knowledge store) and ProjectOdyssey (Mojo ML training framework) descriptions
+  to match their stabilized scope (#3).
 
 ### Fixed
 - `install.sh` now extends `PATH` before Phase 1 detection so prior-installed
