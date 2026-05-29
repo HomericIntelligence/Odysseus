@@ -15,6 +15,7 @@ choice, its context, decision rationale, and consequences.
 | [005](005-nats-subject-schema.md) | NATS Subject Schema | Accepted | Subject examples in ADR 002 | — |
 | [006](006-decouple-from-ai-maestro.md) | Decouple HomericIntelligence from ai-maestro | Accepted | — | — |
 | [007](007-symlinks-over-submodules.md) | Replace Symlinks with Real Git Submodules | Proposed | — | — |
+| [008](008-nats-tls-encryption.md) | Require TLS for All NATS Inter-Service Communication | Proposed | — | — |
 
 ## How to Create a New ADR
 
