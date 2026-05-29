@@ -39,9 +39,9 @@ a git submodule. Odysseus itself contains no application code.
 | **Myrmidons (workers)** | workers | Single-host worker pool. Pull-based, rate-limited (MaxAckPending=1). Queue subscription determines role. Multi-host clustering via Nomad is planned for a future phase. |
 | **ProjectScylla** | testing | AI agent ablation benchmarking; evaluates agent architectures across tiered configurations (T0–T6). |
 | **ProjectCharybdis** | testing | Chaos and resilience testing. Injects faults via Agamemnon `/v1/chaos/*` endpoints. |
-| **ProjectMnemosyne** | shared | Memory store for `advise` and `learn` plugins only. Not a template registry. |
+| **ProjectMnemosyne** | shared | Skills marketplace / team-knowledge memory store for the `advise` and `learn` plugins only. Not an agent-template registry. |
 | **ProjectHephaestus** | shared | Shared utilities, Claude Code plugins, and skills registry. Used across all repos. |
-| **ProjectOdyssey** | research | Mojo ML research sandbox. Stable work graduates to AchaeanFleet. |
+| **ProjectOdyssey** | research | Mojo-based ML training framework (tensor ops, training loops, optimizers, metrics) used as a research sandbox. Stable work graduates to AchaeanFleet. |
 | ~~ai-maestro~~ | removed | Removed per [ADR-006](adr/006-decouple-from-ai-maestro.md). No submodule entry and no `infrastructure/ai-maestro/` directory. Do not reintroduce. |
 
 ---
@@ -221,9 +221,9 @@ directly.
 ## Shared Infrastructure
 
 ### ProjectMnemosyne
-Memory store for the `advise` and `learn` plugins only. Mnemosyne is not a
-template registry and does not hold agent specs; those live in the Myrmidons
-repo.
+Skills marketplace and team-knowledge memory store backing the `advise` and
+`learn` plugins only. Mnemosyne is not an agent-template registry and does not
+hold agent specs; those live in the Myrmidons repo.
 
 ### ProjectHephaestus
 Shared utilities, Claude Code plugins, and the skills registry. Consumed by all
@@ -231,9 +231,10 @@ HomericIntelligence repos. Includes changelog tooling, system-info helpers, and
 markdown utilities.
 
 ### ProjectOdyssey
-Mojo ML research sandbox. Experimental work that is not production-ready lives
-here. When an experiment reaches stability it is promoted to AchaeanFleet as a
-new vessel.
+Mojo-based ML training framework — tensor operations, training loops,
+optimizers, and metrics — used as a research sandbox. Experimental work that is
+not production-ready lives here. When an experiment reaches stability it is
+promoted to AchaeanFleet as a new vessel.
 
 ---
 
