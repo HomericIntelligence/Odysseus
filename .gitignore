@@ -3,6 +3,16 @@
 .env.local
 .env*.local
 
+# Secret / credential files — never commit these
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+credentials.json
+secrets/
+*.secret
+
 # Podman runtime artifacts
 e2e/resolv.conf
 
