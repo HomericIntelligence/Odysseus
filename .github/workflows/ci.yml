@@ -30,7 +30,7 @@ jobs:
         run: markdownlint docs/architecture.md docs/adr/*.md
 
       - name: Install pixi
-        uses: prefix-dev/setup-pixi@v0.8.1
+        uses: prefix-dev/setup-pixi@v0.9.6
         with:
           run-install: false
 
