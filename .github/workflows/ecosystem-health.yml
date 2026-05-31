@@ -38,7 +38,7 @@ jobs:
             --github-summary
 
       - name: Upload health report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ecosystem-health-report
           path: artifacts/ecosystem-status.md
