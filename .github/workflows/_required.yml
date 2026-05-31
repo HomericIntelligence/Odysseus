@@ -170,7 +170,7 @@ jobs:
           "
 
       - name: Install just
-        uses: extractions/setup-just@v2
+        uses: extractions/setup-just@v4
 
       - name: Validate justfile syntax
         run: just --list > /dev/null
@@ -249,7 +249,7 @@ jobs:
           pixi-version: latest
 
       - name: Install just
-        uses: extractions/setup-just@v2
+        uses: extractions/setup-just@v4
 
       - name: Install yamllint (for validate-configs recipe)
         run: pip install yamllint
