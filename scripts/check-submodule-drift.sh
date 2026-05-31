@@ -109,7 +109,13 @@ for name in "${SUBMODULES[@]}"; do
   behind="?"
   last_updated="unknown"
   if [ -d "$path/.git" ] || [ -f "$path/.git" ]; then
-    git -C "$path" fetch --quiet "$url" "$remote_head" 2>/dev/null || true
+    # Best-effort fetch (Bucket B, no-silent-failures.md): the drift count and
+    # date below are optional enrichment — if the network is unavailable the
+    # rev-list/show steps fall back to "?"/"unknown", so a fetch failure is not
+    # fatal. Surface it as a warning rather than swallowing the exit code.
+    if ! git -C "$path" fetch --quiet "$url" "$remote_head" 2>/dev/null; then
+      printf 'warn: best-effort fetch failed for %s (drift detail may be incomplete)\n' "$path" >&2
+    fi
     count="$(git -C "$path" rev-list --count "${pinned}..${upstream}" 2>/dev/null || echo "")"
     [ -n "$count" ] && behind="$count"
     date_str="$(git -C "$path" show -s --format=%cs "$upstream" 2>/dev/null || echo "")"
