@@ -18,6 +18,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (weekly + manual), `scripts/check-submodule-drift.sh`, and the
   `just check-submodule-drift` recipe. Detects stale submodule pins and opens a
   draft (never auto-merged) bump PR (#46).
+- Ecosystem health dashboard: `.github/workflows/ecosystem-health.yml` (weekly +
+  manual), `scripts/ecosystem-health.sh`, `docs/ecosystem-status.md`, and the
+  `just ecosystem-health` / `just ecosystem-health-update` recipes. Reports each
+  repo's default branch, standard-file presence, CI status, and last commit (#45).
 
 ### Changed
 - Bumped `ProjectArgus` submodule pin through Atlas M2/M3/M4/M5/M6 and
