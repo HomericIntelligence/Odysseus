@@ -39,7 +39,7 @@ jobs:
           fi
 
       - name: Build install test image (cached)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: tests/install
           file: tests/install/Dockerfile.${{ matrix.os }}
