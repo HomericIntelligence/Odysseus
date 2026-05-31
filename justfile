@@ -251,7 +251,7 @@ validate-configs:
     else
         echo "Note: install nomad to validate HCL syntax (skipping HCL check)"
     fi
-    yamllint -d "{extends: default, rules: {line-length: {max: 200}, truthy: disable, document-start: disable}}" configs/
+    yamllint -c .yamllint.yml configs/
 
 # Run all CI checks locally
 ci: lint validate-configs
