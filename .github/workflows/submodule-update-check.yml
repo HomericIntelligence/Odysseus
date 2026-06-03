@@ -20,7 +20,7 @@ jobs:
     outputs:
       has_drift: ${{ steps.drift.outputs.has_drift }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: true
 
@@ -46,7 +46,7 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: true
 
