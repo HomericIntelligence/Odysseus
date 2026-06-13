@@ -21,10 +21,10 @@ jobs:
         os: [debian12, ubuntu2404, ubuntu2204]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
 
       - name: Determine branch ref for container clone
         id: ref
@@ -39,7 +39,7 @@ jobs:
           fi
 
       - name: Build install test image (cached)
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7.2.0
         with:
           context: tests/install
           file: tests/install/Dockerfile.${{ matrix.os }}
@@ -96,7 +96,7 @@ jobs:
 
       - name: Upload install logs
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: install-logs-${{ matrix.os }}
           path: /tmp/install-${{ matrix.os }}-*.log
