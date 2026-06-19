@@ -230,7 +230,7 @@ just --list
 | `just setup` | One-command setup (bootstrap + build) |
 | `just update-submodules` | Pull latest from all upstream submodule remotes |
 | `just start-agamemnon` | Start ProjectAgamemnon (control plane) |
-| `just nestor-start` | Start ProjectNestor (research service) |
+| `just start-nestor` | Start ProjectNestor (research service) |
 | `just keystone-start` | Start ProjectKeystone (event bus) |
 | `just hermes-start` | Start ProjectHermes (external bridge) |
 | `just argus-start` | Start ProjectArgus (observability stack) |
