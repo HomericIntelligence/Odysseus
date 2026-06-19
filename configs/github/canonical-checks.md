@@ -37,3 +37,25 @@ with `"integration_id": 15368` (GitHub Actions app) to scope the match to Action
 the job has an explicit `name:` field — the workflow name prefix does NOT appear in
 the context string. `repo-ruleset.json` and `repo-ruleset-active.json` use bare names
 with `integration_id: 15368`.
+
+### Why the filename is `_required.yml`
+
+The leading underscore is a deliberate fleet convention, not an opaque choice —
+and the filename is organizational, not load-bearing:
+
+- **Sorts first / signals intent.** The underscore sorts ahead of letters, so the
+  required-checks workflow appears at the top of `.github/workflows/` and the
+  Actions tab — visually marking "this is the gate that blocks merges."
+- **Uniform across all repos.** Every HomericIntelligence repo uses this exact
+  path, so `tools/github/apply-repo-rulesets.sh` and
+  `docs/runbooks/branch-protection-rollout.md` can reference one filename
+  fleet-wide.
+- **The filename is NOT the enforcement contract.** Renaming the file would only
+  require updating doc/tooling references; it would not change any required
+  status check. The load-bearing artifact is each job's `name:` field — GitHub
+  derives the status-check context from it. Renaming or removing a *job* without
+  updating the ruleset contexts (and re-applying the ruleset) is what breaks
+  enforcement. Note the two ruleset forms in this repo:
+  `org-ruleset*.json` pin `"Required Checks / <job>"`, while `repo-ruleset*.json`
+  pin the bare `"<job>"` with `integration_id: 15368`. Treat the job names — not
+  the filename — as the API.

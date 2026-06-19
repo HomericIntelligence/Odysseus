@@ -1,3 +1,22 @@
+# Canonical required-checks workflow for the HomericIntelligence fleet.
+#
+# The exact filename `_required.yml` is a fleet convention: the leading
+# underscore sorts it to the top of .github/workflows/ and the Actions tab,
+# and every Homeric repo uses this same path so rollout tooling and the
+# branch-protection runbook can reference one filename. The filename itself is
+# NOT an enforcement mechanism -- renaming it would only churn doc/tooling
+# references (see below), not change any required status check.
+#
+# What IS load-bearing: each job's `name:` value. GitHub emits the status-check
+# context from the job `name:`, and the branch-protection rulesets pin those
+# contexts. Keep every job `name:` byte-for-byte aligned with the contexts in
+# configs/github/canonical-checks.md and the ruleset JSON
+# (configs/github/org-ruleset*.json use "Required Checks / <name>";
+# configs/github/repo-ruleset*.json use the bare "<name>"). Do NOT rename a job
+# without updating those rulesets and re-applying them.
+#
+# References to this path: configs/github/canonical-checks.md,
+# docs/runbooks/branch-protection-rollout.md, .pre-commit-config.yaml.
 name: Required Checks
 
 on:
