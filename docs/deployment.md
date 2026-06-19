@@ -157,8 +157,15 @@ The canonical NATS server config is at `configs/nats/server.conf`. It configures
 - TLS (if enabled)
 - Leaf nodes (for multi-cluster federation)
 - Max connections and per-client limits
+- Authentication (fail-closed): requires `$NATS_CLIENT_TOKEN` for client
+  connections and `$NATS_LEAF_TOKEN` for leaf-node connections. NATS will
+  refuse connections without these credentials — set both in your deployment
+  secrets before starting the server. The recommended production path is
+  per-leaf NKey/JWT `.creds` files; see ADR-009 and
+  `docs/runbooks/add-new-host.md` step 5.
 
-For a single-host setup, the default config requires no changes.
+For a single-host setup, set `$NATS_CLIENT_TOKEN` and `$NATS_LEAF_TOKEN`
+in your environment before starting the server.
 
 ### 4b. Start the NATS Server
 

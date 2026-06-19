@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Security
+
+- NATS leaf and server configs now require authentication (fail-closed) on
+  both client and leafnode listeners; `tools/validate-nats-auth.sh` validator
+  gate wired into CI on `pull_request`. See ADR-009 (issue #176).
+
 ### Added
 - `install.sh` and `install_dev.sh` bootstrap scripts with container-based CI
   validation (#260, #265).

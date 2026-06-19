@@ -73,11 +73,30 @@ curl http://172.20.0.1:8080/v1/hosts | jq '.[] | .hostname'
 
 ### 5. Deploy a NATS leaf node
 
-The new host needs a NATS leaf node to participate in the event mesh. Copy the leaf node config from this repo:
+The new host needs a NATS leaf node to participate in the event mesh.
+
+**Provision the leaf credential FIRST** (issue #176 — the hub is fail-closed:
+a leaf with no credential is rejected at connect time):
+
+```bash
+# RECOMMENDED: place a per-leaf NKey/JWT creds file (revocable, no shared secret)
+mkdir -p /etc/nats/certs
+chmod 700 /etc/nats/certs
+# Obtain leaf.creds from your operator/account JWT provisioning flow, then:
+cp leaf.creds /etc/nats/certs/leaf.creds
+chmod 600 /etc/nats/certs/leaf.creds
+# Uncomment the credentials line in leaf.conf after copying.
+
+# BOOTSTRAP fallback: shared token (must match $NATS_LEAF_TOKEN on the hub)
+# export NATS_LEAF_TOKEN=<shared-token-from-deployment-secrets>
+```
+
+Copy the leaf node config from this repo:
 
 ```bash
 cp configs/nats/leaf.conf /etc/nats/leaf.conf
-# Edit leaf.conf: set the remotes.url to the primary NATS server's Tailscale IP
+# Edit leaf.conf: set the remotes.url to the primary NATS server's Tailscale IP,
+# and confirm the credential (credentials=... or token=$NATS_LEAF_TOKEN) matches the hub.
 ```
 
 Start the NATS leaf node:

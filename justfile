@@ -264,6 +264,7 @@ validate-configs:
         echo "Note: install nomad to validate HCL syntax (skipping HCL check)"
     fi
     yamllint -c .yamllint.yml configs/
+    bash tools/validate-nats-auth.sh
 
 # Run all CI checks locally
 ci: lint validate-configs
