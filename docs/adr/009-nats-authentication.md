@@ -61,7 +61,7 @@ the canonical config could relay into the mesh anonymously (issue #176).
 ## References
 
 - [ADR 002](002-nats-event-bridge.md) — NATS event bridge decision
-- [ADR 008](008-nats-tls.md) — TLS encryption layer this ADR extends with
+- [ADR 008](008-nats-tls-encryption.md) — TLS encryption layer this ADR extends with
   identity authentication
 - [Issue #176](https://github.com/HomericIntelligence/Odysseus/issues/176)
   — NATS leaf-node config has no authentication (part of #174)

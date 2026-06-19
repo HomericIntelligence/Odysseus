@@ -65,9 +65,7 @@ jobs:
       - name: NATS config parses + fail-closed on unset token
         run: |
           NATS_CLIENT_TOKEN=x NATS_LEAF_TOKEN=y nats-server -c configs/nats/server.conf -t
-          out=$(nats-server -c configs/nats/leaf.conf -t 2>&1 || true)
-          echo "$out"
-          echo "$out" | grep -q 'NATS_LEAF_TOKEN' && { echo "FAIL: unset token left literal in config"; exit 1; } || true
+          ! nats-server -c configs/nats/leaf.conf -t 2>/dev/null
 
   verify-scripts:
     name: verify-scripts — Claude read permissions (if present)
