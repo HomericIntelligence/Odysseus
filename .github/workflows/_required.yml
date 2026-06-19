@@ -272,8 +272,21 @@ jobs:
           find .github/workflows -name "*.yml" | xargs check-jsonschema \
             --schemafile https://json.schemastore.org/github-workflow
 
-      - name: Validate org-ruleset.json is valid JSON
-        run: jq . configs/github/org-ruleset.json > /dev/null && echo "org-ruleset.json is valid JSON"
+      - name: Validate ruleset JSON and require >=1 approving review
+        run: |
+          for f in configs/github/org-ruleset.json \
+                   configs/github/org-ruleset-active.json \
+                   configs/github/repo-ruleset.json \
+                   configs/github/repo-ruleset-active.json; do
+            jq . "$f" > /dev/null
+            count=$(jq 'first(.rules[] | select(.type=="pull_request")
+                       | .parameters.required_approving_review_count)' "$f")
+            if [ -z "$count" ] || [ "$count" -lt 1 ]; then
+              echo "ERROR: $f has required_approving_review_count=$count (must be >=1)" >&2
+              exit 1
+            fi
+            echo "$f OK (required_approving_review_count=$count)"
+          done
 
   deps-version-sync:
     name: deps/version-sync

@@ -35,6 +35,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   knowledge store) and ProjectOdyssey (Mojo ML training framework) descriptions
   to match their stabilized scope (#3).
 
+### Security
+- Branch protection: require 1 approving review on `main` across all four canonical rulesets (closes #178).
+
 ### Fixed
 - `install.sh` now extends `PATH` before Phase 1 detection so prior-installed
   tools are found (#271).
