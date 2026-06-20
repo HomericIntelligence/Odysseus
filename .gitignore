@@ -39,6 +39,10 @@ __pycache__/
 node_modules/
 .pixi/
 
+# NATS credentials / TLS material — never commit (issue #176, ADR-008/009)
+*.creds
+/etc/nats/certs/
+
 # Temporary files
 .claude/worktrees/
 .claude/scheduled_tasks.lock
