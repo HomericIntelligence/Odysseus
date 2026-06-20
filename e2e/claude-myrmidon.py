@@ -20,6 +20,10 @@ Environment:
     REPO            GitHub repo (default: HomericIntelligence/Odysseus)
     WORKING_DIR     Working directory for claude invocations (default: cwd)
     MAX_ITERATIONS  Max review loop iterations (default: 5)
+    ISSUE_NUMBER    Target GitHub issue number used when the task message omits
+                    issue_number. If neither the message nor this var supplies a
+                    positive integer, the stage fails loudly — no default issue
+                    is ever assumed (issue #187).
 """
 
 import asyncio
@@ -98,6 +102,31 @@ def prune_task_data(task_data: dict, keep_extra: tuple = ()) -> dict:
     """Strip accumulated stage outputs, keeping only core identity + specified extras."""
     allowed = _CORE_KEYS | set(keep_extra)
     return {k: v for k, v in task_data.items() if k in allowed}
+
+
+def resolve_issue_number(task_data: dict) -> int:
+    """Resolve the target GitHub issue number, failing loudly when absent.
+
+    Resolution order: the task message's ``issue_number`` field, then the
+    ``ISSUE_NUMBER`` env var. There is NO silent default — a missing or invalid
+    value raises ValueError so a malformed task never targets an unrelated
+    issue (see issue #187, POLA).
+    """
+    for source in (task_data.get("issue_number"), ISSUE_NUMBER or None):
+        if source is None or source == "":
+            continue
+        try:
+            value = int(source)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"issue_number is not a valid integer: {source!r}"
+            ) from None
+        if value > 0:
+            return value
+    raise ValueError(
+        "issue_number missing: provide it in the task message or set the "
+        "ISSUE_NUMBER environment variable (no default is assumed)"
+    )
 
 
 def mock_claude_response(stage: str, iteration: int) -> str:
@@ -422,7 +451,7 @@ async def stage_plan(task_data: dict, js) -> dict:
     team_id = task_data.get("team_id", "unknown")
     subject = task_data.get("subject", "unknown task")
     description = task_data.get("description", "")
-    issue_number = task_data.get("issue_number", ISSUE_NUMBER or 7)
+    issue_number = resolve_issue_number(task_data)
 
     log("plan", f"Planning task: {subject}")
     log_memory("plan")
@@ -470,7 +499,7 @@ async def stage_test(task_data: dict, js) -> dict:
     plan = task_data.get("plan", "")
     iteration = task_data.get("iteration", 1)
     feedback = task_data.get("feedback", "")
-    issue_number = task_data.get("issue_number", ISSUE_NUMBER or 7)
+    issue_number = resolve_issue_number(task_data)
 
     log("test", f"Writing tests (iteration {iteration})")
     log_memory("test")
@@ -529,7 +558,7 @@ async def stage_implement(task_data: dict, js) -> dict:
     iteration = task_data.get("iteration", 1)
     feedback = task_data.get("feedback", "")
     concerns = task_data.get("concerns", "")
-    issue_number = task_data.get("issue_number", ISSUE_NUMBER or 7)
+    issue_number = resolve_issue_number(task_data)
 
     log("implement", f"Implementing (iteration {iteration})")
     log_memory("implement")
@@ -582,7 +611,7 @@ async def stage_review(task_data: dict, js) -> dict:
     test_script = task_data.get("test_script", "")
     iteration = task_data.get("iteration", 1)
     previous_concerns = task_data.get("concerns", "")
-    issue_number = task_data.get("issue_number", ISSUE_NUMBER or 7)
+    issue_number = resolve_issue_number(task_data)
 
     log("review", f"Reviewing (iteration {iteration})")
     log_memory("review")
@@ -675,7 +704,7 @@ async def stage_ship(task_data: dict, js) -> dict:
     task_id = task_data.get("task_id", "unknown")
     team_id = task_data.get("team_id", "unknown")
     subject = task_data.get("subject", "implement task")
-    issue_number = task_data.get("issue_number", ISSUE_NUMBER or 7)
+    issue_number = resolve_issue_number(task_data)
 
     log("ship", "Shipping approved implementation")
     log_memory("ship")
