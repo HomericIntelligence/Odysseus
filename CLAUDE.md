@@ -6,6 +6,9 @@ Odysseus is the meta-repo and unified architecture hub for the HomericIntelligen
 
 Odysseus itself contains no application code. Its value is coordination: it ensures that any engineer (or AI agent) starting here can understand the full system, find every component, and perform cross-cutting operations with a single `just` command.
 
+> **AI agents:** Before operating in this repo, read [AGENTS.md](AGENTS.md) for
+> behavior boundaries, permitted tools, off-limits files, and escalation paths.
+
 ## Key Principles
 
 1. **Odysseus is read-mostly.** Most day-to-day changes happen in the individual submodule repos, not here.

@@ -55,6 +55,12 @@ Step-by-step guides for common operational tasks. Execute each runbook top-to-bo
 
 ---
 
+## AI Agent Boundaries
+
+- **[AGENTS.md](../AGENTS.md)** — AI agent behavior boundaries and context limits (repo root)
+
+---
+
 ## Key Principles
 
 1. **Odysseus is read-mostly.** Most day-to-day changes happen in individual submodule repos, not here.

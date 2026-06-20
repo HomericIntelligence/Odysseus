@@ -27,7 +27,7 @@ jobs:
         run: npm install -g markdownlint-cli
 
       - name: Lint documentation markdown
-        run: markdownlint docs/architecture.md docs/adr/*.md
+        run: markdownlint AGENTS.md docs/architecture.md docs/adr/*.md
 
       - name: Install pixi
         uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11  # v0.9.6
