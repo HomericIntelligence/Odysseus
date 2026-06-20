@@ -103,7 +103,7 @@ cp configs/nomad/client.hcl /etc/nomad.d/client.hcl
 
 # ACLs are enabled (issue #196): the client needs a token to register.
 # Obtain one from the server operator (a node-policy token, or the bootstrap
-# Secret ID from `nomad acl bootstrap` — see docs/deployment.md step 5d):
+# Secret ID from `nomad acl bootstrap` — see docs/deployment.md step 5c):
 export NOMAD_TOKEN=<token-from-server>
 
 nomad agent -config /etc/nomad.d/client.hcl &
