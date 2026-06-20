@@ -48,11 +48,10 @@ After applying, all repos with `homeric-intelligence` topic are discoverable at:
 All repos standardize on `main` as the default branch (per the ecosystem standard).
 Feature branches use the pattern: `<issue-number>-<short-slug>` (e.g., `115-auto-impl`).
 
-Migration completed in [#24](https://github.com/HomericIntelligence/Odysseus/issues/24):
-all 15 HomericIntelligence repos were verified to use `main` as `defaultBranchRef` and
-the only stale `refs/heads/master` (ProjectKeystone, an unprotected orphan with no open
-PRs) was deleted. The `homeric-main-baseline` branch-protection ruleset (id 15556483)
-is active on the ecosystem.
+As of [#24](https://github.com/HomericIntelligence/Odysseus/issues/24) (2026-06), all
+15 HomericIntelligence repos were verified to use `main` as `defaultBranchRef`. The only
+stale `refs/heads/master` (ProjectKeystone, an unprotected orphan with no open PRs) was
+deleted. A branch-protection ruleset is configured for the ecosystem.
 
 To verify the current state of any repo:
 ```bash
