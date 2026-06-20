@@ -194,6 +194,9 @@ jobs:
       - name: Validate justfile syntax
         run: just --list > /dev/null
 
+      - name: Run release-contract regression tests
+        run: bash tests/release/release.test.sh
+
   integration-tests:
     name: integration-tests
     runs-on: ubuntu-latest
@@ -350,3 +353,6 @@ jobs:
             exit 1
           fi
           pixi install --frozen
+
+      - name: Validate version consistency (pixi.toml vs CHANGELOG)
+        run: python3 scripts/check_version_consistency.py
