@@ -23,6 +23,9 @@ jobs:
           find configs/ -name '*.yml' -o -name '*.yaml' -o -name '*.json' | sort
           find configs/ -name '*.yml' -o -name '*.yaml' | xargs --no-run-if-empty yamllint -c .yamllint.yml
 
+      - name: Check e2e compose image pins (no floating tags)
+        run: bash scripts/check_e2e_image_pins.sh
+
       - name: Install markdownlint-cli
         run: npm install -g markdownlint-cli
 
