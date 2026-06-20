@@ -56,6 +56,7 @@ deleted. A branch-protection ruleset is configured for the ecosystem.
 To verify the current state of any repo:
 ```bash
 gh repo view HomericIntelligence/<REPO> --json defaultBranchRef --jq .defaultBranchRef.name
+# Expect: main
 # Confirm no stale master ref:
 gh api repos/HomericIntelligence/<REPO>/git/refs/heads --jq 'any(.ref=="refs/heads/master")'
 # Expect: false
