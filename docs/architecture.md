@@ -202,6 +202,25 @@ CI/CD pipelines written in Dagger TypeScript. On merge to main in any submodule
 repo, Proteus builds the relevant AchaeanFleet images and dispatches
 `agamemnon-apply` to apply any updated Myrmidons manifests.
 
+### Canonical Workflow Field Names
+
+Workflow and task schemas across the ecosystem derive their field names from the
+**ProjectAgamemnon REST API contract**; the ProjectTelemachy Pydantic models
+(`src/telemachy/models.py`, `TaskSpec`) are the authoritative source. Two layers
+exist: the YAML/Pydantic field name authors write, and the JSON key sent to the
+Agamemnon REST API (`agamemnon_client.py`). All ecosystem documentation must use
+the YAML names below; do not reintroduce the deprecated forms.
+
+| YAML / Pydantic field | Agamemnon wire key | Deprecated — do NOT use |
+|-----------------------|--------------------|-------------------------|
+| `subject`             | `subject`          | `title`                 |
+| `blocked_by`          | `blockedBy`        | `depends_on`            |
+| `assign_to`           | `assigneeAgentId`  | —                       |
+
+First-party Odysseus docs are guarded against the deprecated names by
+`scripts/check-doc-field-drift.sh` (run via `just check-doc-field-drift`, part
+of `just ci`). Submodule repos own their own equivalent guards.
+
 ---
 
 ## Testing
