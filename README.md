@@ -33,6 +33,7 @@ Complete documentation is available in the [docs/](docs/) directory:
 - **[Architecture Decision Records](docs/adr/)** — All significant architectural decisions with rationale
 - **[Operational Runbooks](docs/runbooks/)** — Step-by-step guides for common operational tasks
 - **[NATS Subject Schema](docs/nats-subjects.md)** — Event bus subject patterns and streams
+- **[Agent Safety Boundaries](AGENTS.md)** — Permitted tools, scope, off-limits files, and escalation paths for AI agents operating in this repo
 
 ## Repository Layout
 
