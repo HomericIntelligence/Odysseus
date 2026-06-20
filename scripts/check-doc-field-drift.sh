@@ -29,7 +29,7 @@ set -uo pipefail
 case "${1:-}" in
   "") ;;
   -h|--help)
-    sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
     ;;
   *)
@@ -61,12 +61,10 @@ fi
 # (e.g. "title:" / "depends_on:" in a YAML task block), so prose and
 # PR-title guidance are not false-positives.
 pattern='^[[:space:]]*-?[[:space:]]*(title|depends_on):'
-hits="$(grep -nEr "$pattern" "${docs[@]}" || true)"
 
-if [[ -n "$hits" ]]; then
+if grep -nE "$pattern" "${docs[@]}"; then
   echo "ERROR: deprecated workflow field name(s) found in first-party docs." >&2
   echo "Use 'subject' instead of 'title' and 'blocked_by' instead of 'depends_on'." >&2
-  echo "$hits" >&2
   exit 1
 fi
 
