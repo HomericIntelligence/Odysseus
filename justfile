@@ -44,6 +44,10 @@ status:
 check-submodule-drift:
     bash scripts/check-submodule-drift.sh
 
+# Guard first-party docs against deprecated workflow field names (issue #25)
+check-doc-field-drift:
+    ./scripts/check-doc-field-drift.sh
+
 # ===========================================================================
 # Ecosystem Health
 # ===========================================================================
@@ -266,7 +270,7 @@ validate-configs:
     yamllint -c .yamllint.yml configs/
 
 # Run all CI checks locally
-ci: lint validate-configs
+ci: lint validate-configs check-doc-field-drift
     @echo "All checks passed"
 
 # ===========================================================================
