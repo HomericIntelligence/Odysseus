@@ -233,6 +233,22 @@ Verify Nomad is running:
 nomad status
 ```
 
+### 5d. Bootstrap the Nomad ACL System (required)
+
+`configs/nomad/server.hcl` ships with `acl { enabled = true }` (issue #196),
+so the cluster requires a token before any further `nomad` command or client
+registration will succeed. Bootstrap the initial management token **once** per
+cluster, immediately after the server starts:
+
+```bash
+nomad acl bootstrap          # prints the Secret ID — store it in your secret manager
+export NOMAD_TOKEN=<secret-id>
+```
+
+Then create scoped tokens for clients and operators with
+`nomad acl policy apply` + `nomad acl token create`. If you skip this step,
+`nomad node status` and Step 5c's client will fail with "ACL token not found".
+
 ---
 
 ## Step 6: Start ProjectKeystone (Transport Layer)
@@ -402,7 +418,10 @@ Before running in production, complete these additional steps:
 
 ### 12a. Enable TLS
 
-Update `configs/nats/server.conf` and `configs/nomad/server.hcl` to enable TLS certificates.
+Nomad ACLs are already enabled in `configs/nomad/server.hcl` and `client.hcl`
+(issue #196) — ensure you completed the `nomad acl bootstrap` in Step 5d. The
+remaining transport hardening is TLS: update `configs/nats/server.conf` and
+`configs/nomad/server.hcl` to enable TLS certificates.
 
 ### 12b. Configure Persistent Storage
 

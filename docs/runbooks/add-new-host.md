@@ -101,6 +101,11 @@ Copy the client config and start Nomad:
 cp configs/nomad/client.hcl /etc/nomad.d/client.hcl
 # Edit client.hcl: set client.servers to the primary Nomad server's Tailscale IP
 
+# ACLs are enabled (issue #196): the client needs a token to register.
+# Obtain one from the server operator (a node-policy token, or the bootstrap
+# Secret ID from `nomad acl bootstrap` — see docs/deployment.md step 5d):
+export NOMAD_TOKEN=<token-from-server>
+
 nomad agent -config /etc/nomad.d/client.hcl &
 ```
 
