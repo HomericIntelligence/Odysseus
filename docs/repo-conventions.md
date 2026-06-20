@@ -48,6 +48,20 @@ After applying, all repos with `homeric-intelligence` topic are discoverable at:
 All repos standardize on `main` as the default branch (per the ecosystem standard).
 Feature branches use the pattern: `<issue-number>-<short-slug>` (e.g., `115-auto-impl`).
 
+As of [#24](https://github.com/HomericIntelligence/Odysseus/issues/24) (2026-06), all
+15 HomericIntelligence repos were verified to use `main` as `defaultBranchRef`. The only
+stale `refs/heads/master` (ProjectKeystone, an unprotected orphan with no open PRs) was
+deleted. A branch-protection ruleset is configured for the ecosystem.
+
+To verify the current state of any repo:
+```bash
+gh repo view HomericIntelligence/<REPO> --json defaultBranchRef --jq .defaultBranchRef.name
+# Expect: main
+# Confirm no stale master ref:
+gh api repos/HomericIntelligence/<REPO>/git/refs/heads --jq 'any(.ref=="refs/heads/master")'
+# Expect: false
+```
+
 ## Commit Message Convention
 
 All repos use [Conventional Commits](https://www.conventionalcommits.org/):
