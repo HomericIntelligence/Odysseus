@@ -47,10 +47,17 @@ cd "$REPO_ROOT" || exit 2
 # First-party markdown docs only; never scan submodule trees or GitHub templates
 # (.github/ISSUE_TEMPLATE uses YAML frontmatter with a 'title:' key that is not
 # a workflow field — exclude to avoid false positives).
-mapfile -t docs < <(
-  git ls-files -- '*.md' \
-    | awk '!/^(infrastructure|control|provisioning|ci-cd|research|shared|testing|\.github)\//'
-)
+#
+# Capture git ls-files into a variable first so its exit status is checkable.
+# Process substitution exit status is not propagated by pipefail, so a bare
+# mapfile < <(git ls-files | awk ...) would silently produce an empty list on
+# git failure and exit 0 — a false pass.
+raw_docs="$(git ls-files -- '*.md')" || {
+  printf 'error: git ls-files failed\n' >&2
+  exit 2
+}
+mapfile -t docs < <(printf '%s\n' "$raw_docs" \
+  | awk '!/^(infrastructure|control|provisioning|ci-cd|research|shared|testing|\.github)\//')
 
 if (( ${#docs[@]} == 0 )); then
   echo "check-doc-field-drift: no first-party docs to scan"
