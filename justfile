@@ -513,6 +513,10 @@ start-claude-myrmidon-multi NATS_URL="nats://localhost:4222":
 e2e-multi-dry-run NATS_URL="nats://localhost:4222":
     DRY_RUN=1 NO_GITHUB=1 NATS_URL={{ NATS_URL }} python3 e2e/claude-myrmidon-multi.py
 
+# Run the issue-number resolver regression test (issue #187, no stack needed)
+e2e-test-myrmidon-issue-number:
+    bash e2e/test-myrmidon-issue-number.sh
+
 # Build E2E container images
 e2e-build:
     podman compose -f docker-compose.e2e.yml build
