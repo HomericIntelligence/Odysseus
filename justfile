@@ -701,6 +701,30 @@ ruleset-validate:
     echo "Canonical required checks (from file):"
     jq -r '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' configs/github/org-ruleset.json
 
+# Assert each on-disk ruleset config keeps its intended enforcement value
+# (offline; mirrors the schema-validation step in .github/workflows/_required.yml).
+ruleset-enforcement-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    declare -A expected=(
+      [configs/github/repo-ruleset.json]=evaluate
+      [configs/github/repo-ruleset-active.json]=active
+      [configs/github/org-ruleset.json]=evaluate
+      [configs/github/org-ruleset-active.json]=active
+    )
+    fail=0
+    for f in "${!expected[@]}"; do
+      got=$(jq -r '.enforcement' "$f")
+      if [ "$got" != "${expected[$f]}" ]; then
+        echo "REGRESSION: $f enforcement=\"$got\" (expected \"${expected[$f]}\")" >&2
+        fail=1
+      else
+        echo "PASSED: $f enforcement=\"$got\""
+      fi
+    done
+    [ "$fail" -eq 0 ] || { echo "FAILED: ruleset enforcement drift detected" >&2; exit 1; }
+    echo "PASSED: all 4 ruleset configs hold their intended enforcement"
+
 # Remove classic branch protection from ALL 15 repos (requires confirmation; run after ruleset is active)
 protection-remove-all:
     ./tools/github/remove-classic-protection.sh --all
