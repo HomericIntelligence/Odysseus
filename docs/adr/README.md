@@ -16,6 +16,7 @@ choice, its context, decision rationale, and consequences.
 | [006](006-decouple-from-ai-maestro.md) | Decouple HomericIntelligence from ai-maestro | Accepted | — | — |
 | [007](007-symlinks-over-submodules.md) | Replace Symlinks with Real Git Submodules | Proposed | — | — |
 | [008](008-nats-tls-encryption.md) | Require TLS for All NATS Inter-Service Communication | Proposed | — | — |
+| [009](009-defer-multi-host-nomad-scheduling.md) | Defer Multi-Host Nomad Scheduling to a Future Phase | Proposed | — | — |
 
 ## How to Create a New ADR
 

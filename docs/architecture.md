@@ -33,10 +33,10 @@ a git submodule. Odysseus itself contains no application code.
 | **ProjectHermes** | infrastructure | External message delivery bridge. Routes external-service events into NATS and delivers outbound messages to external services. |
 | **ProjectArgus** | infrastructure | Observability: Prometheus metrics, Loki log aggregation, Grafana dashboards, Promtail scraping. Feeds Odysseus dashboards. |
 | **AchaeanFleet** | infrastructure | Container image library. All agent and service images. Built by Proteus; run on the `homeric-mesh` Podman network. |
-| **Myrmidons repo** | provisioning | GitOps source of truth. YAML manifests describe desired agent state; Agamemnon API reconciliation applies them. Also holds all agent templates and container specs. Multi-host scheduling via Nomad is planned for a future phase; currently supports `local` and `docker` deployment types only. |
+| **Myrmidons repo** | provisioning | GitOps source of truth. YAML manifests describe desired agent state; Agamemnon API reconciliation applies them. Also holds all agent templates and container specs. Multi-host scheduling via Nomad is deferred to a future phase (see [ADR-009](adr/009-defer-multi-host-nomad-scheduling.md)); currently supports `local` and `docker` deployment types only. |
 | **ProjectTelemachy** | provisioning | Declarative workflow engine. Used programmatically by Agamemnon and Nestor. Not a user-facing service. |
 | **ProjectProteus** | ci-cd | CI/CD. Dagger TypeScript pipelines. Builds AchaeanFleet images; dispatches `agamemnon-apply` on merge. |
-| **Myrmidons (workers)** | workers | Single-host worker pool. Pull-based, rate-limited (MaxAckPending=1). Queue subscription determines role. Multi-host clustering via Nomad is planned for a future phase. |
+| **Myrmidons (workers)** | workers | Single-host worker pool. Pull-based, rate-limited (MaxAckPending=1). Queue subscription determines role. Multi-host clustering via Nomad is deferred to a future phase (see [ADR-009](adr/009-defer-multi-host-nomad-scheduling.md)). |
 | **ProjectScylla** | testing | AI agent ablation benchmarking; evaluates agent architectures across tiered configurations (T0–T6). |
 | **ProjectCharybdis** | testing | Chaos and resilience testing. Injects faults via Agamemnon `/v1/chaos/*` endpoints. |
 | **ProjectMnemosyne** | shared | Skills marketplace / team-knowledge memory store for the `advise` and `learn` plugins only. Not an agent-template registry. |
@@ -189,8 +189,9 @@ authoritative source of container specs and agent templates (not
 ProjectMnemosyne).
 
 **Current state:** Myrmidons supports single-host deployments with `local` and
-`docker` deployment types. Multi-host agent scheduling via Nomad is planned for
-a future phase and is tracked in HomericIntelligence/Myrmidons#5.
+`docker` deployment types. Multi-host agent scheduling via Nomad is deferred to
+a future phase and is tracked in
+[ADR-009](adr/009-defer-multi-host-nomad-scheduling.md).
 
 ### AchaeanFleet
 All container images are defined and versioned in AchaeanFleet. Images run on
