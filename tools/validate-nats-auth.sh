@@ -31,6 +31,12 @@ fi
 if ! block "$SERVER" leafnodes | grep -Eq '\b(authorization|account)\b'; then
   echo "FAIL: $SERVER leafnodes{} listener has no authorization (issue #176)"; fail=1
 fi
+# 4) server.conf: the cluster{} listener must carry authorization/account (issue #306).
+#    A cluster{} block is optional (single-host needs none); only enforce when present.
+_cluster_block="$(block "$SERVER" cluster)"
+if [[ -n "$_cluster_block" ]] && ! grep -Eq '\b(authorization|account)\b' <<<"$_cluster_block"; then
+  echo "FAIL: $SERVER cluster{} listener has TLS but no authorization (issue #306)"; fail=1
+fi
 
 [ "$fail" -eq 0 ] && echo "OK: NATS configs carry authentication"
 exit "$fail"
