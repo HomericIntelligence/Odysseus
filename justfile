@@ -274,6 +274,23 @@ validate-configs:
 ci: lint validate-configs check-doc-field-drift
     @echo "All checks passed"
 
+# Cut a release: validate tag↔pixi.toml↔CHANGELOG, create tag, push (triggers release.yml)
+# Prerequisites: bump version in pixi.toml, add dated CHANGELOG section, rewrite footer
+# base from <root-sha> to v{{VERSION}}, then run: just release VERSION
+release VERSION:
+	@python3 scripts/check_version_consistency.py --expect {{VERSION}}
+	@bash tests/release/release.test.sh
+	@grep -qE "^## \[{{VERSION}}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md \
+	  || (echo "CHANGELOG missing dated section for {{VERSION}}" && exit 1)
+	@if git config --get user.signingkey >/dev/null 2>&1; then \
+	    git tag -s -a v{{VERSION}} -m "Release v{{VERSION}}"; \
+	  else \
+	    echo "No signing key configured; creating annotated (unsigned) tag"; \
+	    git tag -a v{{VERSION}} -m "Release v{{VERSION}}"; \
+	  fi
+	git push origin v{{VERSION}}
+	@echo "Pushed v{{VERSION}} — release.yml will validate and publish."
+
 # ===========================================================================
 # Provisioning
 # ===========================================================================
