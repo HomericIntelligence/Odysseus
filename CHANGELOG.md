@@ -108,3 +108,5 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `justfile` with bootstrap, status, apply-all, and service-start recipes.
 - `pixi.toml` with `just` dependency.
 - Local dev symlinks for all submodule paths (dev convenience, not portable).
+
+[Unreleased]: https://github.com/HomericIntelligence/Odysseus/compare/b10bfdd...HEAD

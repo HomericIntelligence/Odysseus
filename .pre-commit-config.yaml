@@ -133,3 +133,10 @@ repos:
         always_run: true
         pass_filenames: false
         stages: [pre-push]
+
+      - id: version-consistency-check
+        name: version-consistency-check
+        entry: python3 scripts/check_version_consistency.py
+        language: system
+        files: ^(pixi\.toml|CHANGELOG\.md)$
+        pass_filenames: false
