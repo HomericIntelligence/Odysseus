@@ -269,6 +269,7 @@ validate-configs:
     fi
     yamllint -c .yamllint.yml configs/
     bash tools/validate-nats-auth.sh
+    bash tools/tests/test-validate-nats-auth.sh
 
 # Run all CI checks locally
 ci: lint validate-configs check-doc-field-drift

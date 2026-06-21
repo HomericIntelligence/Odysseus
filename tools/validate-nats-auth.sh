@@ -11,7 +11,7 @@ fail=0
 # Emit the contents of the first top-level block named <keyword>, comments stripped.
 block() {  # block <file> <keyword>
   sed 's/#.*//' "$1" | awk -v kw="$2" '
-    inb==0 && $0 ~ kw"[[:space:]]*\\{" { inb=1; d=0 }
+    inb==0 && $0 ~ "(^|[[:space:]])" kw "[[:space:]]*\\{" { inb=1; d=0 }
     inb==1 {
       print
       o=gsub(/\{/,"{"); c=gsub(/\}/,"}"); d+=o-c
