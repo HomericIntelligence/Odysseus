@@ -44,7 +44,11 @@ NATS_URL = os.environ.get("NATS_URL", "nats://localhost:4222")
 REPO = os.environ.get("REPO", "HomericIntelligence/Odysseus")
 WORKING_DIR = os.environ.get("WORKING_DIR", os.getcwd())
 MAX_ITERATIONS = int(os.environ.get("MAX_ITERATIONS", "5"))
-ISSUE_NUMBER = int(os.environ.get("ISSUE_NUMBER", "0"))  # 0 = read from task payload
+# Raw, un-coerced on purpose: a malformed value (e.g. "foo", "12.5") must NOT
+# crash the worker at import — coercion + validation happens lazily in
+# resolve_issue_number(), whose ValueError is acked at the consumer-loop
+# boundary rather than killing the process (issues #187, #325).
+ISSUE_NUMBER = os.environ.get("ISSUE_NUMBER", "")  # "" = read from task payload
 DRY_RUN = os.environ.get("DRY_RUN", "0") == "1"
 NO_GITHUB = os.environ.get("NO_GITHUB", "0") == "1"
 
