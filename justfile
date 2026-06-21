@@ -701,8 +701,17 @@ ruleset-validate:
     echo "Canonical required checks (from file):"
     jq -r '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' configs/github/org-ruleset.json
 
-# Assert each on-disk ruleset config keeps its intended enforcement value
-# (offline; mirrors the schema-validation step in .github/workflows/_required.yml).
+# Assert each on-disk ruleset config keeps its intended enforcement value (offline check).
+#
+# SYNC OBLIGATION — the file→value map below is intentionally duplicated verbatim in
+# .github/workflows/_required.yml ("Assert each ruleset config holds its intended
+# enforcement value" step, lines ~316-321) because the schema-validation job does not
+# have `just` available.  The two copies MUST stay identical:
+#   • Adding a new ruleset variant → update BOTH this recipe AND the CI step.
+#   • Removing a variant          → update BOTH places.
+# If `just` is ever added to the schema-validation job, remove the inline bash there
+# and replace it with `just ruleset-enforcement-check` so this recipe becomes the
+# single source of truth.
 ruleset-enforcement-check:
     #!/usr/bin/env bash
     set -euo pipefail

@@ -310,7 +310,7 @@ jobs:
       - name: Assert each ruleset config holds its intended enforcement value
         run: |
           set -euo pipefail
-          # configs/github/canonical-checks.md:58-62 documents the two-form split:
+          # The two-form split follows the base/active filename convention:
           # base *-ruleset.json are "evaluate"; *-active.json are "active".
           # Catches silent drift in BOTH directions (downgrade and upgrade).
           declare -A expected=(
