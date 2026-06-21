@@ -158,13 +158,16 @@ The canonical NATS server config is at `configs/nats/server.conf`. It configures
 - Leaf nodes (for multi-cluster federation)
 - Max connections and per-client limits
 - Authentication (fail-closed): requires `$NATS_CLIENT_TOKEN` for client
-  connections and `$NATS_LEAF_TOKEN` for leaf-node connections. NATS will
-  refuse connections without these credentials — set both in your deployment
-  secrets before starting the server. The recommended production path is
-  per-leaf NKey/JWT `.creds` files; see ADR-009 and
-  `docs/runbooks/add-new-host.md` step 5.
+  connections, `$NATS_LEAF_USER`/`$NATS_LEAF_PASSWORD` for leaf-node
+  connections (server-side listener and client URL), and
+  `$NATS_CLUSTER_USER`/`$NATS_CLUSTER_PASSWORD` for cluster route peers
+  (issue #318). NATS will refuse connections without these credentials — set
+  all of them in your deployment secrets before starting the server. The
+  recommended production path is per-leaf/per-peer NKey/JWT `.creds` files;
+  see ADR-009 and `docs/runbooks/add-new-host.md` step 5.
 
-For a single-host setup, set `$NATS_CLIENT_TOKEN` and `$NATS_LEAF_TOKEN`
+For a single-host setup, set `$NATS_CLIENT_TOKEN`, `$NATS_LEAF_USER`,
+`$NATS_LEAF_PASSWORD`, `$NATS_CLUSTER_USER`, and `$NATS_CLUSTER_PASSWORD`
 in your environment before starting the server.
 
 ### 4b. Start the NATS Server

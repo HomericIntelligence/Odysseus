@@ -14,22 +14,30 @@ the canonical config could relay into the mesh anonymously (issue #176).
 
 ## Decision
 
-1. The `server.conf` client listener AND the `leafnodes {}` listener each
-   declare their own `authorization {}`. Anonymous connections are rejected
-   (fail-closed). A client-only authorization is insufficient — the leafnode
-   listener stays open without its own block.
+1. The `server.conf` client listener, the `leafnodes {}` listener, AND the
+   `cluster {}` route listener each declare their own `authorization {}`.
+   Anonymous connections are rejected (fail-closed). A client-only
+   authorization is insufficient — the leafnode and cluster listeners each
+   stay open without their own block. Cluster peers share JetStream and
+   subjects, so an unauthenticated route is broader than a leaf relay
+   (issue #318, follow-up to #176). Note: the `cluster {}` listener does not
+   support the `token` field; bootstrap credentials use `user`/`password`
+   (`$NATS_CLUSTER_USER`/`$NATS_CLUSTER_PASSWORD`) instead.
 2. `leaf.conf` `remotes` supplies a credential. Preferred:
    `credentials = "/etc/nats/certs/leaf.creds"` (per-leaf NKey/JWT,
-   revocable). Bootstrap fallback: `token = "$NATS_LEAF_TOKEN"` via NATS env
-   substitution.
+   revocable). Bootstrap fallback: embed `$NATS_LEAF_USER`/`$NATS_LEAF_PASSWORD`
+   in the remote URL (`nats+tls://$NATS_LEAF_USER:$NATS_LEAF_PASSWORD@<ip>:7422`).
+   Note: the `remotes` stanza does not support a bare `token` field; credentials
+   must be in the URL or a `.creds` file. The `leafnodes {}` server-side
+   `authorization {}` likewise uses `user`/`password`, not `token`.
 3. Credentials are never committed. Static tokens use env substitution
    (mirroring `$NATS_MONITORING_PASSWORD`); `.creds` files live under
    `/etc/nats/certs/` (chmod 600) and are git-ignored.
 4. `tools/validate-nats-auth.sh` (run by `just validate-configs` locally AND
    a dedicated `ci.yml` step on `pull_request`) rejects any credential-less
-   canonical config. CI also runs `nats-server -t` to confirm the authed
-   config parses and that an unset token resolves to empty (fail-closed), not
-   a literal.
+   canonical config — including a `cluster {}` listener without authorization
+   (issue #318). CI also runs `nats-server -t` with dummy TLS certs and all
+   required credentials to confirm the authed configs parse correctly.
 
 ## Consequences
 
@@ -44,19 +52,22 @@ the canonical config could relay into the mesh anonymously (issue #176).
 
 **Negative:**
 
-- Operators must provision a credential (`$NATS_LEAF_TOKEN` or
-  `leaf.creds`) before first connect. See `docs/runbooks/add-new-host.md`
-  step 5.
-- The static `$NATS_LEAF_TOKEN` bootstrap provides no per-leaf revocation.
-  Production deployments should migrate to per-leaf `.creds`.
+- Operators must provision credentials (`$NATS_LEAF_USER`/`$NATS_LEAF_PASSWORD`
+  or `leaf.creds`, plus `$NATS_CLUSTER_USER`/`$NATS_CLUSTER_PASSWORD`) before
+  first connect. See `docs/runbooks/add-new-host.md` step 5.
+- The static `$NATS_LEAF_USER`/`$NATS_LEAF_PASSWORD` bootstrap provides no
+  per-leaf revocation. Production deployments should migrate to per-leaf `.creds`.
 
 **Neutral:**
 
 - The `$NATS_CLIENT_TOKEN` env var follows the same pattern as the existing
   `$NATS_MONITORING_PASSWORD` substitution already in `server.conf`.
 - Decentralized NKey/JWT auth (operator + account JWTs) is the long-term
-  recommended posture; the token blocks are explicitly documented as a
-  bootstrap placeholder.
+  recommended posture; the `user`/`password` bootstrap blocks are explicitly
+  documented as a placeholder for the upgrade path.
+- `nats-server` v2.10.x does not support `token` inside `leafnodes {}` or
+  `cluster {}` authorization blocks; only the top-level client `authorization {}`
+  accepts `token`. All listener-specific blocks use `user`/`password`.
 
 ## References
 

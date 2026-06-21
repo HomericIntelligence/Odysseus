@@ -19,9 +19,10 @@ block() {  # block <file> <keyword>
     }'
 }
 
-# 1) leaf.conf: the remotes/leafnodes block must carry a credential.
-if ! block "$LEAF" leafnodes | grep -Eq '\b(credentials|token|user|password|nkey)\b'; then
-  echo "FAIL: $LEAF leafnodes/remotes has no credentials/token/user (issue #176)"; fail=1
+# 1) leaf.conf: the remotes/leafnodes block must carry a credential (standalone field
+#    OR user:password embedded in the URL as nats://user:pass@host).
+if ! block "$LEAF" leafnodes | grep -Eq '(\bcredentials\b|\btoken\b|\bnkey\b|://[^@"]+@)'; then
+  echo "FAIL: $LEAF leafnodes/remotes has no credentials/token/nkey or URL auth (issue #176)"; fail=1
 fi
 # 2) server.conf: a top-level client authorization/accounts/operator must exist.
 if ! sed 's/#.*//' "$SERVER" | grep -Eq '^\s*(authorization|accounts|operator)\b'; then
@@ -30,6 +31,10 @@ fi
 # 3) server.conf: the leafnodes{} listener must carry its OWN authorization/account.
 if ! block "$SERVER" leafnodes | grep -Eq '\b(authorization|account)\b'; then
   echo "FAIL: $SERVER leafnodes{} listener has no authorization (issue #176)"; fail=1
+fi
+# 4) server.conf: the cluster{} route listener must carry its OWN authorization/account (issue #318).
+if ! block "$SERVER" cluster | grep -Eq '\b(authorization|account)\b'; then
+  echo "FAIL: $SERVER cluster{} listener has no authorization (issue #318)"; fail=1
 fi
 
 [ "$fail" -eq 0 ] && echo "OK: NATS configs carry authentication"
