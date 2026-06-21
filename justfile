@@ -267,6 +267,11 @@ validate-configs:
     else
         echo "Note: install nomad to validate HCL syntax (skipping HCL check)"
     fi
+    # Anti-re-hardcoding guard (issue #320, regression from #181): server.hcl must
+    # keep its ${NOMAD_ADVERTISE_ADDR} placeholder, never a literal Tailscale IP.
+    grep -qF '${NOMAD_ADVERTISE_ADDR}' configs/nomad/server.hcl || {
+        echo "configs/nomad/server.hcl lost its \${NOMAD_ADVERTISE_ADDR} placeholder (hardcoded IP re-introduced — see #181)"; exit 1;
+    }
     yamllint -c .yamllint.yml configs/
     bash tools/validate-nats-auth.sh
 
