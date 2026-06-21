@@ -58,7 +58,9 @@ jobs:
           [ "$broken" -eq 0 ] || exit 1
 
       - name: Validate NATS auth (issue #176)
-        run: bash tools/validate-nats-auth.sh
+        run: |
+          bash tools/validate-nats-auth.sh
+          bash tools/tests/test-validate-nats-auth.sh
 
       - name: Install nats-server
         run: |

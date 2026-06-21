@@ -163,6 +163,17 @@ The canonical NATS server config is at `configs/nats/server.conf`. It configures
   secrets before starting the server. The recommended production path is
   per-leaf NKey/JWT `.creds` files; see ADR-009 and
   `docs/runbooks/add-new-host.md` step 5.
+- Cluster route authorization (multi-server clusters only): the `cluster {}`
+  listener on port 6222 requires a shared `$NATS_CLUSTER_TOKEN` in addition
+  to TLS (ADR-009, issue #306). Before starting any server that participates
+  in a multi-server cluster, export the token — it must match on every peer:
+
+  ```bash
+  export NATS_CLUSTER_TOKEN="$(openssl rand -hex 32)"   # same value on every peer
+  ```
+
+  The server fails closed if a configured route peer presents the wrong token.
+  Single-host deployments (no configured routes) are unaffected at runtime.
 
 For a single-host setup, set `$NATS_CLIENT_TOKEN` and `$NATS_LEAF_TOKEN`
 in your environment before starting the server.
