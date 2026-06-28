@@ -210,7 +210,7 @@ jobs:
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
 
       - name: Install PyYAML (for compose validator)
-        run: pip install pyyaml
+        run: pip install --user pyyaml
 
       - name: Validate NATS config structure
         run: python3 scripts/validate_nats_config.py
