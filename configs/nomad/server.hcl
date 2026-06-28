@@ -7,9 +7,9 @@ data_dir   = "/var/lib/nomad"
 # below adds workload-layer least privilege (issue #196). Both are required.
 bind_addr = "0.0.0.0"
 
-# Advertise the Tailscale IP address so clients and peers discover this server
-# via the Tailscale mesh. Set NOMAD_ADVERTISE_ADDR before starting Nomad:
-#   export NOMAD_ADVERTISE_ADDR=$(tailscale ip -4)
+# Advertise the Tailscale IP. GENERATED — render before use: Nomad does NOT
+# expand ${NOMAD_ADVERTISE_ADDR} itself; `just render-nomad-configs` must run
+# envsubst over this file (writes to /etc/nomad.d/) before `nomad agent -config`.
 advertise {
   http = "${NOMAD_ADVERTISE_ADDR}"
   rpc  = "${NOMAD_ADVERTISE_ADDR}"

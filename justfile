@@ -262,6 +262,7 @@ clean:
 validate-configs:
     #!/usr/bin/env bash
     set -euo pipefail
+    grep -q '${NOMAD_SERVER_IP}' configs/nomad/client.hcl || { echo "client.hcl lost its placeholder"; exit 1; }
     if command -v nomad >/dev/null 2>&1; then
         nomad fmt -check configs/nomad/client.hcl configs/nomad/server.hcl
     else
@@ -275,6 +276,22 @@ validate-configs:
     yamllint -c .yamllint.yml configs/
     bash tools/validate-nats-auth.sh
     bash tools/tests/test-validate-nats-auth.sh
+
+# Render Nomad config placeholders to a deploy-local dir (default /etc/nomad.d).
+# Nomad agent HCL does NOT expand OS env vars, so render before `nomad agent -config`.
+# Requires NOMAD_SERVER_IP and NOMAD_ADVERTISE_ADDR (e.g. export NOMAD_SERVER_IP=$(tailscale ip -4)).
+render-nomad-configs OUT_DIR="/etc/nomad.d":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${NOMAD_SERVER_IP:?set NOMAD_SERVER_IP (e.g. export NOMAD_SERVER_IP=$(tailscale ip -4))}"
+    : "${NOMAD_ADVERTISE_ADDR:?set NOMAD_ADVERTISE_ADDR (e.g. export NOMAD_ADVERTISE_ADDR=$(tailscale ip -4))}"
+    mkdir -p "{{ OUT_DIR }}"
+    for f in client server; do
+      envsubst '${NOMAD_SERVER_IP} ${NOMAD_ADVERTISE_ADDR}' \
+        < "configs/nomad/${f}.hcl" > "{{ OUT_DIR }}/${f}.hcl"
+      echo "rendered {{ OUT_DIR }}/${f}.hcl"
+    done
+    if command -v nomad >/dev/null 2>&1; then nomad fmt -check "{{ OUT_DIR }}"/*.hcl; fi
 
 # Run all CI checks locally
 ci: lint validate-configs check-doc-field-drift

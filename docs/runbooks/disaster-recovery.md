@@ -162,8 +162,10 @@ just bootstrap
 # 5. Install and start NATS with server config
 nats-server -c configs/nats/server.conf &
 
-# 6. Install and start Nomad server
-nomad agent -config configs/nomad/server.hcl &
+# 6. Render and start Nomad server
+export NOMAD_ADVERTISE_ADDR=$(tailscale ip -4); export NOMAD_SERVER_IP=$NOMAD_ADVERTISE_ADDR
+just render-nomad-configs
+nomad agent -config /etc/nomad.d/server.hcl &
 
 # 7. Apply desired state from Myrmidons
 just apply-all

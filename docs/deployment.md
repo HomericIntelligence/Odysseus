@@ -220,7 +220,14 @@ You should see: `Server is ready for connections on 0.0.0.0:4222`
 
 ### 4d. Configure Leaf Nodes (Multi-Host Only)
 
-If deploying across multiple hosts, configure leaf node connections in `configs/nats/leaf.conf` to federate the NATS clusters over Tailscale. See `docs/runbooks/add-new-host.md` for details.
+If deploying across multiple hosts, configure leaf node connections in `configs/nats/leaf.conf` to federate the NATS clusters over Tailscale. Export `NATS_LEAF_URL` before starting the leaf node:
+
+```bash
+export NATS_LEAF_URL="nats+tls://$(tailscale ip -4):7422"   # run on the primary NATS server host for its IP
+nats-server -c configs/nats/leaf.conf
+```
+
+See `docs/runbooks/add-new-host.md` for details.
 
 ---
 
@@ -237,6 +244,17 @@ The canonical Nomad configs are at:
 
 For a single-host setup, run both server and client on the same host.
 
+### 5a-bis. Render the Nomad configs (required)
+
+Nomad does not expand environment variables in its config files, so render the
+canonical placeholders to a deploy-local path first:
+
+```bash
+export NOMAD_SERVER_IP=$(tailscale ip -4)
+export NOMAD_ADVERTISE_ADDR=$(tailscale ip -4)
+just render-nomad-configs            # writes /etc/nomad.d/{server,client}.hcl
+```
+
 ### 5b. Start Nomad Server
 
 ```bash
@@ -250,7 +268,7 @@ podman run -d \
   -p 4647:4647 \
   -p 4648:4648/udp \
   -v /var/nomad:/nomad/data \
-  -v $(pwd)/configs/nomad/server.hcl:/etc/nomad/server.hcl:ro \
+  -v /etc/nomad.d/server.hcl:/etc/nomad/server.hcl:ro \
   hashicorp/nomad:1.6 agent -config /etc/nomad/server.hcl
 ```
 
@@ -277,7 +295,7 @@ podman run -d \
   --name nomad-client \
   --network homeric-mesh \
   -v /var/nomad:/nomad/data \
-  -v $(pwd)/configs/nomad/client.hcl:/etc/nomad/client.hcl:ro \
+  -v /etc/nomad.d/client.hcl:/etc/nomad/client.hcl:ro \
   -v /var/run/podman:/var/run/podman:ro \
   hashicorp/nomad:1.6 agent -config /etc/nomad/client.hcl
 ```

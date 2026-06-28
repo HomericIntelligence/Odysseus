@@ -4,11 +4,10 @@ data_dir   = "/var/lib/nomad"
 client {
   enabled = true
 
-  # Nomad server addresses — Tailscale IP of the primary Nomad server
-  # Set NOMAD_SERVER_IP environment variable to override the hardcoded IP below.
-  # To find your Nomad server's Tailscale IP, run on that host: tailscale ip -4
-  # Default below is epimetheus (100.92.173.32) — update for your network.
-  servers = ["100.92.173.32:4647"]
+  # GENERATED — render before use. Nomad agent HCL does NOT expand OS env vars,
+  # so this file MUST be rendered with envsubst (NOMAD_SERVER_IP set) before
+  # `nomad agent -config`. Run: just render-nomad-configs  (writes to /etc/nomad.d/).
+  servers = ["${NOMAD_SERVER_IP}:4647"]
 }
 
 # ACL enforcement on the client HTTP API (issue #196). Required so the client
