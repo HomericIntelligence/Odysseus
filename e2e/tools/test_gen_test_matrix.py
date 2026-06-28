@@ -140,12 +140,14 @@ class TestCheckMode(unittest.TestCase):
             g.README.write_text(original, encoding="utf-8")
 
     def test_check_fails_when_readme_missing(self) -> None:
-        original = g.README.read_text(encoding="utf-8")
-        g.README.unlink()
+        # Rename the file out of the way atomically (no unlink — keeps bytes
+        # on disk so an interrupted run cannot permanently lose tracked content).
+        tmp = g.README.with_suffix(".md.bak")
+        g.README.rename(tmp)
         try:
             self.assertEqual(g.main(["--check"]), 1)
         finally:
-            g.README.write_text(original, encoding="utf-8")
+            tmp.rename(g.README)
 
     def test_print_mode_outputs_content(self) -> None:
         import io
