@@ -227,7 +227,10 @@ def _build_container_cmd(claude_args: list[str], cwd: str = WORKING_DIR) -> list
     """Build a container run command with proper volume mappings.
 
     Maps the host WORKING_DIR to /workspace inside the achaean-claude container,
-    plus the user's .claude config and ANTHROPIC_API_KEY for authentication.
+    plus the user's .claude config (OAuth credentials in ~/.claude/.credentials.json
+    and ~/.claude.json). The API key is NOT passed: command-line args are
+    world-readable via `ps`/`/proc/<pid>/cmdline` (issue #180), and the mounted
+    standalone claude-host binary authenticates via the OAuth creds, not the env var.
 
     Mounts the host's standalone claude binary to avoid npm version TLS issues
     with the oauth auth flow inside containers.
@@ -261,7 +264,6 @@ def _build_container_cmd(claude_args: list[str], cwd: str = WORKING_DIR) -> list
         "-v", f"{home}/.claude:{home}/.claude",
         "-v", f"{home}/.config/gh:{home}/.config/gh:ro",
         "-w", CONTAINER_WORKSPACE,
-        "-e", f"ANTHROPIC_API_KEY={os.environ.get('ANTHROPIC_API_KEY', '')}",
         "-e", f"HOME={home}",
         *(["-v", f"{home}/.claude.json:{home}/.claude.json"] if os.path.exists(f"{home}/.claude.json") else []),
         *(["-v", f"{standalone}:/usr/local/bin/claude-host:ro"] if standalone else []),

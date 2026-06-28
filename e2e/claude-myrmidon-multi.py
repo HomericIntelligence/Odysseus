@@ -217,11 +217,17 @@ def _build_container_cmd_scoped(
     """
     home = os.path.expanduser("~")
 
-    # Common mounts: claude session data + gh CLI config
+    # Common mounts: claude session data + gh CLI config.
+    # Issue #180: pass ANTHROPIC_API_KEY by name only (no `=value`) so podman
+    # reads the value from this process's env and injects it into the container
+    # without the value ever appearing on the command line (ps/proc/cmdline).
+    # The image-baked npm `claude` still receives the key unchanged.
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        log("claude", f"{YELLOW}ANTHROPIC_API_KEY is unset — container auth may fail{NC}")
     common_mounts = [
         "-v", f"{home}/.claude:{home}/.claude",
         "-v", f"{home}/.config/gh:{home}/.config/gh:ro",
-        "-e", f"ANTHROPIC_API_KEY={os.environ.get('ANTHROPIC_API_KEY', '')}",
+        "-e", "ANTHROPIC_API_KEY",  # name-only: value pulled from host env, not on cmdline
         "-e", f"HOME={home}",
     ]
     if os.path.exists(f"{home}/.claude.json"):
