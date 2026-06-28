@@ -54,12 +54,17 @@ wait_for() {
     return 1
 }
 
-# retry COMMAND MAX_ATTEMPTS SLEEP_BETWEEN
-#   Retries a command up to MAX_ATTEMPTS times.
+# retry MAX_ATTEMPTS SLEEP_BETWEEN COMMAND [ARGS...]
+#   Retries COMMAND (given as separate arguments) up to MAX_ATTEMPTS times,
+#   sleeping SLEEP_BETWEEN seconds between attempts. The command is executed
+#   directly via "$@" — it is NOT passed through eval, so arguments are not
+#   re-parsed for word-splitting, globbing, or command substitution (issue #190).
 retry() {
-    local cmd="$1" max="${2:-3}" sleep_s="${3:-2}"
+    local max="${1:-3}" sleep_s="${2:-2}"
+    shift 2 || return 2
+    local i
     for i in $(seq 1 "$max"); do
-        eval "$cmd" && return 0
+        "$@" && return 0
         [ "$i" -lt "$max" ] && sleep "$sleep_s"
     done
     return 1
