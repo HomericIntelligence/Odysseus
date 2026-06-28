@@ -93,15 +93,14 @@ chmod 600 /etc/nats/certs/leaf.creds
 
 Copy the leaf node config from this repo:
 
+Copy the leaf config and start the NATS leaf node (export `NATS_LEAF_URL` — the full URL of the primary NATS server):
+
 ```bash
 cp configs/nats/leaf.conf /etc/nats/leaf.conf
-# Edit leaf.conf: set the remotes.url to the primary NATS server's Tailscale IP,
-# and confirm the credential (credentials=... or token=$NATS_LEAF_TOKEN) matches the hub.
-```
-
-Start the NATS leaf node:
-
-```bash
+# Edit leaf.conf: set the remotes.url to the primary NATS server's Tailscale IP
+# (via $NATS_LEAF_URL below), and confirm the credential
+# (credentials=... or token=$NATS_LEAF_TOKEN) matches the hub.
+export NATS_LEAF_URL="nats+tls://<primary-nats-tailscale-ip>:7422"
 nats-server -c /etc/nats/leaf.conf &
 ```
 
@@ -116,9 +115,15 @@ nats --server nats://localhost:4222 sub "hi.>" &
 
 Copy the client config and start Nomad:
 
+Render the client config (resolves the `${NOMAD_SERVER_IP}` placeholder) then start Nomad:
+
 ```bash
-cp configs/nomad/client.hcl /etc/nomad.d/client.hcl
-# Edit client.hcl: set client.servers to the primary Nomad server's Tailscale IP
+export NOMAD_SERVER_IP=<primary-nomad-server-tailscale-ip>   # tailscale ip -4 on the Nomad server host
+# NOMAD_ADVERTISE_ADDR is only needed to satisfy the shared render recipe (which
+# renders both client.hcl and server.hcl); a Nomad client never uses the
+# advertise{} block, so the rendered /etc/nomad.d/server.hcl is unused here.
+export NOMAD_ADVERTISE_ADDR=$(tailscale ip -4)
+just render-nomad-configs                   # writes /etc/nomad.d/client.hcl (resolved, no ${...})
 
 # ACLs are enabled (issue #196): the client needs a token to register.
 # Obtain one from the server operator (a node-policy token, or the bootstrap
