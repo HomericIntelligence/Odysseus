@@ -35,10 +35,11 @@ _attempt_cmd() {
 if retry 5 0 _attempt_cmd; then ok "eventual success returns 0"; else bad "should succeed by 3rd attempt"; fi
 rm -f "$_STATE_FILE"
 
-echo "=== retry(): arguments with shell metacharacters are NOT evaluated (issue #190) ==="
+echo "=== retry(): args with shell metacharacters are passed literally, not re-evaluated (issue #190) ==="
 _CANARY="$(mktemp -u)"
-# With "$@", echo receives the literal string and the canary is never created.
-# If retry eval'd its args, command substitution would create the canary file.
+# Asserts the command's args are passed literally, not re-evaluated: with "$@",
+# echo receives the literal string and the canary is never created. If retry
+# expanded its args through the shell, command substitution would create it.
 # Capture the status explicitly (retry's own rc is irrelevant; the canary is
 # the assertion) so we stay fail-fast without suppressing errors via "|| true".
 _inject_rc=0
