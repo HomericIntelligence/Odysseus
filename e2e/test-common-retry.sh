@@ -39,7 +39,11 @@ echo "=== retry(): arguments with shell metacharacters are NOT evaluated (issue 
 _CANARY="$(mktemp -u)"
 # With "$@", echo receives the literal string and the canary is never created.
 # If retry eval'd its args, command substitution would create the canary file.
-retry 1 0 echo '$(touch '"$_CANARY"')' >/dev/null 2>&1 || true
+# Capture the status explicitly (retry's own rc is irrelevant; the canary is
+# the assertion) so we stay fail-fast without suppressing errors via "|| true".
+_inject_rc=0
+retry 1 0 echo '$(touch '"$_CANARY"')' >/dev/null 2>&1 || _inject_rc=$?
+: "retry exited ${_inject_rc}"
 if [ -e "$_CANARY" ]; then
     bad "INJECTION: canary file was created — args were evaluated"
     rm -f "$_CANARY"
