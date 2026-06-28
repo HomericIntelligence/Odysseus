@@ -73,8 +73,10 @@ start_nats_bg() {
         -m "$NATS_MONITOR_PORT" \
         --store_dir "$NATS_DATA_DIR" \
         >/dev/null 2>&1 &
-    register_pid $!
-    echo "  Started nats-server (PID $!, port $NATS_PORT, monitor $NATS_MONITOR_PORT)"
+    NATS_BG_PID=$!                       # explicit handle for kill/restart (issue #184)
+    export NATS_BG_PID NATS_BIN="$nats_bin" NATS_PORT NATS_MONITOR_PORT NATS_DATA_DIR
+    register_pid "$NATS_BG_PID"
+    echo "  Started nats-server (PID $NATS_BG_PID, port $NATS_PORT, monitor $NATS_MONITOR_PORT)"
     wait_for "http://localhost:${NATS_MONITOR_PORT}/healthz" "NATS" 15
 }
 
@@ -105,13 +107,18 @@ start_agamemnon_bg() {
 
 start_myrmidon_bg() {
     local odysseus_root="${ODYSSEUS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-    local myrmidon_script="${odysseus_root}/provisioning/Myrmidons/hello-world/main.py"
+    local bin=""
+    for candidate in \
+        "${odysseus_root}/build/Myrmidons/hello-world/hello_myrmidon" \
+        "${odysseus_root}/provisioning/Myrmidons/hello-world/build/hello_myrmidon" \
+        "$(command -v hello_myrmidon 2>/dev/null)"; do
+        [ -x "$candidate" ] && bin="$candidate" && break
+    done
+    [ -z "$bin" ] && { echo "ERROR: hello_myrmidon binary not found. Run 'just build' first." >&2; return 1; }
 
-    [ -f "$myrmidon_script" ] || { echo "ERROR: $myrmidon_script not found" >&2; return 1; }
-
-    NATS_URL="nats://localhost:${NATS_PORT}" python3 "$myrmidon_script" >/dev/null 2>&1 &
+    NATS_URL="nats://localhost:${NATS_PORT}" "$bin" >/dev/null 2>&1 &
     register_pid $!
-    echo "  Started hello-myrmidon (PID $!)"
+    echo "  Started hello-myrmidon (PID $!, bin $bin)"
     sleep 2  # Allow subscription to establish
 }
 
