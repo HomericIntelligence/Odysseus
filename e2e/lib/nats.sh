@@ -133,7 +133,9 @@ nats_can_restart() { [ "${IPC_TOPOLOGY:-}" = "t1" ]; }
 nats_kill() {
     [ "${IPC_TOPOLOGY:-}" = "t1" ] || return 1
     [ -n "${NATS_BG_PID:-}" ] || return 1
-    kill -KILL "$NATS_BG_PID" 2>/dev/null || true
+    if ! kill -KILL "$NATS_BG_PID" 2>/dev/null; then
+        :  # already gone — nothing to do
+    fi
     for _ in $(seq 1 10); do
         nats_health || return 0      # monitor no longer answering => down
         sleep 1
@@ -145,11 +147,23 @@ nats_kill() {
 # fallbacks — avoids silent divergence from process.sh). Waits until healthy.
 nats_restart() {
     [ "${IPC_TOPOLOGY:-}" = "t1" ] || return 1
+    # Reap the old PID and wait for the port to be free before relaunching.
+    # SIGKILL→immediate relaunch can race a JetStream store lock or TIME_WAIT.
+    local old_pid="${NATS_BG_PID:-}"
+    if [ -n "$old_pid" ]; then
+        if wait "$old_pid" 2>/dev/null; then :; fi
+    fi
+    local i
+    for i in $(seq 1 10); do
+        (echo >/dev/tcp/localhost/"${NATS_PORT:?}") 2>/dev/null || break
+        sleep 1
+    done
     "${NATS_BIN:?NATS_BIN unset — start_nats_bg must run first}" -js \
         -p "${NATS_PORT:?}" \
         -m "${NATS_MONITOR_PORT:?}" \
         --store_dir "${NATS_DATA_DIR:?}" >/dev/null 2>&1 &
     NATS_BG_PID=$!; export NATS_BG_PID
+    register_pid "$NATS_BG_PID"
     nats_wait_healthy 30
 }
 
