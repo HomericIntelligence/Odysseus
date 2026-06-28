@@ -265,10 +265,10 @@ clean:
 # Quality
 # ===========================================================================
 
-# Validate HCL syntax for Nomad configs and lint configs/ YAML.
-# Both checks must pass; nomad is allowed to be absent (it's optional locally),
-# but yamllint is a required tool and a yamllint failure is a real lint
-# violation that must be fixed in configs/, not suppressed.
+# Validate HCL (Nomad), YAML (configs/), NATS config structure, and
+# docker-compose structure. NATS/compose use binary-free Python validators so
+# they run even where nats-server/podman are absent (CI). HCL still needs nomad
+# locally; absence skips only the HCL leg, not the whole recipe.
 validate-configs:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -285,6 +285,21 @@ validate-configs:
     yamllint -c .yamllint.yml configs/
     bash tools/validate-nats-auth.sh
     bash tools/tests/test-validate-nats-auth.sh
+    python3 scripts/validate_nats_config.py
+    python3 scripts/validate_compose.py
+
+# Validate NATS server config structure (binary-free Python)
+validate-nats:
+    python3 scripts/validate_nats_config.py
+
+# Validate all docker-compose files (binary-free Python + PyYAML)
+validate-compose:
+    python3 scripts/validate_compose.py
+
+# Run justfile recipe integrity + config-validator tests (build-free)
+test-justfile-recipes:
+    bash tests/test-justfile-recipes.sh
+    bash tests/test-config-validators.sh
 
 # Run all CI checks locally
 ci: lint validate-configs check-doc-field-drift
