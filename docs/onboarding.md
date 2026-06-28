@@ -262,6 +262,10 @@ just --list
 - **Project Structure** → `CLAUDE.md` (repo layout and development guidelines)
 - **CI/CD Pipelines** → `ci-cd/ProjectProteus/` (Dagger TypeScript)
 - **E2E Tests** → `e2e/` (integration and topology tests)
+- E2E scenario coverage is mapped in [`e2e/tests/README.md`](../e2e/tests/README.md)
+  (generated from each test's header). After adding or editing a test, run
+  `python3 e2e/tools/gen_test_matrix.py`; CI (`unit-tests`) fails if it is stale
+  or a header is non-conforming.
 
 ### Configuration
 
