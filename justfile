@@ -222,6 +222,16 @@ lint:
         echo "--- root: shellcheck not on PATH, skipping (declared in pixi.toml) ---"
     fi
 
+    # e2e test coverage matrix drift check (issue #199). The matrix in
+    # e2e/tests/README.md is generated from each test's header; fail lint if
+    # the header contract is violated or the README is stale.
+    echo "--- root: checking e2e test coverage matrix ---"
+    if ! python3 e2e/tools/gen_test_matrix.py --validate; then
+        failed+=("root:e2e-matrix-contract")
+    elif ! python3 e2e/tools/gen_test_matrix.py --check; then
+        failed+=("root:e2e-matrix-drift")
+    fi
+
     while IFS= read -r submodule_path; do
         [[ -z "$submodule_path" ]] && continue
         if [[ ! -f "$submodule_path/justfile" && ! -f "$submodule_path/Justfile" ]]; then

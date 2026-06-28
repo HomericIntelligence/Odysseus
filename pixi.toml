@@ -13,6 +13,7 @@ ninja = ">=1.11"
 pre-commit = ">=3.0,<4"
 nodejs = ">=18,<22"
 shellcheck = ">=0.9,<1"
+python = ">=3.11"
 
 [tasks]
 bootstrap = "just bootstrap"
