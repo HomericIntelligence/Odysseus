@@ -399,6 +399,10 @@ http://localhost:3000
 
 Default credentials: `admin / admin`
 
+> **WARNING:** Rotate this password before any production or shared-network use.
+> Set `GF_SECURITY_ADMIN_PASSWORD` (see `infrastructure/ProjectArgus/docker-compose.yml`)
+> and never expose port 3000 with the default credentials still active.
+
 ---
 
 ## Step 11: Verification

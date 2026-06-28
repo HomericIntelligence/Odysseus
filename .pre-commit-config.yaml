@@ -62,6 +62,18 @@ repos:
         files: ^\.github/workflows/.*\.ya?ml$
         exclude: ^\.github/workflows/_required\.yml$
         pass_filenames: true
+      - id: check-grafana-credentials
+        name: "Grafana default-cred rotation warning + anonymous-read marker (#179)"
+        description: >
+          Default Grafana creds documented in tracked *.md must carry an adjacent
+          rotation warning, and anonymous Grafana access must be explicitly
+          marked e2e-only within two lines above. Scoped to this repo's tracked
+          files (git ls-files); submodules are never scanned. See #179.
+        language: system
+        entry: python3 scripts/check_grafana_credentials.py
+        files: \.(md|ya?ml)$
+        pass_filenames: false
+        always_run: true
       - id: require-signed-commits
         name: "require gpg/ssh-signed commits on push"
         description: >

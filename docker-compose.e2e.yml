@@ -151,8 +151,11 @@ services:
     ports:
       - "3001:3000"
     environment:
+      # e2e-only: anonymous Viewer for the local demo stack (port 3001, no prod data).
+      # Never enable this in a prod-facing stack; see docs/deployment.md WARNING and #179.
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_E2E_ADMIN_PASSWORD:-e2e-not-for-prod}
       GF_SECURITY_ALLOW_EMBEDDING: "true"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"

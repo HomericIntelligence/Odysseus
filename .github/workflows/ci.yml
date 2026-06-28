@@ -72,6 +72,12 @@ jobs:
           NATS_CLIENT_TOKEN=x NATS_LEAF_TOKEN=y nats-server -c configs/nats/server.conf -t
           ! nats-server -c configs/nats/leaf.conf -t 2>/dev/null
 
+      - name: Grafana credential-gate self-test (#179)
+        run: python3 scripts/check_grafana_credentials.py --self-test
+
+      - name: Grafana credential hygiene (#179)
+        run: python3 scripts/check_grafana_credentials.py
+
   verify-scripts:
     name: verify-scripts — Claude read permissions (if present)
     runs-on: ubuntu-latest

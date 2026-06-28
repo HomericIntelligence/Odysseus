@@ -237,6 +237,9 @@ lint:
             failed+=("$submodule_path")
         fi
     done < <(git submodule --quiet foreach --recursive 'echo "$displaypath"')
+    # Grafana credential hygiene + self-test (#179)
+    python3 scripts/check_grafana_credentials.py --self-test || failed+=("grafana-gate-selftest")
+    python3 scripts/check_grafana_credentials.py || failed+=("grafana-credential-hygiene")
     if (( ${#failed[@]} > 0 )); then
         echo ""
         echo "ERROR: lint failed in: ${failed[*]}" >&2
