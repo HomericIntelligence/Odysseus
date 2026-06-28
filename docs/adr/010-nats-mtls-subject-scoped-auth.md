@@ -81,7 +81,7 @@ Five accounts are defined, each scoped to the `hi.*` subtree relevant to its rol
 |---------|----------------|---------|-----------|
 | `SYS` | `sys.homeric` | — | — |
 | `HERMES` | `hermes.homeric` | `hi.>`, `$JS.API.>` | `hi.>`, `_INBOX.>` |
-| `AGENTS` | `agent.homeric` | `hi.agents.>`, `hi.tasks.>` | `hi.agents.>`, `_INBOX.>` (deny `hi.research.>`) |
+| `AGENTS` | `agent.homeric` | `hi.agents.>`, `hi.tasks.>` | `hi.agents.>`, `_INBOX.>` |
 | `KEYSTONE` | `keystone.homeric` | `$JS.API.CONSUMER.>`, `$JS.API.STREAM.INFO.>`, `$JS.ACK.>` | `hi.tasks.>`, `_INBOX.>` |
 | `TELEMACHY` | `telemachy.homeric` | `hi.tasks.>`, `$JS.API.>` | `hi.tasks.>`, `_INBOX.>` |
 
@@ -100,8 +100,8 @@ to a subsequent ADR and tracked in the HomericIntelligence roadmap.
 - Closes #175: anonymous connections to port 4222 are rejected fail-closed.
 - Cluster port 6222 now requires a CA-signed peer cert; arbitrary peers cannot join.
 - Leaf remotes authenticate to the hub; unauthenticated leaf connections are rejected.
-- Least-privilege subject scoping: AGENTS cannot read `hi.research.>`; KEYSTONE cannot publish
-  arbitrary `hi.*` subjects.
+- Least-privilege subject scoping: AGENTS cannot subscribe to `hi.tasks.>` (allow-list enforced);
+  KEYSTONE cannot publish arbitrary `hi.*` subjects.
 - `AuthorizationError` is already classified as non-retryable in the Hermes publish retry loop, so
   auth failures surface immediately rather than burning retry budget.
 - The SAN-DNS convention is a hard, testable contract: `step ca certificate` enforces it at

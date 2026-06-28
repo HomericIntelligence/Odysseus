@@ -199,23 +199,47 @@ nats --server "$HUB" \
   && echo "PASS: HERMES account can create a stream" \
   || echo "FAIL: HERMES stream creation failed"
 
-# 3. agent.homeric cert MUST be denied on hi.research.> (permissions deny)
+# 3. agent.homeric cert MUST be denied subscribing to hi.tasks.> (not in AGENTS subscribe allow-list)
+#    AGENTS subscribe allow = ["hi.agents.>", "_INBOX.>"]; hi.tasks.> is genuinely
+#    outside that list, so this verifies the allow-list boundary is enforced.
 nats --server "$HUB" \
   --tlscert "$CERTS/agent-cert.pem" \
   --tlskey  "$CERTS/agent-key.pem" \
   --tlsca   "$CA" \
-  sub "hi.research.>" 2>&1 \
+  sub "hi.tasks.>" 2>&1 \
   | grep -qiE "permissions violation" \
-  && echo "PASS: AGENTS account denied hi.research.>" \
-  || echo "FAIL: AGENTS account was NOT denied hi.research.>"
+  && echo "PASS: AGENTS account denied hi.tasks.> (allow-list boundary enforced)" \
+  || echo "FAIL: AGENTS account was NOT denied hi.tasks.> (allow-list not enforced)"
 
 # 4. Hermes health endpoint (proves Hermes reconnected with its cert)
 curl -sf http://localhost:8085/health | grep -q '"status"' \
   && echo "PASS: Hermes healthy (reconnected with client cert)" \
   || echo "FAIL: Hermes health check failed"
+
+# 5. LEAF -> HUB PROPAGATION (run only on hosts with a leaf node)
+#    With named accounts{}, each leafnode remote bridges exactly ONE account, so the
+#    leaf.conf remotes block must carry one entry per account with an explicit
+#    `account:` binding. This check proves a leaf-attached AGENTS client's hi.agents.>
+#    events actually reach the hub — the gap a missing per-account remote would leave
+#    silently uncaught. Subscribe on the HUB, publish from the LEAF.
+LEAF="tls://127.0.0.1:4222"   # local leaf node client port
+HUB="tls://100.92.173.32:4222" # primary hub client port (update to your hub IP)
+AGENT_TLS=(--tlscert "$CERTS/agent-cert.pem" --tlskey "$CERTS/agent-key.pem" --tlsca "$CA")
+
+# Subscribe on the HUB for one message, in the background
+nats --server "$HUB" "${AGENT_TLS[@]}" sub "hi.agents.leafcheck" --count 1 > /tmp/leafcheck.out 2>&1 &
+SUB_PID=$!
+sleep 1
+# Publish from the LEAF node's local client port
+nats --server "$LEAF" "${AGENT_TLS[@]}" pub "hi.agents.leafcheck" "leaf-to-hub-ok"
+wait "$SUB_PID" 2>/dev/null
+grep -q "leaf-to-hub-ok" /tmp/leafcheck.out \
+  && echo "PASS: leaf-attached AGENTS hi.agents.> propagates to hub" \
+  || echo "FAIL: leaf hi.agents.> did NOT reach hub (check per-account remote in leaf.conf)"
 ```
 
-All four checks must output `PASS` before this runbook is considered complete.
+All five checks must output `PASS` before this runbook is considered complete.
+(Check 5 applies only to hosts running a leaf node; skip it on the hub itself.)
 
 ---
 
