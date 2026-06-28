@@ -149,19 +149,38 @@ ls -la build/
 
 NATS JetStream is the cross-host event bus. Configure it on the primary host:
 
-### 4a. Review the NATS Configuration
+### 4a. NATS Authentication Prerequisites (Required Before Starting NATS)
+
+The canonical NATS config enforces mutual TLS (`verify_and_map`) and subject-scoped account
+authorization (ADR-010). **All clients must present a role certificate and connect over `tls://`
+before you start NATS with the updated config** — enforcement is fail-closed.
+
+The following services default to plain `nats://` and must be reconfigured:
+
+| Service | Default | Required change |
+|---------|---------|-----------------|
+| `ProjectHermes` (`infrastructure/ProjectHermes/src/hermes/config.py:34`) | `nats://localhost:4222` | Set `NATS_URL=tls://…`, `TLS_CERT_FILE`, `TLS_KEY_FILE`, `TLS_CA_BUNDLE` |
+| `ProjectTelemachy` (`provisioning/ProjectTelemachy/src/telemachy/config.py:21`) | `nats://localhost:4222` | Set `NATS_URL=tls://…`, `REQUIRE_TLS=true` (client-cert wiring tracked separately) |
+| `docker-compose.crosshost.yml:45` | `NATS_URL: nats://nats:4222` | Update to `tls://nats:4222` and mount client cert |
+
+Follow `docs/runbooks/enable-nats-auth.md` to issue role certs, distribute them, and
+configure each service before proceeding with steps 4b–4c.
+
+### 4b. Review the NATS Configuration
 
 The canonical NATS server config is at `configs/nats/server.conf`. It configures:
 
 - JetStream persistence
-- TLS (if enabled)
+- Mutual-TLS authentication with `verify_and_map` (ADR-010)
+- Subject-scoped account authorization per the `hi.*` schema (ADR-005)
 - Leaf nodes (for multi-cluster federation)
 - Max connections and per-client limits
-- Authentication (fail-closed): requires `$NATS_CLIENT_TOKEN` for client
-  connections and `$NATS_LEAF_TOKEN` for leaf-node connections. NATS will
-  refuse connections without these credentials — set both in your deployment
-  secrets before starting the server. The recommended production path is
-  per-leaf NKey/JWT `.creds` files; see ADR-009 and
+- Authentication (fail-closed): client connections are authenticated via
+  cert-mapped subject-scoped accounts (`verify_and_map`, ADR-010), so no client
+  token is required. Leaf-node connections still require `$NATS_LEAF_TOKEN`
+  (issue #176). NATS will refuse leaf connections without that credential — set
+  it in your deployment secrets before starting the server. The recommended
+  production path is per-leaf NKey/JWT `.creds` files; see ADR-010 and
   `docs/runbooks/add-new-host.md` step 5.
 - Cluster route authorization (multi-server clusters only): the `cluster {}`
   listener on port 6222 requires a shared `$NATS_CLUSTER_TOKEN` in addition
@@ -175,10 +194,12 @@ The canonical NATS server config is at `configs/nats/server.conf`. It configures
   The server fails closed if a configured route peer presents the wrong token.
   Single-host deployments (no configured routes) are unaffected at runtime.
 
-For a single-host setup, set `$NATS_CLIENT_TOKEN` and `$NATS_LEAF_TOKEN`
-in your environment before starting the server.
+For a single-host setup, client connections are authenticated via cert-mapped
+subject-scoped accounts (ADR-010) — provision the role certs per step 4a and no
+client token is required. Set `$NATS_LEAF_TOKEN` before starting the server so
+the leafnode listener stays authenticated (issue #176).
 
-### 4b. Start the NATS Server
+### 4c. Start the NATS Server
 
 ```bash
 podman run -d \
@@ -197,7 +218,7 @@ podman logs nats-server
 
 You should see: `Server is ready for connections on 0.0.0.0:4222`
 
-### 4c. Configure Leaf Nodes (Multi-Host Only)
+### 4d. Configure Leaf Nodes (Multi-Host Only)
 
 If deploying across multiple hosts, configure leaf node connections in `configs/nats/leaf.conf` to federate the NATS clusters over Tailscale. See `docs/runbooks/add-new-host.md` for details.
 
@@ -434,12 +455,15 @@ Monitor the response through Agamemnon's task queue.
 
 Before running in production, complete these additional steps:
 
-### 12a. Enable TLS
+### 12a. Enable TLS and NATS Authentication
 
 Nomad ACLs are already enabled in `configs/nomad/server.hcl` and `client.hcl`
-(issue #196) — ensure you completed the `nomad acl bootstrap` in Step 5c. The
-remaining transport hardening is TLS: update `configs/nats/server.conf` and
-`configs/nomad/server.hcl` to enable TLS certificates.
+(issue #196) — ensure you completed the `nomad acl bootstrap` in Step 5c.
+
+NATS TLS encryption (ADR-008) and mutual-TLS authentication (ADR-010) are enabled by default
+in `configs/nats/server.conf`. Ensure role certs are provisioned and all clients are configured
+before starting NATS (see step 4a and `docs/runbooks/enable-nats-auth.md`). For Nomad TLS,
+update `configs/nomad/server.hcl` to add TLS certificates.
 
 ### 12b. Configure Persistent Storage
 
