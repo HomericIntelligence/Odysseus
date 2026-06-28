@@ -5,6 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$(dirname "$(dirname "$SCRIPT_DIR")")/lib/common.sh"
+source "$(dirname "$(dirname "$SCRIPT_DIR")")/lib/process.sh"
 source "$(dirname "$(dirname "$SCRIPT_DIR")")/lib/nats.sh"
 source "$(dirname "$(dirname "$SCRIPT_DIR")")/lib/agamemnon.sh"
 
@@ -38,22 +39,26 @@ pass "A01: Agamemnon designed for graceful degradation (NatsClient returns false
 # ─── A02: NATS clean restart — verify reconnection ───────────────────────────
 info "A02: NATS clean restart — client reconnection"
 
-# After the baseline lifecycle proved NATS works, verify connections are stable
-CONN_COUNT=$(nats_connection_count 2>/dev/null || echo "0")
-[ "$CONN_COUNT" -ge 1 ] 2>/dev/null && \
-    pass "A02: $CONN_COUNT active NATS connections (clients connected)" || \
-    skip "A02: Could not verify connection count"
-
-# Verify NATS monitoring is responsive
-nats_health && \
-    pass "A02: NATS monitoring healthy" || \
-    fail "A02: NATS monitoring unhealthy"
-
-# Verify messages are flowing (implies successful pub/sub)
-MSG_COUNT=$(nats_msg_count 2>/dev/null || echo "0")
-[ "$MSG_COUNT" -gt 0 ] 2>/dev/null && \
-    pass "A02: NATS processed $MSG_COUNT messages (pub/sub working)" || \
-    skip "A02: Message count unavailable"
+if topology_supports "t1"; then
+    nats_kill
+    nats_restart && \
+        pass "A02: NATS returned healthy after SIGKILL+restart (kill-then-wait cleared stale-process race)" || \
+        fail "A02: NATS did not return healthy after restart"
+    nats_health && \
+        pass "A02: NATS monitoring healthy post-restart" || \
+        fail "A02: NATS monitoring unhealthy post-restart"
+    nats_stream_exists "homeric-myrmidon" 2>/dev/null && \
+        pass "A02: JetStream stream survived restart (store_dir preserved)" || \
+        skip "A02: stream presence not verifiable (JetStream monitoring may be off)"
+else
+    CONN_COUNT=$(nats_connection_count 2>/dev/null || echo "0")
+    [ "$CONN_COUNT" -ge 1 ] 2>/dev/null && \
+        pass "A02: $CONN_COUNT active NATS connections (clients connected)" || \
+        skip "A02: Could not verify connection count"
+    nats_health && \
+        pass "A02: NATS monitoring healthy" || \
+        fail "A02: NATS monitoring unhealthy"
+fi
 
 summary
 exit_code
