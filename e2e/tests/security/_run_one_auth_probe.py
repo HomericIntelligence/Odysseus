@@ -52,13 +52,23 @@ result = subprocess.run(
     timeout=120,
 )
 out = (result.stdout or "").strip()
+err = (result.stderr or "").lower()
 
-# Auth failure surfaces as non-zero exit and/or auth/credential error text.
+# Auth failure surfaces as non-zero exit, empty output, or a specific
+# credential-error token in stderr. Anchor on concrete failure phrases rather
+# than the 4-char "auth" (which matches "author"/"authorized"/etc.), and rely
+# on returncode + empty-output instead of a broad "ERROR in stdout" substring.
+_AUTH_FAIL_TOKENS = (
+    "authentication",
+    "invalid api key",
+    "invalid_api_key",
+    "unauthorized",
+    "credential",
+)
 if (
     result.returncode != 0
     or not out
-    or "ERROR" in out
-    or "auth" in (result.stderr or "").lower()
+    or any(tok in err for tok in _AUTH_FAIL_TOKENS)
 ):
     sys.stderr.write(f"rc={result.returncode} stderr={result.stderr[:300]}\n")
     sys.exit(1)
