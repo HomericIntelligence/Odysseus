@@ -123,6 +123,50 @@ nats_subscription_count() {
     echo "$subsz" | python3 -c "import sys,json; print(json.load(sys.stdin).get('num_subscriptions', 0))"
 }
 
+# ─── Lifecycle (crash/restart) — T1 only ─────────────────────────────────────
+# Only T1 (direct background process) can reliably stop/start NATS in-place.
+# T4 is excluded: run-ipc-tests.sh has a documented monitor-port override bug
+# (docs/e2e-walkthrough-report.md:601, finding #12).
+nats_can_restart() { [ "${IPC_TOPOLOGY:-}" = "t1" ]; }
+
+# Kill the NATS server (T1). Returns 0 once the monitor endpoint stops answering.
+nats_kill() {
+    [ "${IPC_TOPOLOGY:-}" = "t1" ] || return 1
+    [ -n "${NATS_BG_PID:-}" ] || return 1
+    if ! kill -KILL "$NATS_BG_PID" 2>/dev/null; then
+        :  # already gone — nothing to do
+    fi
+    for _ in $(seq 1 10); do
+        nats_health || return 0      # monitor no longer answering => down
+        sleep 1
+    done
+    return 1
+}
+
+# Restart NATS (T1) reusing the EXACT params start_nats_bg used (no hardcoded
+# fallbacks — avoids silent divergence from process.sh). Waits until healthy.
+nats_restart() {
+    [ "${IPC_TOPOLOGY:-}" = "t1" ] || return 1
+    # Reap the old PID and wait for the port to be free before relaunching.
+    # SIGKILL→immediate relaunch can race a JetStream store lock or TIME_WAIT.
+    local old_pid="${NATS_BG_PID:-}"
+    if [ -n "$old_pid" ]; then
+        if wait "$old_pid" 2>/dev/null; then :; fi
+    fi
+    local i
+    for i in $(seq 1 10); do
+        (echo >/dev/tcp/localhost/"${NATS_PORT:?}") 2>/dev/null || break
+        sleep 1
+    done
+    "${NATS_BIN:?NATS_BIN unset — start_nats_bg must run first}" -js \
+        -p "${NATS_PORT:?}" \
+        -m "${NATS_MONITOR_PORT:?}" \
+        --store_dir "${NATS_DATA_DIR:?}" >/dev/null 2>&1 &
+    NATS_BG_PID=$!; export NATS_BG_PID
+    register_pid "$NATS_BG_PID"
+    nats_wait_healthy 30
+}
+
 # ─── Assertions ──────────────────────────────────────────────────────────────
 
 assert_nats_connections_gte() {
