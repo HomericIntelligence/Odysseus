@@ -108,8 +108,9 @@ start_agamemnon_bg() {
 start_myrmidon_bg() {
     local odysseus_root="${ODYSSEUS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
     local bin=""
-    # Binary name from: provisioning/Myrmidons/hello-world/CMakeLists.txt:34
+    # Binary name from: provisioning/Myrmidons/hello-world/CMakeLists.txt:35
     #   add_executable(hello_myrmidon main.cpp)
+    #   Verified against Myrmidons submodule pin ef3279f.
     for candidate in \
         "${odysseus_root}/build/Myrmidons/hello-world/hello_myrmidon" \
         "${odysseus_root}/provisioning/Myrmidons/hello-world/build/hello_myrmidon" \
