@@ -206,19 +206,22 @@ jobs:
         with:
           submodules: true
 
-      - name: Validate NATS config syntax
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
+
+      - name: Install PyYAML (for compose validator)
+        run: pip install pyyaml
+
+      - name: Validate NATS config structure
+        run: python3 scripts/validate_nats_config.py
+
+      - name: Validate docker-compose structure
+        run: python3 scripts/validate_compose.py
+
+      - name: Validate justfile recipe integrity + config validators
         run: |
-          find configs/nats -name "*.conf" | while IFS= read -r f; do
-            python3 -c "
-          import sys
-          content = open('$f').read()
-          if content.strip():
-              print(f'OK: $f')
-          else:
-              print(f'WARNING: $f is empty')
-              sys.exit(1)
-          "
-          done
+          bash tests/test-justfile-recipes.sh
+          bash tests/test-config-validators.sh
 
       - name: Check submodule URLs are reachable
         run: |
