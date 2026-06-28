@@ -25,13 +25,13 @@ def check(text: str) -> tuple[bool, str]:
             ch = raw[i]
             if instr:
                 if ch == "\\" and i + 1 < len(raw):
-                    out.append(ch)
-                    out.append(raw[i + 1])
+                    out.append(" ")
+                    out.append(" ")
                     i += 2
                     continue
                 if ch == q:
                     instr = False
-                out.append(ch)
+                out.append(" ")
                 i += 1
                 continue
             if ch == "#":
