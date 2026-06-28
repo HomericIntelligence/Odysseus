@@ -34,7 +34,12 @@ Odysseus/
 │   │   ├── 004-extend-not-replace-maestro.md
 │   │   ├── 005-nats-subject-schema.md
 │   │   ├── 006-decouple-from-ai-maestro.md
-│   │   └── 007-symlinks-over-submodules.md
+│   │   ├── 007-symlinks-over-submodules.md
+│   │   ├── 008-nats-tls-encryption.md
+│   │   ├── 009-defer-multi-host-nomad-scheduling.md
+│   │   ├── 009-nats-authentication.md
+│   │   ├── 010-nats-mtls-subject-scoped-auth.md
+│   │   └── 011-extract-python-orchestration-to-agamemnon.md
 │   └── runbooks/
 │       ├── add-new-host.md
 │       ├── add-new-agent-type.md
