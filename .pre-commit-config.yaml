@@ -71,7 +71,6 @@ repos:
           files (git ls-files); submodules are never scanned. See #179.
         language: system
         entry: python3 scripts/check_grafana_credentials.py
-        files: \.(md|ya?ml)$
         pass_filenames: false
         always_run: true
       - id: require-signed-commits
