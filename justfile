@@ -286,7 +286,7 @@ validate-configs:
     grep -qF '${NOMAD_ADVERTISE_ADDR}' configs/nomad/server.hcl || {
         echo "configs/nomad/server.hcl lost its \${NOMAD_ADVERTISE_ADDR} placeholder (hardcoded IP re-introduced — see #181)"; exit 1;
     }
-    pixi run yamllint -c .yamllint.yml configs/
+    pixi run yamllint -c .yamllint.yml .github/workflows/ configs/
     bash tools/validate-nats-auth.sh
     bash tools/tests/test-validate-nats-auth.sh
     python3 scripts/validate_nats_config.py
