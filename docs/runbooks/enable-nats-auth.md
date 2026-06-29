@@ -262,3 +262,52 @@ git -C /path/to/Odysseus show HEAD~1:configs/nats/server.conf \
 sudo cp /tmp/server.conf.prev /etc/nats/server.conf
 sudo systemctl restart nats
 ```
+
+---
+
+## Appendix: Telemachy Client mTLS Configuration (planned)
+
+> This section covers the **Telemachy client** side of NATS mTLS. The server-side
+> `verify_and_map` authentication and subject-scoped `accounts {}` authorization are
+> defined in ADR-010 and configured in the steps above.
+>
+> **Status:** The Telemachy client-cert (mTLS) wiring described below is **not yet
+> shipped** in `provisioning/ProjectTelemachy`. It is tracked as the follow-up issue
+> "ProjectTelemachy: add NATS client-cert (mTLS) wiring" (see the note in Step 3). The
+> symbols referenced here (`telemachy.nats_client.connect_nats()`, the
+> `NatsConnectionError` gate, and the `test_client_cert_loaded_for_mtls` test) are the
+> **target design** for that issue and do not exist on a released submodule pin yet. This
+> appendix documents the intended operator-facing configuration so it is ready when the
+> code lands; do not expect `telemachy run` to perform the gate until the follow-up issue
+> is merged and the submodule pointer is bumped.
+
+Once the follow-up wiring lands, set the following environment variables so Telemachy
+connects over mutual TLS:
+
+| Component | `NATS_URL` | `TLS_CERT_FILE` | `TLS_KEY_FILE` | `TLS_CA_BUNDLE` |
+|-----------|------------|-----------------|----------------|-----------------|
+| Telemachy | `tls://…`  | role cert PEM   | role key PEM   | CA bundle PEM   |
+
+```bash
+export NATS_URL=tls://<nats-host>:4222
+export TLS_CERT_FILE=/etc/nats/certs/telemachy-cert.pem
+export TLS_KEY_FILE=/etc/nats/certs/telemachy-key.pem
+export TLS_CA_BUNDLE=/etc/nats/certs/ca.pem
+```
+
+Once implemented, when `NATS_URL=tls://…`, `telemachy run` is intended to perform a
+**fail-closed mTLS verification gate** before executing the workflow: it opens a NATS
+connection via `telemachy.nats_client.connect_nats()` (passing the client cert as
+`tls=`/`tls_hostname=`), then drains it. If the handshake fails (cert rejected, CA
+mismatch, server unreachable), `run` aborts with a clear `NatsConnectionError` message and
+a non-zero exit — it does not proceed to workflow execution.
+
+This gate is the planned complement to the `require_tls` gate in `agamemnon_client.py` that
+rejects plain `nats://` connections when `REQUIRE_TLS=true`.
+
+### CI note (applies once the wiring lands)
+
+When the follow-up wiring ships, CI images that run the Telemachy unit tests must ship the
+`openssl` binary. The planned `test_client_cert_loaded_for_mtls` test generates a
+self-signed cert at runtime into `tmp_path` via `openssl req -x509 …` and calls
+`pytest.skip` if `openssl` is absent.
