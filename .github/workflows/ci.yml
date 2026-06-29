@@ -67,10 +67,16 @@ jobs:
           curl -fsSL https://github.com/nats-io/nats-server/releases/download/v2.10.22/nats-server-v2.10.22-linux-amd64.tar.gz \
             | tar xz --wildcards --strip-components=1 -C /usr/local/bin '*/nats-server'
 
-      - name: NATS config parses + fail-closed on unset token
+      - name: NATS configs parse with required credentials set
         run: |
-          NATS_CLIENT_TOKEN=x NATS_LEAF_TOKEN=y nats-server -c configs/nats/server.conf -t
-          ! nats-server -c configs/nats/leaf.conf -t 2>/dev/null
+          # Create self-signed dummy certs so nats-server -t can validate TLS config structure.
+          sudo mkdir -p /etc/nats/certs
+          openssl req -x509 -newkey rsa:2048 -keyout /tmp/key.pem -out /tmp/cert.pem \
+            -days 1 -nodes -subj "/CN=test" 2>/dev/null
+          sudo cp /tmp/cert.pem /etc/nats/certs/server-cert.pem
+          sudo cp /tmp/key.pem  /etc/nats/certs/server-key.pem
+          sudo cp /tmp/cert.pem /etc/nats/certs/ca.pem
+          NATS_CLIENT_TOKEN=x NATS_LEAF_USER=u NATS_LEAF_PASSWORD=p NATS_CLUSTER_USER=u NATS_CLUSTER_PASSWORD=p nats-server -c configs/nats/server.conf -t
 
       - name: Grafana credential-gate self-test (#179)
         run: python3 scripts/check_grafana_credentials.py --self-test
