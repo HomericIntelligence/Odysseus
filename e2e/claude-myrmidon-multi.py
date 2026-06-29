@@ -63,6 +63,37 @@ CONTAINER_RUNTIME = os.environ.get("CONTAINER_RUNTIME", "podman")
 STREAM_NAME = "homeric-myrmidon"
 LOG_SUBJECT = "hi.logs.myrmidon.claude-multi"
 
+# ─── Issue-driven task goal ─────────────────────────────────────────────────
+# The harness is issue-generic: the work to perform is defined entirely by the
+# GitHub issue body, not hardcoded per-task. These are populated once at startup
+# from `gh issue view`. A short slug derived from the title is used for branch
+# names, commit scopes, and test-script filenames so nothing is task-specific.
+TASK_TITLE = ""
+TASK_GOAL = ""
+TASK_SLUG = "issue"
+
+
+def _load_task_goal() -> None:
+    """Fetch the issue title + body once; derive TASK_TITLE/TASK_GOAL/TASK_SLUG."""
+    global TASK_TITLE, TASK_GOAL, TASK_SLUG
+    try:
+        out = subprocess.run(
+            ["gh", "issue", "view", str(ISSUE_NUMBER), "--repo", REPO,
+             "--json", "title,body"],
+            capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30,
+        )
+        data = json.loads(out.stdout)
+        TASK_TITLE = data.get("title", "") or f"Issue #{ISSUE_NUMBER}"
+        TASK_GOAL = data.get("body", "") or ""
+    except Exception as e:
+        TASK_TITLE = f"Issue #{ISSUE_NUMBER}"
+        TASK_GOAL = ""
+        print(f"WARN: could not load issue #{ISSUE_NUMBER}: {e}", file=sys.stderr)
+    # Branch/commit/file-safe slug from the title (first ~4 words).
+    import re as _re
+    words = _re.sub(r"[^a-z0-9 ]", "", TASK_TITLE.lower()).split()
+    TASK_SLUG = "-".join(words[:4]) or f"issue-{ISSUE_NUMBER}"
+
 # ─── Repo Registry ──────────────────────────────────────────────────────────
 REPOS: dict[str, dict] = {
     # Infrastructure
@@ -144,6 +175,13 @@ REPOS: dict[str, dict] = {
     },
 }
 
+# Optional repo scoping for piloting/staged rollout: REPOS_FILTER="keystone" or
+# "keystone,scylla" limits the run to those slugs (consumers, fan-out, fan-in all
+# follow the filtered set). Empty = all repos.
+_repos_filter = [s.strip() for s in os.environ.get("REPOS_FILTER", "").split(",") if s.strip()]
+if _repos_filter:
+    REPOS = {k: v for k, v in REPOS.items() if k in _repos_filter}
+
 # ─── ANSI Colors ────────────────────────────────────────────────────────────
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -191,6 +229,7 @@ def prune_task_data(task_data: dict, keep_extra: tuple = ()) -> dict:
 
 # ─── Session ID Management ─────────────────────────────────────────────────
 _session_ids: dict[str, str] = {}
+_created_sessions: set[str] = set()  # session ids that have actually been started
 
 
 def _get_session_id(task_id: str, repo_slug: str, stage: str) -> str:
@@ -243,8 +282,19 @@ def _build_container_cmd_scoped(
         # Fallback: read-write
         volume_mounts = ["-v", f"{cwd}:{CONTAINER_WORKSPACE}"]
 
+    # Run as the invoking (non-root) user so the bind-mounted ~/.claude (owned by
+    # the host user) is WRITABLE inside the container. Without this, rootless
+    # podman maps the container's root to a high subuid that cannot write the
+    # mounted config/session/lock files — claude then hangs silently on any
+    # API/session operation (EACCES on ~/.claude/debug/*). keep-id maps the
+    # container user 1:1 to the host uid/gid.
+    userns = ["--userns=keep-id"] if CONTAINER_RUNTIME == "podman" else [
+        "--user", f"{os.getuid()}:{os.getgid()}"
+    ]
+
     cmd = [
         CONTAINER_RUNTIME, "run", "--rm",
+        *userns,
         "--network", os.environ.get("CONTAINER_NETWORK", "odysseus_homeric-mesh"),
         *volume_mounts,
         *common_mounts,
@@ -283,7 +333,12 @@ def invoke_claude(
         return mock_claude_response(stage, repo_slug, iteration)
 
     session_id = _get_session_id(task_id, repo_slug, stage) if task_id else ""
-    is_resume = iteration > 0 and session_id
+    # Resume only if THIS stage's session was actually created on a prior call.
+    # The old `iteration > 0` test was wrong: every stage starts at iteration 1,
+    # so the first test/implement/review/ship call tried to --resume a session
+    # that was never created (each stage has its own session id), yielding empty
+    # output and a spurious NOGO loop. Track created sessions explicitly.
+    is_resume = bool(session_id) and session_id in _created_sessions
 
     claude_args = [
         "claude", "-p", prompt,
@@ -298,6 +353,7 @@ def invoke_claude(
         log("claude", f"Starting new session scope={scope} ({len(prompt)} chars)")
         if session_id:
             claude_args.extend(["--session-id", session_id])
+            _created_sessions.add(session_id)
 
     cmd = _build_container_cmd_scoped(claude_args, cwd=cwd, scope=scope)
 
@@ -333,15 +389,12 @@ def mock_claude_response(stage: str, repo_slug: str, iteration: int) -> str:
         sections = []
         for slug, info in REPOS.items():
             sections.append(f"""### Repo: {slug}
-- Add justfile recipes delegating to `{info['path']}/justfile`
-- Recipe pattern: `cd {info['path']} && just <recipe>`
-- {info['description']}""")
+- Apply the issue's goal to `{info['path']}` ({info['description']}).""")
         criteria = []
         for slug in REPOS:
             criteria.append(f"""### {slug} Criteria
-1. Submodule justfile exists or is created at {REPOS[slug]['path']}/justfile
-2. Recipes follow ecosystem delegation pattern
-3. All recipe names are documented""")
+1. The repo satisfies its portion of the issue goal
+2. Changes follow existing repo conventions""")
         return f"""## PART 1 — Plan
 {chr(10).join(sections)}
 
@@ -359,16 +412,16 @@ exit 0"""
 
     elif stage == "review":
         if iteration <= 1:
-            return f"""1. PASS: Justfile recipe exists for {repo_slug}
-2. FAIL: Recipe delegation path incorrect
+            return f"""1. PASS: {repo_slug} change present
+2. FAIL: a criterion not yet met
 
 VERDICT: NOGO
 
 Remaining concerns:
-1. Delegation path needs to match submodule structure"""
+1. Address the outstanding acceptance criterion"""
         else:
-            return f"""1. PASS: Justfile recipe exists for {repo_slug}
-2. PASS: Delegation path correct
+            return f"""1. PASS: {repo_slug} change present
+2. PASS: all criteria met
 
 VERDICT: GO
 
@@ -439,6 +492,7 @@ async def publish_log(js, stage: str, message: str, task_id: str = "",
 # ─── Fan-In Coordination ───────────────────────────────────────────────────
 _repo_go_verdicts: dict[str, set[str]] = {}   # task_id → set of repo slugs with GO
 _repo_pr_urls: dict[str, dict[str, str]] = {}  # task_id → {repo_slug: pr_url}
+_expected_repos: dict[str, set[str]] = {}      # task_id → set of repos that need work
 
 
 # ─── Stage Handlers ────────────────────────────────────────────────────────
@@ -459,50 +513,60 @@ async def stage_plan(task_data: dict, js) -> dict:
         for slug, info in REPOS.items()
     )
 
+    repo_headers = "\n".join(f"### Repo: {slug}\n(Per-repo plan for this repo.)" for slug in REPOS)
+    criteria_headers = "\n".join(f"### {slug} Criteria\n1. (numbered criteria)" for slug in REPOS)
+
     prompt = f"""You are a planning agent for the HomericIntelligence ecosystem.
 
-Task: Add justfile recipes for 4 missing repos in the Odysseus meta-repo.
 GitHub Issue: #{issue_number} on {REPO}
+Title: {TASK_TITLE}
+
+The issue defines the work to perform. Here is its full body — treat it as the
+authoritative specification of WHAT to do:
+
+<issue>
+{TASK_GOAL}
+</issue>
 
 Instructions:
-1. Read the GitHub issue: run `gh issue view {issue_number} --repo {REPO}`
-2. Read the current Odysseus justfile at justfile (study existing delegation patterns)
-3. For each of these 4 repos, read their directory to understand what they contain:
+1. Re-read the issue if needed: `gh issue view {issue_number} --repo {REPO}`
+2. For each repo below, read its directory to understand its current state as it
+   relates to the issue's goal:
 
 {repo_context}
 
-4. Check if each repo already has a justfile. If not, one needs to be created.
-5. Study existing patterns: hermes-start, scylla-test, keystone-start, etc.
+3. Decompose the issue's goal into concrete, per-repo work. Only include a repo
+   if the issue's goal actually requires changes there.
 
-Produce a plan with EXACTLY this structure:
+Produce a plan with EXACTLY this structure (use these repo slugs as headers):
 
 ## PART 1 — Plan
-### Repo: achaean-fleet
-(What justfile recipes to add/create. What the Odysseus delegation recipes should look like.)
-### Repo: proteus
-(Same)
-### Repo: mnemosyne
-(Same)
-### Repo: hephaestus
-(Same)
+{repo_headers}
 
 ## PART 2 — Acceptance Criteria
-### achaean-fleet Criteria
-1. (numbered criteria)
-### proteus Criteria
-1. (numbered criteria)
-### mnemosyne Criteria
-1. (numbered criteria)
-### hephaestus Criteria
-1. (numbered criteria)
+{criteria_headers}
 
-Use EXACTLY the repo slugs shown above as section headers. Output ONLY the plan."""
+Use EXACTLY the repo slugs shown above as section headers. If a repo needs no
+work for this issue, write "No changes required." under it. Output ONLY the plan."""
 
     result = invoke_claude(prompt, scope="plan", stage="plan", task_id=task_id, repo_slug="all")
     post_issue_comment(issue_number, "plan", 0, result)
 
-    # Fan-out: publish one message per repo
+    # Determine which repos actually need work (issue-generic: some may be
+    # "No changes required"). Record the active set so fan-in knows how many
+    # ship events to expect — otherwise the final ship would wait forever.
+    active_repos = []
     for repo_slug in REPOS:
+        repo_plan = _extract_section(result, f"### Repo: {repo_slug}")
+        if repo_plan and "no changes required" not in repo_plan.lower():
+            active_repos.append(repo_slug)
+    if not active_repos:
+        active_repos = list(REPOS)  # fall back to all if the plan was unparseable
+    _expected_repos[task_id] = set(active_repos)
+    log("plan", f"Active repos for this issue: {', '.join(active_repos)}")
+
+    # Fan-out: publish one message per ACTIVE repo
+    for repo_slug in active_repos:
         repo_plan = _extract_section(result, f"### Repo: {repo_slug}")
         repo_criteria = _extract_section(result, f"### {repo_slug} Criteria")
 
@@ -523,7 +587,7 @@ Use EXACTLY the repo slugs shown above as section headers. Output ONLY the plan.
         )
         log("plan", f"Dispatched to tester for {repo_slug}")
 
-    await publish_log(js, "plan", "Plan complete, dispatched to 4 repo testers", task_id, team_id)
+    await publish_log(js, "plan", f"Plan complete, dispatched to {len(active_repos)} repo testers", task_id, team_id)
     log_memory("plan")
     return task_data
 
@@ -565,6 +629,11 @@ async def stage_test(task_data: dict, js) -> dict:
 
     prompt = f"""You are a test agent for the HomericIntelligence ecosystem.
 
+Overall goal (from issue #{issue_number} — "{TASK_TITLE}"):
+<issue>
+{TASK_GOAL}
+</issue>
+
 Repo: {repo_slug} (path: {task_data.get('repo_path', '')})
 
 Plan for this repo:
@@ -573,11 +642,9 @@ Plan for this repo:
 Acceptance criteria:
 {repo_criteria}
 {feedback_section}
-Write a bash validation script that checks:
-- The Odysseus justfile (at repo root) has the expected recipe names for {repo_slug}
-- Recipes delegate to the correct submodule path: {task_data.get('repo_path', '')}
-- If a submodule justfile was supposed to be created, verify it exists
-- Each acceptance criterion from the plan
+Write a bash validation script that verifies this repo's portion of the issue
+goal is satisfied — assert each acceptance criterion above against the actual
+files in {task_data.get('repo_path', '')} (and the Odysseus root where relevant).
 
 The script should:
 - Print PASS or FAIL for each check with a description
@@ -593,7 +660,7 @@ Output ONLY the bash script. Start with #!/usr/bin/env bash."""
 
     # Save test script
     if not DRY_RUN:
-        test_path = os.path.join(WORKING_DIR, "e2e", f"test-justfile-{repo_slug}.sh")
+        test_path = os.path.join(WORKING_DIR, "e2e", f"test-{TASK_SLUG}-{repo_slug}.sh")
         with open(test_path, "w") as f:
             f.write(result)
         os.chmod(test_path, 0o755)
@@ -645,6 +712,11 @@ Outstanding concerns:
 
     prompt = f"""You are an implementation agent for the HomericIntelligence ecosystem.
 
+Overall goal (from issue #{issue_number} — "{TASK_TITLE}"):
+<issue>
+{TASK_GOAL}
+</issue>
+
 Repo: {repo_slug} (submodule path: {repo_path})
 
 Plan:
@@ -654,12 +726,10 @@ Test script that must pass:
 {test_script}
 {feedback_section}
 Instructions:
-1. Read the current Odysseus justfile (at repo root)
-2. Read {repo_path}/ to understand the submodule structure
-3. If {repo_path}/justfile exists, read it for existing recipes to delegate to
-4. If no justfile exists, create one following the ecosystem convention (see shared/ProjectHephaestus/justfile for reference)
-5. Add delegation recipes to the Odysseus justfile following existing patterns
-6. Run the test script at e2e/test-justfile-{repo_slug}.sh to verify
+1. Read {repo_path}/ to understand the current state relevant to the goal.
+2. Make the changes this repo needs to satisfy the plan and the issue goal.
+   Follow existing conventions in the repo; do not introduce unrelated changes.
+3. Run the test script at e2e/test-{TASK_SLUG}-{repo_slug}.sh to verify.
 
 Output a brief summary of what you did (3-5 lines). Files should already be written."""
 
@@ -711,15 +781,20 @@ Do NOT introduce new minor concerns. Do NOT shift the goalposts.
 
     prompt = f"""You are a strict code reviewer for the HomericIntelligence ecosystem.
 
-Review the justfile recipes for {repo_slug} against:
+Overall goal (from issue #{issue_number} — "{TASK_TITLE}"):
+<issue>
+{TASK_GOAL}
+</issue>
+
+Review this repo's changes for {repo_slug} against:
 
 1. Acceptance criteria:
 {repo_criteria}
 
-2. Test script (run it: bash e2e/test-justfile-{repo_slug}.sh):
+2. Test script (run it: bash e2e/test-{TASK_SLUG}-{repo_slug}.sh):
 {test_script}
 
-3. Existing justfile patterns (read justfile at repo root for reference)
+3. The issue goal above and existing conventions in the repo
 {previous_section}
 For EACH acceptance criterion, output:
 - PASS: <criterion> — <explanation>
@@ -805,26 +880,30 @@ async def stage_ship_repo(task_data: dict, js) -> dict:
     log_memory("ship")
     await publish_log(js, "ship", f"Shipping {repo_slug}", task_id, team_id, repo_slug)
 
+    branch = f"feat/{TASK_SLUG}"
     prompt = f"""You are a shipping agent for the HomericIntelligence ecosystem.
 
-The justfile recipes for {repo_slug} have been reviewed and approved.
+The changes for {repo_slug} (for issue #{issue_number} — "{TASK_TITLE}") have been
+reviewed and approved. Open a PR in this repo's upstream.
 
 Steps:
 1. cd into the submodule: cd {repo_path}
 2. git fetch origin main
-3. git checkout -b feat/justfile-recipes origin/main
-4. Stage changes: git add justfile (and any other new files)
-5. Commit: git commit -m "feat(justfile): add recipes for Odysseus delegation
+3. git checkout -b {branch} origin/main
+4. Stage the changes you made for this issue: git add -A (only the files this
+   issue's work touched — do not stage unrelated changes)
+5. Commit with a message whose subject summarizes THIS issue's change for this
+   repo, with body:
 
-Part of HomericIntelligence/Odysseus#{issue_number}
+   Part of HomericIntelligence/Odysseus#{issue_number}
 
-Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
-6. Push: git push -u origin feat/justfile-recipes
+   Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+6. Push: git push -u origin {branch}
 7. Create PR: gh pr create --repo {repo_github} \\
-     --title "feat(justfile): add recipes for Odysseus delegation" \\
+     --title "<concise title describing this repo's change for the issue>" \\
      --body "Part of HomericIntelligence/Odysseus#{issue_number}
 
-Adds justfile recipes so Odysseus can delegate cross-repo operations.
+<short description of what changed and why, per the issue goal>
 
 Generated with [Claude Code](https://claude.com/claude-code)"
 
@@ -841,8 +920,9 @@ Output the PR URL."""
     await publish_log(js, "ship", f"{repo_slug} PR created: {result}", task_id, team_id, repo_slug)
 
     # Check fan-in: all 4 repos shipped?
-    if _repo_go_verdicts.get(task_id, set()) == set(REPOS.keys()):
-        log("ship", f"{GREEN}All 4 repo PRs created! Dispatching final Odysseus ship.{NC}")
+    expected = _expected_repos.get(task_id, set(REPOS.keys()))
+    if _repo_go_verdicts.get(task_id, set()) >= expected:
+        log("ship", f"{GREEN}All {len(expected)} repo PRs created! Dispatching final Odysseus ship.{NC}")
         final_data = {
             **prune_task_data(task_data),
             "repo_pr_urls": _repo_pr_urls.get(task_id, {}),
@@ -850,7 +930,7 @@ Output the PR URL."""
         await publish_json(js, f"hi.myrmidon.claude.ship-final.{task_id}", final_data)
     else:
         done = len(_repo_go_verdicts.get(task_id, set()))
-        log("ship", f"[{repo_slug}] {done}/4 repos shipped, waiting for others...")
+        log("ship", f"[{repo_slug}] {done}/{len(expected)} repos shipped, waiting for others...")
 
     log_memory("ship")
     return task_data
@@ -868,36 +948,44 @@ async def stage_ship_odysseus(task_data: dict, js) -> dict:
     await publish_log(js, "ship-final", "Creating Odysseus PR", task_id, team_id)
 
     pr_links = "\n".join(f"- **{slug}**: {url}" for slug, url in repo_pr_urls.items())
+    shipped_paths = "\n".join(
+        f"   git -C {REPOS[slug]['path']} fetch origin && git -C {REPOS[slug]['path']} checkout origin/main"
+        for slug in repo_pr_urls if slug in REPOS
+    )
+    stage_paths = " ".join(REPOS[slug]["path"] for slug in repo_pr_urls if slug in REPOS)
+    branch = f"feat/{TASK_SLUG}-odysseus"
 
     prompt = f"""You are the final shipping agent for the HomericIntelligence ecosystem.
 
-All 4 submodule repos now have justfile recipes. Create the Odysseus PR.
+Issue #{issue_number} — "{TASK_TITLE}". The per-repo PRs are done; now create the
+final Odysseus meta-repo PR, including any Odysseus-root changes the issue calls
+for (e.g. README/badge-table edits) plus submodule pin bumps for the shipped repos.
+
+<issue>
+{TASK_GOAL}
+</issue>
 
 Per-repo PRs already created:
 {pr_links}
 
 Steps:
 1. git fetch origin main
-2. git checkout -b feat/issue8-justfile-recipes origin/main
-3. Update submodule pins (pull in the per-repo changes):
-   git -C infrastructure/AchaeanFleet fetch origin && git -C infrastructure/AchaeanFleet checkout origin/main
-   git -C ci-cd/ProjectProteus fetch origin && git -C ci-cd/ProjectProteus checkout origin/main
-   git -C shared/ProjectMnemosyne fetch origin && git -C shared/ProjectMnemosyne checkout origin/main
-   git -C shared/ProjectHephaestus fetch origin && git -C shared/ProjectHephaestus checkout origin/main
-4. Verify the Odysseus justfile has the delegation recipes for all 4 repos
-   (they should already be there from the implement stage)
-5. Stage: git add justfile infrastructure/AchaeanFleet ci-cd/ProjectProteus shared/ProjectMnemosyne shared/ProjectHephaestus
-6. Commit: git commit -m "feat(justfile): add recipes for AchaeanFleet, Proteus, Mnemosyne, Hephaestus
+2. git checkout -b {branch} origin/main
+3. Make any Odysseus-root changes the issue requires (do this per the issue body).
+4. Bump submodule pins for the repos that shipped:
+{shipped_paths}
+5. Stage: git add -A {stage_paths} (plus any Odysseus-root files you changed)
+6. Commit with a subject summarizing the issue's Odysseus-level change, body:
 
-Closes #{issue_number}
+   Closes #{issue_number}
 
-Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
-7. Push: git push -u origin feat/issue8-justfile-recipes
+   Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+7. Push: git push -u origin {branch}
 8. Create PR: gh pr create --repo {REPO} \\
-     --title "feat(justfile): add recipes for AchaeanFleet, Proteus, Mnemosyne, Hephaestus" \\
+     --title "<concise title for the Odysseus-level change>" \\
      --body "Closes #{issue_number}
 
-Adds justfile delegation recipes for the 4 missing repos:
+<summary of the meta-repo change + the per-repo PRs below>
 {pr_links}
 
 Generated with [Claude Code](https://claude.com/claude-code)"
@@ -940,6 +1028,11 @@ async def main():
     js = nc.jetstream()
     log("main", f"Connected to NATS at {NATS_URL}")
 
+    # Load the issue-defined goal (issue-generic: prompts are driven by this).
+    _load_task_goal()
+    log("main", f"Task goal loaded from issue #{ISSUE_NUMBER}: {TASK_TITLE!r} "
+                f"({len(TASK_GOAL)} chars, slug={TASK_SLUG})")
+
     # Ensure streams exist
     stream_configs = [
         ("homeric-myrmidon", ["hi.myrmidon.>"], 3600, 50 * 1024 * 1024),
@@ -948,10 +1041,13 @@ async def main():
     ]
     for stream_name, subjects, max_age, max_bytes in stream_configs:
         try:
-            await js.find_stream_name_by_subject(subjects[0])
-            await js.add_stream(name=stream_name, subjects=subjects,
-                                max_age=max_age, max_bytes=max_bytes)
-            log("main", f"Updated stream {stream_name}")
+            existing = await js.find_stream_name_by_subject(subjects[0])
+            # Stream already serves this subject — reconcile config via update,
+            # not add (add_stream errors 10058 when the name exists with a
+            # different retention config, e.g. one created by Agamemnon/worker).
+            await js.update_stream(name=existing, subjects=subjects,
+                                   max_age=max_age, max_bytes=max_bytes)
+            log("main", f"Updated stream {existing}")
         except Exception:
             await js.add_stream(name=stream_name, subjects=subjects,
                                 max_age=max_age, max_bytes=max_bytes)
@@ -1009,6 +1105,20 @@ async def main():
     print(f"  Stages: plan -> 4x[test->impl->review] -> 4x ship -> ship-final")
     print(f"{BOLD}{'=' * 60}{NC}")
     log_memory("main")
+
+    # Auto-seed: publish the initial plan trigger so a single invocation kicks
+    # off the pipeline for ISSUE_NUMBER (set SEED=0 to run as a passive daemon
+    # that waits for an external plan publish instead).
+    if os.environ.get("SEED", "1") == "1":
+        seed_task_id = os.environ.get("TASK_ID", f"badge-{ISSUE_NUMBER}")
+        seed_team_id = os.environ.get("TEAM_ID", "ecosystem")
+        await publish_json(js, f"hi.myrmidon.claude.plan.{seed_task_id}", {
+            "task_id": seed_task_id,
+            "team_id": seed_team_id,
+            "issue_number": ISSUE_NUMBER,
+        })
+        log("main", f"Seeded plan trigger for issue #{ISSUE_NUMBER} (task_id={seed_task_id})")
+
     print(f"\n{DIM}Waiting for tasks... (Ctrl+C to quit){NC}\n")
 
     # Main polling loop
