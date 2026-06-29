@@ -173,6 +173,13 @@ ProjectArgus provides the full observability stack:
 - **Loki + Promtail** — aggregates structured logs from all components via
   `hi.logs.>`.
 - **Grafana** — dashboards surfaced to Odysseus for user-facing visibility.
+- **SLOs / SLAs** — Service-level objectives for availability, task success,
+  NATS event latency, reconnect time, and throughput are defined in
+  [ADR-012](adr/012-slo-sla-definitions.md). Alert rules for the SLIs that are
+  measurable today live in ProjectArgus (`rules/slo_alerts.yml`); see
+  [runbooks/slo-alerting-rules.md](runbooks/slo-alerting-rules.md). Latency and
+  reconnect SLOs are gated on instrumentation that ProjectArgus does not yet
+  emit (ADR-012, Tier 2).
 
 Argus does not control or coordinate components; it is read-only with respect
 to the rest of the system.
