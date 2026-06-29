@@ -275,7 +275,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
 
       - name: Install pixi
-        uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11  # v0.9.6
+        uses: prefix-dev/setup-pixi@a09b6247153796b190642a2b53fac4241043cf6f  # v0.10.0
         with:
           pixi-version: latest
 
@@ -374,7 +374,7 @@ jobs:
       # Validate that pixi.lock is in sync with pixi.toml (issue #200). A
       # stale lockfile silently lets local and CI environments diverge.
       - name: Setup pixi
-        uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11  # v0.9.6
+        uses: prefix-dev/setup-pixi@a09b6247153796b190642a2b53fac4241043cf6f  # v0.10.0
         with:
           pixi-version: v0.67.2
           cache: false
