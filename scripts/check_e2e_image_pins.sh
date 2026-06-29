@@ -12,8 +12,15 @@ if [ ! -f "$COMPOSE_FILE" ]; then
 fi
 
 # Any 'image:' line that does NOT contain a 64-hex sha256 digest is unpinned.
-unpinned="$(grep -nE '^[[:space:]]*image:' "$COMPOSE_FILE" \
-  | grep -vE '@sha256:[0-9a-f]{64}([[:space:]]|$)' || true)"
+# Capture grep's output without letting its exit-1 ("no match" = success case)
+# abort the script under `set -e`. An `if` condition is exempt from `set -e`,
+# so this preserves the original behavior without a forbidden `|| true`.
+if unpinned="$(grep -nE '^[[:space:]]*image:' "$COMPOSE_FILE" \
+  | grep -vE '@sha256:[0-9a-f]{64}([[:space:]]|$)')"; then
+  : # found one or more unpinned images (handled below)
+else
+  unpinned=""
+fi
 
 if [ -n "$unpinned" ]; then
   echo "ERROR: unpinned (non-digest) image references in $COMPOSE_FILE:" >&2
