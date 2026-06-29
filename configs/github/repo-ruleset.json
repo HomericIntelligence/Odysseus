@@ -1,7 +1,7 @@
 {
   "name": "homeric-main-baseline",
   "target": "branch",
-  "enforcement": "evaluate",
+  "enforcement": "active",
   "conditions": {
     "ref_name": { "include": ["refs/heads/main"], "exclude": [] }
   },

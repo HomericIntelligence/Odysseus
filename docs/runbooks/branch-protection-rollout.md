@@ -12,17 +12,21 @@ ruleset after a change.
 
 1. In the new repo, create `.github/workflows/_required.yml` using
    `research/ProjectScylla/.github/workflows/_required.yml` as the reference.
-   The workflow must be named `Required Checks` and have exactly 9 jobs whose
-   `name:` fields match the contexts in `configs/github/canonical-checks.md`.
+   The workflow must be named `Required Checks` and have `name:` fields that
+   match the contexts in `configs/github/canonical-checks.md`. There are
+   **8 required contexts**; `_required.yml` also defines a 9th job
+   (`forbid-suppressions`) that is intentionally NOT a required context.
    Each job must invoke a real validator for that repo's stack.
 
-2. Open a PR, verify all 9 contexts appear in the PR checks UI once CI runs,
-   then merge.
+2. Open a PR, verify all 8 required contexts appear in the PR checks UI once CI
+   runs, then merge.
 
-3. Apply the ruleset to the new repo:
+3. Apply the ruleset to the new repo in shadow (evaluate) mode first:
    ```bash
-   ./tools/github/apply-repo-rulesets.sh --repos <NewRepo>
+   ./tools/github/apply-repo-rulesets.sh --evaluate --repos <NewRepo>
    ```
+   (The bare invocation now applies the canonical `repo-ruleset.json`, which is
+   `active`; pass `--evaluate` for the shadow pass.)
 
 4. Observe evaluate mode for one PR cycle, then flip to active:
    ```bash
@@ -32,8 +36,10 @@ ruleset after a change.
 ## Re-applying the ruleset to all repos
 
 ```bash
-# Evaluate mode first (shadow enforcement — reports but doesn't block)
-./tools/github/apply-repo-rulesets.sh
+# Evaluate mode first (shadow enforcement — reports but doesn't block).
+# NOTE: the bare invocation applies the canonical repo-ruleset.json, which is
+# now "active"; use --evaluate explicitly for the shadow pass.
+./tools/github/apply-repo-rulesets.sh --evaluate
 
 # Check evaluate results
 gh api "repos/HomericIntelligence/<repo>/rulesets/rule-suites?ref=refs/heads/main" \
@@ -66,8 +72,12 @@ by the old context list during a ruleset migration. Use sparingly.
 
 Re-applying evaluate mode is instant and safe:
 ```bash
-./tools/github/apply-repo-rulesets.sh   # reverts to evaluate
+./tools/github/apply-repo-rulesets.sh --evaluate   # or: --repos <repo>
 ```
+
+> Note: `org-ruleset.json` is not applied on the current GitHub plan —
+> `gh api orgs/HomericIntelligence/rulesets` returns 404 / requires `admin:org`.
+> Per-repo rulesets (`repos/<org>/<repo>/rulesets`) are the enforcing path.
 
 To remove the ruleset entirely from a single repo:
 ```bash
