@@ -282,9 +282,6 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
 
-      - name: Install yamllint (for validate-configs recipe)
-        run: pip install --user yamllint
-
       - name: Run validate-configs (canonical build artifact for meta-repo)
         run: just validate-configs
 
