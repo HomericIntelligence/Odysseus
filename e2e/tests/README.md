@@ -6,7 +6,7 @@
 
 Maps each scenario test in `e2e/tests/` to the scenario IDs and the system properties it verifies. Tests marked **T4** are partial on the default topology and fully exercised only under the T4 (multi-container) topology — i.e. intentionally deferred on single-node runs.
 
-**Totals:** 37 tests, 65 unique scenario IDs covered, 7 T4-only (deferred on the default topology).
+**Totals:** 38 tests, 65 unique scenario IDs covered, 7 T4-only (deferred on the default topology).
 
 ## Chaos
 
@@ -69,3 +69,4 @@ Maps each scenario test in `e2e/tests/` to the scenario IDs and the system prope
 | `malformed-nats.sh` | Malformed NATS Messages | D11, D12 | services ignore garbage NATS messages gracefully | Any |
 | `malformed-rest.sh` | Malformed REST API Payloads | D01, D02, D03, D06 | server gracefully rejects bad input | Any |
 | `resource-exhaustion.sh` | Resource Exhaustion | D10 | 10000 rapid tasks — Agamemnon doesn't OOM | Any |
+| `test-apikey-not-on-cmdline.sh` | API Key Not On Command Line | — | the ANTHROPIC_API_KEY value never appears on the container command line | Any |

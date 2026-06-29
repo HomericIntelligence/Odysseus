@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Issue #180: the ANTHROPIC_API_KEY *value* must never appear on the container
-# command line (visible via `ps auxww` / `/proc/<pid>/cmdline`).
+# Security: API Key Not On Command Line (#180)
+# Validates: the ANTHROPIC_API_KEY value never appears on the container command line
+# (visible via `ps auxww` / `/proc/<pid>/cmdline`).
 set -euo pipefail
 cd "$(dirname "$0")/../../.."   # repo root
 FAIL=0
