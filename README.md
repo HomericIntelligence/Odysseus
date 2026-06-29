@@ -1,5 +1,12 @@
 # Odysseus
 
+[![Build](https://github.com/HomericIntelligence/Odysseus/actions/workflows/build.yml/badge.svg)](https://github.com/HomericIntelligence/Odysseus/actions/workflows/build.yml)
+[![CI](https://github.com/HomericIntelligence/Odysseus/actions/workflows/ci.yml/badge.svg)](https://github.com/HomericIntelligence/Odysseus/actions/workflows/ci.yml)
+[![Ecosystem Health](https://github.com/HomericIntelligence/Odysseus/actions/workflows/ecosystem-health.yml/badge.svg)](https://github.com/HomericIntelligence/Odysseus/actions/workflows/ecosystem-health.yml)
+[![Install Test](https://github.com/HomericIntelligence/Odysseus/actions/workflows/install-test.yml/badge.svg)](https://github.com/HomericIntelligence/Odysseus/actions/workflows/install-test.yml)
+[![Release](https://github.com/HomericIntelligence/Odysseus/actions/workflows/release.yml/badge.svg)](https://github.com/HomericIntelligence/Odysseus/actions/workflows/release.yml)
+[![Submodule Update Check](https://github.com/HomericIntelligence/Odysseus/actions/workflows/submodule-update-check.yml/badge.svg)](https://github.com/HomericIntelligence/Odysseus/actions/workflows/submodule-update-check.yml)
+
 Odysseus is the meta-repo and unified architecture hub for the HomericIntelligence distributed agent mesh. It contains documentation, Architecture Decision Records (ADRs), shared configurations, runbooks, and all other HomericIntelligence repositories as git submodules.
 
 ## Purpose
@@ -55,6 +62,26 @@ Odysseus/
 ├── justfile
 └── pixi.toml
 ```
+
+### Ecosystem CI Status
+
+| Repository | CI Status |
+|---|---|
+| [Odysseus](https://github.com/HomericIntelligence/Odysseus) | [![CI](https://github.com/HomericIntelligence/Odysseus/actions/workflows/ci.yml/badge.svg)](https://github.com/HomericIntelligence/Odysseus/actions/workflows/ci.yml) |
+| [AchaeanFleet](https://github.com/HomericIntelligence/AchaeanFleet) | [![CI](https://github.com/HomericIntelligence/AchaeanFleet/actions/workflows/ci.yml/badge.svg)](https://github.com/HomericIntelligence/AchaeanFleet/actions/workflows/ci.yml) |
+| [ProjectArgus](https://github.com/HomericIntelligence/ProjectArgus) | [![CI](https://github.com/HomericIntelligence/ProjectArgus/actions/workflows/ci.yml/badge.svg)](https://github.com/HomericIntelligence/ProjectArgus/actions/workflows/ci.yml) |
+| [ProjectHermes](https://github.com/HomericIntelligence/ProjectHermes) | [![CI](https://github.com/HomericIntelligence/ProjectHermes/actions/workflows/ci.yml/badge.svg)](https://github.com/HomericIntelligence/ProjectHermes/actions/workflows/ci.yml) |
+| [ProjectAgamemnon](https://github.com/HomericIntelligence/ProjectAgamemnon) | [![Build & Test](https://github.com/HomericIntelligence/ProjectAgamemnon/actions/workflows/build-test.yml/badge.svg)](https://github.com/HomericIntelligence/ProjectAgamemnon/actions/workflows/build-test.yml) |
+| [ProjectNestor](https://github.com/HomericIntelligence/ProjectNestor) | [![Build & Test](https://github.com/HomericIntelligence/ProjectNestor/actions/workflows/build-test.yml/badge.svg)](https://github.com/HomericIntelligence/ProjectNestor/actions/workflows/build-test.yml) |
+| [ProjectTelemachy](https://github.com/HomericIntelligence/ProjectTelemachy) | [![CI](https://github.com/HomericIntelligence/ProjectTelemachy/actions/workflows/ci.yml/badge.svg)](https://github.com/HomericIntelligence/ProjectTelemachy/actions/workflows/ci.yml) |
+| [ProjectKeystone](https://github.com/HomericIntelligence/ProjectKeystone) | [![Release Please](https://github.com/HomericIntelligence/ProjectKeystone/actions/workflows/release-please.yml/badge.svg)](https://github.com/HomericIntelligence/ProjectKeystone/actions/workflows/release-please.yml) |
+| [Myrmidons](https://github.com/HomericIntelligence/Myrmidons) | [![Test](https://github.com/HomericIntelligence/Myrmidons/actions/workflows/test.yml/badge.svg)](https://github.com/HomericIntelligence/Myrmidons/actions/workflows/test.yml) |
+| [ProjectProteus](https://github.com/HomericIntelligence/ProjectProteus) | [![CI](https://github.com/HomericIntelligence/ProjectProteus/actions/workflows/ci.yml/badge.svg)](https://github.com/HomericIntelligence/ProjectProteus/actions/workflows/ci.yml) |
+| [ProjectOdyssey](https://github.com/HomericIntelligence/ProjectOdyssey) | [![CI](https://github.com/HomericIntelligence/ProjectOdyssey/actions/workflows/ci.yml/badge.svg)](https://github.com/HomericIntelligence/ProjectOdyssey/actions/workflows/ci.yml) |
+| [ProjectScylla](https://github.com/HomericIntelligence/ProjectScylla) | [![Test](https://github.com/HomericIntelligence/ProjectScylla/actions/workflows/test.yml/badge.svg)](https://github.com/HomericIntelligence/ProjectScylla/actions/workflows/test.yml) |
+| [ProjectMnemosyne](https://github.com/HomericIntelligence/ProjectMnemosyne) | [![Validate Plugins](https://github.com/HomericIntelligence/ProjectMnemosyne/actions/workflows/validate-plugins.yml/badge.svg)](https://github.com/HomericIntelligence/ProjectMnemosyne/actions/workflows/validate-plugins.yml) |
+| [ProjectHephaestus](https://github.com/HomericIntelligence/ProjectHephaestus) | [![Test](https://github.com/HomericIntelligence/ProjectHephaestus/actions/workflows/test.yml/badge.svg)](https://github.com/HomericIntelligence/ProjectHephaestus/actions/workflows/test.yml) |
+| [ProjectCharybdis](https://github.com/HomericIntelligence/ProjectCharybdis) | [![Build & Test](https://github.com/HomericIntelligence/ProjectCharybdis/actions/workflows/build-test.yml/badge.svg)](https://github.com/HomericIntelligence/ProjectCharybdis/actions/workflows/build-test.yml) |
 
 ## Common Commands
 
