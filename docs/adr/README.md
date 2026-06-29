@@ -18,6 +18,7 @@ choice, its context, decision rationale, and consequences.
 | [008](008-nats-tls-encryption.md) | Require TLS for All NATS Inter-Service Communication | Proposed | — | — |
 | [009](009-defer-multi-host-nomad-scheduling.md) | Defer Multi-Host Nomad Scheduling to a Future Phase | Proposed | — | — |
 | [011](011-extract-python-orchestration-to-agamemnon.md) | Extract Python Orchestration Layer from Keystone to ProjectAgamemnon | Accepted | — | — |
+| [012](012-slo-sla-definitions.md) | Define SLO/SLA Targets for the Agent Mesh | Proposed | — | — |
 
 ## How to Create a New ADR
 
