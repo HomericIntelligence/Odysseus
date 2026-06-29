@@ -65,7 +65,7 @@ jobs:
       - name: Install nats-server
         run: |
           curl -fsSL https://github.com/nats-io/nats-server/releases/download/v2.10.22/nats-server-v2.10.22-linux-amd64.tar.gz \
-            | tar xz --strip-components=1 -C /usr/local/bin '*/nats-server'
+            | tar xz --wildcards --strip-components=1 -C /usr/local/bin '*/nats-server'
 
       - name: NATS config parses + fail-closed on unset token
         run: |
