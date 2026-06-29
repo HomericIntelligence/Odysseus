@@ -172,7 +172,7 @@ test: _test-agamemnon _test-nestor _test-charybdis _test-keystone
 
 _test-agamemnon:
     @echo "--- Testing control/ProjectAgamemnon ---"
-    ctest --test-dir "{{BUILD_ROOT}}/ProjectAgamemnon" --output-on-failure
+    ctest --test-dir "{{BUILD_ROOT}}/ProjectAgamemnon" --output-on-failure --no-tests=error
 
 _test-nestor:
     @echo "--- Testing control/ProjectNestor ---"
