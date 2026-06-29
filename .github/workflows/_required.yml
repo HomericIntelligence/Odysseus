@@ -319,13 +319,18 @@ jobs:
       - name: Assert each ruleset config holds its intended enforcement value
         run: |
           set -euo pipefail
-          # The two-form split follows the base/active filename convention:
-          # base *-ruleset.json are "evaluate"; *-active.json are "active".
+          # Enforcement-value contract (issue #177): the canonical bare
+          # *-ruleset.json files are the live/enforcing default and must be
+          # "active" so an idempotent re-apply never silently downgrades the
+          # live ruleset back to shadow mode. *-active.json are also "active".
+          # The explicit *-evaluate.json files carry the "evaluate" (shadow)
+          # form for the deliberate rollback/shadow path (--evaluate flag).
           # Catches silent drift in BOTH directions (downgrade and upgrade).
           declare -A expected=(
-            [configs/github/repo-ruleset.json]=evaluate
+            [configs/github/repo-ruleset.json]=active
             [configs/github/repo-ruleset-active.json]=active
-            [configs/github/org-ruleset.json]=evaluate
+            [configs/github/repo-ruleset-evaluate.json]=evaluate
+            [configs/github/org-ruleset.json]=active
             [configs/github/org-ruleset-active.json]=active
           )
           fail=0
@@ -339,7 +344,7 @@ jobs:
             fi
           done
           [ "$fail" -eq 0 ] || { echo "FAILED: ruleset enforcement drift detected" >&2; exit 1; }
-          echo "PASSED: all 4 ruleset configs hold their intended enforcement"
+          echo "PASSED: all ruleset configs hold their intended enforcement"
 
   deps-version-sync:
     name: deps/version-sync

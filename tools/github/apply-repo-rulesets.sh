@@ -1,24 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# apply-repo-rulesets.sh [--active] [--repos repo1,repo2,...]
+# apply-repo-rulesets.sh [--active|--evaluate] [--repos repo1,repo2,...]
 # Creates or updates the homeric-main-baseline branch ruleset on every repo.
 # Usage:
-#   ./tools/github/apply-repo-rulesets.sh                    # evaluate mode, all repos
+#   ./tools/github/apply-repo-rulesets.sh                    # canonical (active) mode, all repos
 #   ./tools/github/apply-repo-rulesets.sh --active           # active (enforcing) mode, all repos
-#   ./tools/github/apply-repo-rulesets.sh --repos Foo,Bar    # evaluate mode, specific repos only
+#   ./tools/github/apply-repo-rulesets.sh --evaluate         # evaluate (shadow) mode, all repos
+#   ./tools/github/apply-repo-rulesets.sh --repos Foo,Bar    # canonical mode, specific repos only
 
 ORG="HomericIntelligence"
 RULESET_NAME="homeric-main-baseline"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-ENFORCEMENT="evaluate"
+ENFORCEMENT=""
 REPOS_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
     --active)        ENFORCEMENT="active"; shift ;;
+    --evaluate)      ENFORCEMENT="evaluate"; shift ;;
     --repos)         REPOS_OVERRIDE="$2"; shift 2 ;;
     --repos=*)       REPOS_OVERRIDE="${1#--repos=}"; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
@@ -28,9 +30,12 @@ done
 if [[ "$ENFORCEMENT" == "active" ]]; then
   JSON_FILE="$REPO_ROOT/configs/github/repo-ruleset-active.json"
   echo "Applying in ACTIVE (enforcing) mode"
+elif [[ "$ENFORCEMENT" == "evaluate" ]]; then
+  JSON_FILE="$REPO_ROOT/configs/github/repo-ruleset-evaluate.json"
+  echo "Applying in EVALUATE (shadow) mode"
 else
   JSON_FILE="$REPO_ROOT/configs/github/repo-ruleset.json"
-  echo "Applying in EVALUATE mode"
+  echo "Applying canonical ruleset ($(jq -r .enforcement "$JSON_FILE") mode)"
 fi
 
 if [[ -n "$REPOS_OVERRIDE" ]]; then

@@ -45,6 +45,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Branch protection: require 1 approving review on `main` across all four canonical rulesets (closes #178).
 
 ### Fixed
+- GitHub ruleset configs now match the enforcing live state: `repo-ruleset.json`
+  and `org-ruleset.json` set `"enforcement": "active"` (#177), preventing an
+  idempotent re-apply from downgrading the live repo ruleset back to `evaluate`.
+  Corrected `org-ruleset.json` contexts to the canonical bare-name +
+  `integration_id` form. Added `repo-ruleset-evaluate.json` + `--evaluate`
+  apply flag so the evaluate-mode rollback path is preserved.
 - `install.sh` now extends `PATH` before Phase 1 detection so prior-installed
   tools are found (#271).
 - CI: skip `ProjectOdyssey` in idempotent-build when Podman is unavailable
