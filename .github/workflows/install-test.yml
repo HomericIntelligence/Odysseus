@@ -1,6 +1,10 @@
 name: Install test
 
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   schedule:
     - cron: "0 6 * * 1"  # Every Monday at 06:00 UTC
   workflow_dispatch:
@@ -11,6 +15,53 @@ on:
         default: ""
 
 jobs:
+  # Canonical `install` check for the 8-category CI naming scheme
+  # (docs/ci-naming-convention.md). The full multi-OS Docker matrix below is
+  # heavy (45 min × 3 images) and stays gated to schedule / workflow_dispatch.
+  # This lightweight smoke job runs on every main push/PR so the Ecosystem CI
+  # Status board's **install** column lights up quickly: it exercises the
+  # installer's check-only detection path (no sudo, no apt, no Docker) and
+  # asserts the installer is structurally sound and produces its detection
+  # summary. Check-only mode exits 1 when components are missing on a bare
+  # runner (expected), so we assert on the produced summary, not the exit code.
+  install:
+    name: install
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+
+      - name: Installer script is valid bash
+        run: bash -n install.sh
+
+      - name: Reject unknown flags (CLI contract)
+        run: |
+          set -euo pipefail
+          if bash install.sh --definitely-not-a-flag >/tmp/badflag.log 2>&1; then
+            echo "::error::install.sh accepted an unknown flag (expected non-zero exit)"
+            cat /tmp/badflag.log
+            exit 1
+          fi
+          grep -q "Unknown option" /tmp/badflag.log \
+            || { echo "::error::install.sh did not report 'Unknown option'"; cat /tmp/badflag.log; exit 1; }
+          echo "OK: unknown flag rejected"
+
+      - name: Check-only detection produces a summary (install smoke test)
+        run: |
+          set -uo pipefail
+          # Check-only mode (no --install): probes components, never escalates.
+          # Exit code is 1 when components are missing on a bare runner — that
+          # is the expected/healthy signal, so we assert on the summary output.
+          bash install.sh >/tmp/install-check.log 2>&1
+          rc=$?
+          echo "install.sh check-only exit code: $rc"
+          cat /tmp/install-check.log
+          grep -q "Detection summary:" /tmp/install-check.log \
+            || { echo "::error::install.sh check-only did not produce a 'Detection summary'"; exit 1; }
+          grep -q "Check-only mode" /tmp/install-check.log \
+            || { echo "::error::install.sh did not run in check-only mode"; exit 1; }
+          echo "OK: installer check-only smoke test passed (exit $rc tolerated)"
+
   install-test:
     name: Install (${{ matrix.os }})
     runs-on: ubuntu-latest

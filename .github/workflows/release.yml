@@ -2,15 +2,62 @@ name: Release
 
 on:
   push:
+    branches: [main]
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  # Canonical `release` check for the 8-category CI naming scheme
+  # (docs/ci-naming-convention.md). Actual publishing is tag-gated (the
+  # validate/publish jobs below run only on a vX.Y.Z tag push). This
+  # lightweight dry-run runs on every main push/PR so the Ecosystem CI Status
+  # board's **release** column lights up: it exercises the same release-gating
+  # logic (CHANGELOG shape + release-contract regression tests + release-notes
+  # extraction) WITHOUT creating a GitHub Release, so release regressions are
+  # caught on `main` before a tag is ever cut.
+  release:
+    name: release
+    # Skip on tag pushes — the real validate/publish jobs handle tags.
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: CHANGELOG has an Unreleased section
+        run: |
+          set -euo pipefail
+          if ! grep -q "^## \[Unreleased\]$" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md missing '## [Unreleased]' section"
+            exit 1
+          fi
+          echo "OK: CHANGELOG has an Unreleased section"
+
+      - name: Release-contract regression tests (dry-run)
+        run: bash tests/release/release.test.sh
+
+      - name: Release-notes extraction is wired (dry-run, no publish)
+        run: |
+          set -euo pipefail
+          # Verify the release-notes extractor exists and is valid; do not
+          # publish anything. The full extraction runs only on a real tag.
+          test -f scripts/extract_release_notes.py
+          python3 -c "import py_compile; py_compile.compile('scripts/extract_release_notes.py', doraise=True)"
+          echo "OK: release notes extractor is present and importable"
+
   validate:
     name: validate-release-assets
+    # Tag-only: real release validation runs only when a vX.Y.Z tag is pushed.
+    # On main push/PR the lightweight `release` dry-run above stands in.
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -57,6 +104,8 @@ jobs:
 
   publish:
     name: publish-release
+    # Tag-only: never publishes a GitHub Release on main push/PR.
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: validate

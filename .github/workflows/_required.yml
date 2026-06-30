@@ -233,6 +233,32 @@ jobs:
         run: |
           git submodule foreach 'git ls-remote --exit-code origin HEAD > /dev/null && echo "OK: $name" || echo "WARN: $name unreachable"'
 
+  test:
+    # Aggregate test gate for the canonical 8-category CI naming scheme
+    # (docs/ci-naming-convention.md). The split suites above (unit-tests,
+    # integration-tests) remain as sub-checks; this job emits the canonical
+    # `test` check-run so the Ecosystem CI Status board's **test** column can
+    # target a single name. It is a pure gate: it fans-in the two suites and
+    # fails if either failed.
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [unit-tests, integration-tests]
+    if: ${{ always() }}
+    steps:
+      - name: Aggregate unit-tests + integration-tests results
+        run: |
+          set -euo pipefail
+          unit="${{ needs.unit-tests.result }}"
+          integ="${{ needs.integration-tests.result }}"
+          echo "unit-tests:        $unit"
+          echo "integration-tests: $integ"
+          if [ "$unit" != "success" ] || [ "$integ" != "success" ]; then
+            echo "::error::Aggregate test gate failed (unit=$unit integration=$integ)"
+            exit 1
+          fi
+          echo "OK: all test suites passed"
+
   security-dependency-scan:
     name: security/dependency-scan
     runs-on: ubuntu-latest
