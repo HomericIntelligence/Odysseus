@@ -60,6 +60,10 @@ ecosystem-health:
 ecosystem-health-update:
     @bash scripts/ecosystem-health.sh --output docs/ecosystem-status.md
 
+# Regenerate the 8-category Ecosystem CI Status board in the README from live check-runs
+ecosystem-table:
+    @bash scripts/gen-ecosystem-table.sh --inject README.md
+
 # ===========================================================================
 # Build
 # ===========================================================================
