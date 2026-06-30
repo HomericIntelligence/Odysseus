@@ -269,8 +269,8 @@ def _build_container_cmd_scoped(
     if scope in ("plan", "review"):
         # Read-only workspace
         volume_mounts = ["-v", f"{cwd}:{CONTAINER_WORKSPACE}:ro"]
-    elif scope in ("test", "implement"):
-        # Read-write workspace
+    elif scope in ("test", "implement", "ship-final"):
+        # Read-write workspace (ship-final edits the root README badge table)
         volume_mounts = ["-v", f"{cwd}:{CONTAINER_WORKSPACE}"]
     elif scope == "ship":
         # Read-only workspace + read-write .git
@@ -313,6 +313,10 @@ SCOPE_TOOLS = {
     "test": "Bash,Read,Write,Edit,Glob,Grep",
     "implement": "Bash,Read,Write,Edit,Glob,Grep",
     "ship": "Bash",
+    # ship-final must EDIT the Odysseus root README (badge table), not just run
+    # git/gh — the per-repo "ship" scope is Bash-only on purpose, but the final
+    # meta-repo ship needs file-editing tools too.
+    "ship-final": "Bash,Read,Write,Edit,Glob,Grep",
 }
 
 
@@ -971,10 +975,19 @@ Per-repo PRs already created:
 Steps:
 1. git fetch origin main
 2. git checkout -b {branch} origin/main
-3. Make any Odysseus-root changes the issue requires (do this per the issue body).
+3. REQUIRED — edit the Odysseus root README.md to add the consolidated CI/CD
+   badge table the issue asks for. Do NOT skip this; submodule bumps alone are
+   NOT sufficient. Specifically:
+   a. Read README.md and find the "Repository Layout" section (or the most
+      appropriate section) to host the table.
+   b. For EACH ecosystem repo, read its `.github/workflows/` to find its primary
+      CI workflow filename, then add a table row: repo name (linked to its GitHub
+      repo) + its primary CI status badge in the canonical form
+      `[![CI](https://github.com/HomericIntelligence/<Repo>/actions/workflows/<wf>.yml/badge.svg)](…)`.
+   c. Verify the README diff actually contains badge.svg lines before committing.
 4. Bump submodule pins for the repos that shipped:
 {shipped_paths}
-5. Stage: git add -A {stage_paths} (plus any Odysseus-root files you changed)
+5. Stage: git add -A README.md {stage_paths}
 6. Commit with a subject summarizing the issue's Odysseus-level change, body:
 
    Closes #{issue_number}
@@ -992,7 +1005,7 @@ Generated with [Claude Code](https://claude.com/claude-code)"
 
 Output the PR URL."""
 
-    result = invoke_claude(prompt, scope="ship", stage="ship-final", task_id=task_id, repo_slug="odysseus")
+    result = invoke_claude(prompt, scope="ship-final", stage="ship-final", task_id=task_id, repo_slug="odysseus")
     post_issue_comment(issue_number, "ship-final", 0, f"**Odysseus shipped!**\n\n{result}")
 
     # Publish completion
