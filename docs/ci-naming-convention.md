@@ -1,0 +1,74 @@
+# CI Status Naming Convention
+
+This document is the **single source of truth** for how every HomericIntelligence repository names
+its CI status checks, so the [Ecosystem CI Status board](../README.md#ecosystem-ci-status) at the top
+of the Odysseus README can show, at a glance, **exactly which category is failing** for each repo.
+
+## The 8 canonical categories
+
+Every repo's CI surface is grouped into eight columns. Each category has a **canonical check-run
+name** that the repo's workflow job must emit (the GitHub check-run `name:` field), so a per-job
+status badge can target it.
+
+| Category | Canonical check-run name | What it covers |
+|----------|--------------------------|----------------|
+| **build** | `build` | Compiles / builds the project artifacts (any language). Multi-variant builds may use `build (<variant>)` but MUST also surface a top-level `build`. |
+| **test** | `test` | Runs the test suites. Repos with split suites keep `unit-tests` / `integration-tests` AND surface an aggregate `test` (or map the primary suite to `test`). |
+| **lint** | `lint` | Static style/format checks (ruff, clang-tidy, shellcheck, markdownlint, etc.). The aggregate gate is `lint`. |
+| **package** | `package` | Builds the distributable: sdist/wheel (Python), container image, or release archive. |
+| **install** | `install` | Verifies a clean install of the built artifact works (install smoke test). |
+| **release** | `release` | Release automation (release-please, publish-artifacts). May be `release` or a release-tag-gated job that still emits `release` on `main`. |
+| **security** | `security` | Aggregate of security scans. Sub-checks stay namespaced: `security/dependency-scan`, `security/secrets-scan`, `security/sast-scan`, `security/codeql-<lang>`. The board's **security** cell targets the namespace. |
+| **custom** | (n/a — catch-all) | **Every other status check the repo emits** that does not fit the 7 named categories — e.g. `deps/version-sync`, `schema-validation`, `validate configs`, `submodule-update-check`, `docker-build`, `openapi-drift`, `no-latest-tags`, `symlink-check`, `validate-plugins`, `forbid-suppressions`, `justfile-check`. The board lists them comma-joined in the **custom** cell. |
+
+## Grouping rule (mapping existing → canonical)
+
+The naming-unification work renames/aggregates today's inconsistent names into the canonical ones:
+
+| Canonical | Existing names that map into it |
+|-----------|---------------------------------|
+| build | `build`, `idempotent-build`, the build half of `build-test` |
+| test | `unit-tests`, `integration-tests`, `test`, `bats`, the test half of `build-test` |
+| lint | `lint`, `markdownlint`, `forbid-suppressions`, `justfile-check`, `hadolint`, ruff/shellcheck jobs |
+| package | sdist/wheel/container-image/SBOM build jobs |
+| install | `install-test`, `install` |
+| release | `release`, `release-please`, `Release Please` |
+| security | `security/dependency-scan`, `security/secrets-scan`, `security/sast-scan`, CodeQL (`Analyze (python)`, `CodeQL (cpp)`, `CodeQL / javascript-typescript` → all canonicalized to `security/codeql-<lang>`), Trivy, gitleaks, Semgrep |
+| custom | everything not matched above |
+
+**security/CodeQL note:** today the same scan is emitted under four different names across repos
+(`security/dependency-scan` vs `Analyze (python)` vs `CodeQL (cpp)` vs `CodeQL / javascript-typescript`).
+These are canonicalized to the `security/*` namespace.
+
+## Badge mechanism
+
+The board uses **shields.io per-check-run endpoint badges** (NOT GitHub-native per-workflow-file
+badges, which only show a whole file's status). One badge per category, querying the canonical
+check-run name on `main`:
+
+```text
+https://img.shields.io/github/check-runs/HomericIntelligence/<repo>/main?nameFilter=<canonical-name>&label=<category>
+```
+
+For the **security** namespace cell, the badge targets the aggregate namespace check (or the primary
+`security/dependency-scan`). For **custom**, each leftover check gets its own small badge or is listed
+by name.
+
+## Gaps: silent workflows vs truly-missing categories
+
+When a repo lacks a canonical category, there are **two distinct situations** — handle them
+differently:
+
+1. **Silent existing workflow** — a `release.yml` / `install-test.yml` exists but emits **no check-run
+   on `main`** (wrong trigger, or only runs on tags). **Fix**: wire the workflow to run on `main`
+   push/PR and emit the canonical check-run name. This is a real CI fix.
+2. **Truly absent category** — no job/workflow at all. **Fix**: file a GitHub issue in that repo
+   ("Add canonical `<category>` CI check") naming the expected canonical check; the board's cell links
+   the issue so the gap is visible. Do **not** fabricate a passing job.
+
+## How the board stays accurate
+
+The board is **generated**, not hand-maintained: `scripts/gen-ecosystem-table.sh` derives every cell
+from each repo's live check-runs on `main` (via the GitHub API), mapping emitted names to the 8
+categories per the grouping rule above. Run it via `just ecosystem-table` (or it regenerates in CI).
+This prevents the drift that left the previous hand-edited table inconsistent.
