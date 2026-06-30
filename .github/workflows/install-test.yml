@@ -51,9 +51,14 @@ jobs:
           set -uo pipefail
           # Check-only mode (no --install): probes components, never escalates.
           # Exit code is 1 when components are missing on a bare runner — that
-          # is the expected/healthy signal, so we assert on the summary output.
-          bash install.sh >/tmp/install-check.log 2>&1
-          rc=$?
+          # is the expected/healthy signal, so we assert on the summary output,
+          # not the exit code. NOTE: GitHub runs steps with `bash -e`, so we
+          # capture the (expected non-zero) exit explicitly via `|| rc=$?`
+          # rather than letting `-e` abort the step. This is exit-code capture,
+          # not failure suppression — we still fail below if the summary is
+          # absent.
+          rc=0
+          bash install.sh >/tmp/install-check.log 2>&1 || rc=$?
           echo "install.sh check-only exit code: $rc"
           cat /tmp/install-check.log
           grep -q "Detection summary:" /tmp/install-check.log \
