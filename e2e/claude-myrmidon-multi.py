@@ -207,10 +207,18 @@ def now_iso():
     return datetime.now(timezone.utc).strftime("%FT%TZ")
 
 
+# Host that this harness process (and therefore the local podman stage containers
+# it launches) runs on. Stage compute currently executes wherever the harness runs
+# — NATS is the coordination plane, but `podman run` is LOCAL to this host. Logging
+# it makes the actual execution locality visible instead of implied.
+import socket as _socket
+EXEC_HOST = os.environ.get("MESH_EXEC_HOST", _socket.gethostname())
+
+
 def log(stage, msg):
     color = STAGE_COLORS.get(stage, NC)
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-    print(f"{DIM}{ts}{NC} {color}{BOLD}[{stage.upper()}]{NC} {msg}", flush=True)
+    print(f"{DIM}{ts}{NC} {DIM}@{EXEC_HOST}{NC} {color}{BOLD}[{stage.upper()}]{NC} {msg}", flush=True)
 
 
 def log_memory(stage: str):
@@ -351,10 +359,10 @@ def invoke_claude(
     ]
 
     if is_resume:
-        log("claude", f"Resuming session {session_id[:8]}... scope={scope} ({len(prompt)} chars)")
+        log("claude", f"Resuming session {session_id[:8]}... scope={scope} on {CONTAINER_RUNTIME}@{EXEC_HOST} ({len(prompt)} chars)")
         claude_args.extend(["--resume", session_id])
     else:
-        log("claude", f"Starting new session scope={scope} ({len(prompt)} chars)")
+        log("claude", f"Starting new session scope={scope} on {CONTAINER_RUNTIME}@{EXEC_HOST} ({len(prompt)} chars)")
         if session_id:
             claude_args.extend(["--session-id", session_id])
             _created_sessions.add(session_id)
@@ -489,6 +497,7 @@ async def publish_log(js, stage: str, message: str, task_id: str = "",
         "message": message,
         "task_id": task_id,
         "team_id": team_id,
+        "exec_host": EXEC_HOST,
         "timestamp": now_iso(),
     })
 
