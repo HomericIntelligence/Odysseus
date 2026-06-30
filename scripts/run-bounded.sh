@@ -31,7 +31,12 @@ VMEM_KB="${RUN_BOUNDED_VMEM_KB:-5242880}"
 if [[ "$VMEM_KB" != "0" ]]; then
     # Best-effort: if the soft limit is already lower, ulimit -v will refuse to
     # raise it — that is fine, we only ever want to LOWER the ceiling here.
-    ulimit -v "$VMEM_KB" 2>/dev/null || true
+    # Explicit if-guard instead of `|| true` (see docs/runbooks/no-silent-failures.md,
+    # Bucket B): a refusal to lower is expected and ignorable, but we log anything
+    # unexpected to stderr rather than discarding every error.
+    if ! ulimit -v "$VMEM_KB" 2>/dev/null; then
+        echo "warn: could not set vmem cap to ${VMEM_KB} KiB (already lower or unsupported); continuing" >&2
+    fi
 fi
 
 exec "$@"
