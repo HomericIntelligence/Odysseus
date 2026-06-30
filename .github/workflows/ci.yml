@@ -76,6 +76,11 @@ jobs:
           sudo cp /tmp/cert.pem /etc/nats/certs/server-cert.pem
           sudo cp /tmp/key.pem  /etc/nats/certs/server-key.pem
           sudo cp /tmp/cert.pem /etc/nats/certs/ca.pem
+          # nats-server -t runs as the non-root CI user; `sudo cp` leaves the
+          # files root-owned 0600, so the key was unreadable (permission denied
+          # parsing the X509 pair). Make the dummy validation certs world-readable
+          # (key 0644 is fine — these are throwaway self-signed CI certs).
+          sudo chmod 644 /etc/nats/certs/server-cert.pem /etc/nats/certs/server-key.pem /etc/nats/certs/ca.pem
           NATS_CLIENT_TOKEN=x NATS_LEAF_USER=u NATS_LEAF_PASSWORD=p NATS_CLUSTER_USER=u NATS_CLUSTER_PASSWORD=p nats-server -c configs/nats/server.conf -t
 
       - name: Grafana credential-gate self-test (#179)

@@ -101,7 +101,14 @@ build_cpp_repo() {
         # override with ODYSSEUS_BUILD_VMEM_KB (0 disables the cap).
         _vmem_kb="${ODYSSEUS_BUILD_VMEM_KB:-6291456}"
         if [[ "$_vmem_kb" != "0" ]]; then
-            ulimit -v "$_vmem_kb" 2>/dev/null || true
+            # `ulimit -v` fails only when RAISING a soft rlimit; we only ever
+            # LOWER. Guard on the current limit so the call is always a genuine
+            # lowering and cannot fail — removing the need for any suppression
+            # (docs/runbooks/no-silent-failures.md).
+            _cur_vmem="$(ulimit -v)"   # "unlimited" or a KiB integer
+            if [[ "$_cur_vmem" == "unlimited" || "$_cur_vmem" -gt "$_vmem_kb" ]]; then
+                ulimit -v "$_vmem_kb"
+            fi
         fi
 
         # ── Step 1: Conan deps ────────────────────────────────────────────────
