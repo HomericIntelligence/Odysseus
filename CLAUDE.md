@@ -87,6 +87,32 @@ Odysseus/
 - Runbooks should be written as numbered steps that can be executed top-to-bottom without prior context.
 - **ai-maestro has been fully removed per ADR-006.** ProjectAgamemnon replaces its task coordination role.
 
+## Resource limits & concurrency on the `hermes` host
+
+The dev/CI host (WSL2, hostname `hermes`) is bounded at **~16 GB RAM / 8 cores** (no `memory=`
+cap in `.wslconfig`, so WSL sees ~50% of the ~32 GB Windows host). The two heaviest operations
+here are **`pixi install`/`pixi lock`** (a conda+pypi SAT solve, ~0.5–1 GB RAM each) and
+**C++ builds** (`cmake --build`, 1.5–3 GB + multi-core each). Running many of these at once will
+exhaust RAM and the 16 GB swap, thrash, and **hang the whole WSL VM** (this has happened — a
+16-repo Myrmidon fan-out with no throttle took the host down). Observe these limits:
+
+- **≤3 concurrent heavy agents.** Do not fan out more than **3** background agents/sessions that
+  each run `pixi`/`cmake`/`podman build` simultaneously. Prefer the harness `Workflow` primitive
+  (it caps concurrency and queues the rest) or an explicit wave pattern over fire-and-forget
+  parallel `Agent(run_in_background:true)` calls. `e2e/claude-myrmidon-multi.py` enforces this via
+  `HERMES_MAX_CONCURRENT_AGENTS` (default 3).
+- **Memory-bound heavy commands** with `ulimit -v` so an over-budget process fails recoverably
+  instead of OOM-hanging the VM: `scripts/run-bounded.sh <cmd>` (default ~5 GiB cap), e.g.
+  `scripts/run-bounded.sh pixi install`. Never run a large `pixi`/build/`pytest` unbounded in
+  parallel.
+- **Cap build parallelism**, don't use `-j$(nproc)` across concurrent agents. Set
+  `ODYSSEUS_BUILD_JOBS=2` (the default in `scripts/install/50-cpp-builds.sh`) and/or
+  `export CMAKE_BUILD_PARALLEL_LEVEL=2` so each build uses ≤2 cores.
+- **Check headroom before scaling up:** run `free -h` before launching ≥4 heavy agents; if
+  `available` is under ~6 GB or swap is in use, wait or reduce concurrency.
+- Note: hephaestus' `max_workers=3` only bounds an in-process thread pool — it does **not** cap
+  concurrent Claude agent *sessions*. The limits above are what actually protect the host.
+
 ## Common Commands
 
 ```bash

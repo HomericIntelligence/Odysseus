@@ -29,6 +29,14 @@ CPP_REPOS=(
 
 RUNTIME_PREFIX="${ODYSSEUS_RUNTIME_PREFIX:-$HOME/.local}"
 
+# Cap build parallelism. Using -j"$(nproc)" makes every concurrent build claim
+# all cores; when several Myrmidon agents build at once on the 16 GB / 8-core
+# `hermes` WSL host this oversubscribes CPU ~2x and (with parallel pixi solves)
+# exhausts RAM + swap, hanging the VM. Default 2 cores/build; with the agent
+# concurrency cap (HERMES_MAX_CONCURRENT_AGENTS=3) that is <=6 of 8 cores.
+# Override with ODYSSEUS_BUILD_JOBS. See Odysseus CLAUDE.md "Resource limits".
+BUILD_JOBS="${ODYSSEUS_BUILD_JOBS:-2}"
+
 # Pre-create install tree so nats.c FetchContent install doesn't fail trying
 # to mkdir lib/pkgconfig inside cmake --install.
 if ! mkdir -p "$RUNTIME_PREFIX/bin" "$RUNTIME_PREFIX/lib/pkgconfig" "$RUNTIME_PREFIX/include"; then
@@ -86,6 +94,16 @@ build_cpp_repo() {
     (
         cd "$dir"
 
+        # Memory-bound this repo's conan+cmake+build pipeline. ulimit -v converts
+        # an over-budget allocation into a recoverable failure of THIS subshell
+        # instead of letting the kernel OOM-killer thrash and hang the whole WSL
+        # VM (the failure mode that took down `hermes`). Default ~6 GiB/build;
+        # override with ODYSSEUS_BUILD_VMEM_KB (0 disables the cap).
+        _vmem_kb="${ODYSSEUS_BUILD_VMEM_KB:-6291456}"
+        if [[ "$_vmem_kb" != "0" ]]; then
+            ulimit -v "$_vmem_kb" 2>/dev/null || true
+        fi
+
         # ── Step 1: Conan deps ────────────────────────────────────────────────
         # Output folder must match CMakePresets.json toolchainFile path:
         #   build/${presetName}/conan_toolchain.cmake → -of build/release
@@ -127,8 +145,8 @@ build_cpp_repo() {
             2>&1
 
         # ── Step 3: Build ─────────────────────────────────────────────────────
-        echo -e "      ${DIM}cmake --build...${NC}"
-        pixi run -- cmake --build --preset release -j"$(nproc)" 2>&1
+        echo -e "      ${DIM}cmake --build (-j$BUILD_JOBS)...${NC}"
+        pixi run -- cmake --build --preset release -j"$BUILD_JOBS" 2>&1
 
         # ── Step 4: Install ───────────────────────────────────────────────────
         echo -e "      ${DIM}cmake --install to $RUNTIME_PREFIX...${NC}"

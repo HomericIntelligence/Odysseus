@@ -55,6 +55,13 @@ DRY_RUN = os.environ.get("DRY_RUN", "0") == "1"
 NO_GITHUB = os.environ.get("NO_GITHUB", "0") == "1"
 ISSUE_NUMBER = int(os.environ.get("ISSUE_NUMBER", "8"))
 
+# Cap concurrent HEAVY Claude agent invocations (each does clone -> pixi install
+# (a ~0.5-1 GB conda/pypi SAT solve) -> C++ build). On the 16 GB / 8-core `hermes`
+# WSL host, fanning all 16 repos out at once exhausted RAM + 16 GB swap and hung
+# the VM (see CLAUDE.md "Resource limits & concurrency"). Default 3 keeps peak at
+# ~3 x 3 GB with headroom; override with HERMES_MAX_CONCURRENT_AGENTS.
+MAX_CONCURRENT_HEAVY = int(os.environ.get("HERMES_MAX_CONCURRENT_AGENTS", "3"))
+
 # Container configuration
 CLAUDE_IMAGE = os.environ.get("CLAUDE_IMAGE", "achaean-claude:latest")
 CONTAINER_WORKSPACE = "/workspace"
@@ -388,6 +395,34 @@ def invoke_claude(
         return f"ERROR: {CONTAINER_RUNTIME} not found"
 
 
+# ─── Concurrency throttle for heavy invocations ────────────────────────────
+
+# Lazily-created so the semaphore binds to the running event loop (constructing
+# asyncio.Semaphore at import time has no loop to attach to).
+_HEAVY_SEMAPHORE: "asyncio.Semaphore | None" = None
+
+
+def _heavy_semaphore() -> "asyncio.Semaphore":
+    global _HEAVY_SEMAPHORE
+    if _HEAVY_SEMAPHORE is None:
+        _HEAVY_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_HEAVY)
+    return _HEAVY_SEMAPHORE
+
+
+async def bounded_invoke_claude(*args, **kwargs) -> str:
+    """Run a HEAVY ``invoke_claude`` under the global concurrency cap.
+
+    Acquires ``MAX_CONCURRENT_HEAVY`` slots so at most N container agents run
+    their clone -> pixi-solve -> build pipeline at once, and runs the blocking
+    ``invoke_claude`` in a worker thread so the cap actually throttles
+    concurrency instead of being defeated by the event loop serialising the
+    synchronous subprocess call. Prevents the all-repos-at-once OOM that hung
+    the `hermes` WSL host.
+    """
+    async with _heavy_semaphore():
+        return await asyncio.to_thread(invoke_claude, *args, **kwargs)
+
+
 # ─── Mock Responses for Dry-Run ────────────────────────────────────────────
 
 def mock_claude_response(stage: str, repo_slug: str, iteration: int) -> str:
@@ -659,8 +694,8 @@ The script should:
 
 Output ONLY the bash script. Start with #!/usr/bin/env bash."""
 
-    result = invoke_claude(prompt, scope="test", stage="test", iteration=iteration,
-                           task_id=task_id, repo_slug=repo_slug)
+    result = await bounded_invoke_claude(prompt, scope="test", stage="test", iteration=iteration,
+                                         task_id=task_id, repo_slug=repo_slug)
     post_issue_comment(issue_number, "test", iteration, f"```bash\n{result}\n```",
                        repo_slug=repo_slug)
 
@@ -739,8 +774,8 @@ Instructions:
 
 Output a brief summary of what you did (3-5 lines). Files should already be written."""
 
-    result = invoke_claude(prompt, scope="implement", stage="implement", iteration=iteration,
-                           task_id=task_id, repo_slug=repo_slug)
+    result = await bounded_invoke_claude(prompt, scope="implement", stage="implement", iteration=iteration,
+                                         task_id=task_id, repo_slug=repo_slug)
     post_issue_comment(issue_number, "implement", iteration, result, repo_slug=repo_slug)
 
     next_data = {
@@ -817,8 +852,8 @@ IMPORTANT:
 - Only GO when EVERY criterion passes.
 - Run the test script and include output."""
 
-    result = invoke_claude(prompt, scope="review", stage="review", iteration=iteration,
-                           task_id=task_id, repo_slug=repo_slug)
+    result = await bounded_invoke_claude(prompt, scope="review", stage="review", iteration=iteration,
+                                         task_id=task_id, repo_slug=repo_slug)
     post_issue_comment(issue_number, "review", iteration, result, repo_slug=repo_slug)
 
     # Parse verdict
@@ -915,7 +950,7 @@ Generated with [Claude Code](https://claude.com/claude-code)"
 
 Output the PR URL."""
 
-    result = invoke_claude(prompt, scope="ship", stage="ship", task_id=task_id, repo_slug=repo_slug)
+    result = await bounded_invoke_claude(prompt, scope="ship", stage="ship", task_id=task_id, repo_slug=repo_slug)
     post_issue_comment(issue_number, "ship", 0,
                        f"**[{repo_slug}] Shipped!**\n\n{result}", repo_slug=repo_slug)
 
@@ -998,7 +1033,7 @@ Generated with [Claude Code](https://claude.com/claude-code)"
 
 Output the PR URL."""
 
-    result = invoke_claude(prompt, scope="ship", stage="ship-final", task_id=task_id, repo_slug="odysseus")
+    result = await bounded_invoke_claude(prompt, scope="ship", stage="ship-final", task_id=task_id, repo_slug="odysseus")
     post_issue_comment(issue_number, "ship-final", 0, f"**Odysseus shipped!**\n\n{result}")
 
     # Publish completion
