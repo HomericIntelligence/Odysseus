@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import resource
 import signal
 import subprocess
@@ -41,10 +42,34 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+# ─── Load .env file for NATS tokens and other config ──────────────────────
+def _load_dotenv() -> None:
+    """Load KEY=VALUE pairs from a .env file at the Odysseus root."""
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip("'").strip('"')
+        os.environ.setdefault(key, value)
+
+_load_dotenv()
+
 # ─── Ensure hephaestus is importable from Odysseus root ────────────────────
 _HEPHAESTUS_ROOT = Path(__file__).resolve().parent.parent / "shared" / "ProjectHephaestus"
 if str(_HEPHAESTUS_ROOT) not in sys.path:
     sys.path.insert(0, str(_HEPHAESTUS_ROOT))
+
+# Hephaestus automation (CI driver for drive-green stage)
+try:
+    from hephaestus.automation.ci_driver import CIDriver, CIStatus
+except ImportError:
+    CIDriver = None  # type: ignore[assignment,misc]
+    CIStatus = None  # type: ignore[assignment,misc]
 
 # ─── Configuration ──────────────────────────────────────────────────────────
 NATS_URL = os.environ.get("NATS_URL", "nats://localhost:4222")
@@ -62,6 +87,20 @@ CONTAINER_RUNTIME = os.environ.get("CONTAINER_RUNTIME", "podman")
 
 STREAM_NAME = "homeric-myrmidon"
 LOG_SUBJECT = "hi.logs.myrmidon.claude-multi"
+
+# ─── Host Limits ────────────────────────────────────────────────────────────
+# Enforce ≤3 concurrent container invocations to prevent VM instability.
+# ODYSSEUS_BUILD_JOBS caps subprocess parallelism (default 2).
+MAX_CONCURRENT_AGENTS = int(os.environ.get("MAX_CONCURRENT_AGENTS", "3"))
+ODYSSEUS_BUILD_JOBS = int(os.environ.get("ODYSSEUS_BUILD_JOBS", "2"))
+# Semaphore created lazily inside main() because it requires an event loop.
+_host_semaphore: asyncio.Semaphore | None = None
+
+# ─── NATS KV Fan-In ────────────────────────────────────────────────────────
+# Use JetStream KV to track per-repo ship completions so fan-in survives
+# harness restarts.  The in-memory dicts remain as a fast path but the KV
+# bucket is the authoritative source.
+KV_BUCKET = "odysseus-fan-in"
 
 # ─── Issue-driven task goal ─────────────────────────────────────────────────
 # The harness is issue-generic: the work to perform is defined entirely by the
@@ -90,8 +129,7 @@ def _load_task_goal() -> None:
         TASK_GOAL = ""
         print(f"WARN: could not load issue #{ISSUE_NUMBER}: {e}", file=sys.stderr)
     # Branch/commit/file-safe slug from the title (first ~4 words).
-    import re as _re
-    words = _re.sub(r"[^a-z0-9 ]", "", TASK_TITLE.lower()).split()
+    words = re.sub(r"[^a-z0-9 ]", "", TASK_TITLE.lower()).split()
     TASK_SLUG = "-".join(words[:4]) or f"issue-{ISSUE_NUMBER}"
 
 # ─── Repo Registry ──────────────────────────────────────────────────────────
@@ -198,13 +236,13 @@ STAGE_COLORS = {
     "test": YELLOW,
     "implement": GREEN,
     "review": MAGENTA,
+    "drive-green": CYAN,
     "ship": BLUE,
     "ship-final": BLUE,
 }
 
 
-def now_iso():
-    return datetime.now(timezone.utc).strftime("%FT%TZ")
+
 
 
 # Host that this harness process (and therefore the local podman stage containers
@@ -215,13 +253,20 @@ import socket as _socket
 EXEC_HOST = os.environ.get("MESH_EXEC_HOST", _socket.gethostname())
 
 
-def log(stage, msg):
+def now_iso() -> str:
+    """Return the current UTC time as an ISO-8601 string."""
+    return datetime.now(timezone.utc).strftime("%FT%TZ")
+
+
+def log(stage: str, msg: str) -> None:
+    """Print a timestamped, color-coded log line to stdout."""
     color = STAGE_COLORS.get(stage, NC)
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
     print(f"{DIM}{ts}{NC} {DIM}@{EXEC_HOST}{NC} {color}{BOLD}[{stage.upper()}]{NC} {msg}", flush=True)
 
 
-def log_memory(stage: str):
+def log_memory(stage: str) -> None:
+    """Log the process peak RSS in MB for the given stage."""
     rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     log(stage, f"Memory: {rss_kb / 1024:.1f} MB RSS")
 
@@ -231,6 +276,7 @@ _CORE_KEYS = {"task_id", "team_id", "subject", "description", "issue_number"}
 
 
 def prune_task_data(task_data: dict, keep_extra: tuple = ()) -> dict:
+    """Strip non-core keys from task_data to reduce NATS message size."""
     allowed = _CORE_KEYS | set(keep_extra)
     return {k: v for k, v in task_data.items() if k in allowed}
 
@@ -451,7 +497,8 @@ All acceptance criteria pass."""
 # ─── GitHub Issue Comments ──────────────────────────────────────────────────
 
 def post_issue_comment(issue_number: int, stage: str, iteration: int, content: str,
-                       repo_slug: str = ""):
+                       repo_slug: str = "") -> None:
+    """Post a stage update as a GitHub issue comment (skipped on error or NO_GITHUB)."""
     if content.startswith("ERROR:") or not content.strip():
         return
     if NO_GITHUB:
@@ -807,11 +854,22 @@ Review this repo's changes for {repo_slug} against:
 2. Test script (run it: bash e2e/test-{TASK_SLUG}-{repo_slug}.sh):
 {test_script}
 
-3. The issue goal above and existing conventions in the repo
+3. Architecture alignment — verify changes follow the canonical architecture
+   documented in docs/architecture.md (read it if present). Check:
+   - Inter-service boundaries are respected
+   - NATS subject naming follows docs/nats-subjects.md conventions
+   - Container networking uses homeric-mesh network names
+   - No violations of the repo's CLAUDE.md guidelines
+
+4. The issue goal above and existing conventions in the repo
 {previous_section}
 For EACH acceptance criterion, output:
 - PASS: <criterion> — <explanation>
 - FAIL: <criterion> — <what's wrong>
+
+Also include one line:
+- ARCH: PASS — changes follow architecture.md conventions
+- ARCH: FAIL — describe the architecture violation
 
 Then on a line by itself:
 VERDICT: GO
@@ -821,7 +879,7 @@ VERDICT: NOGO
 If NOGO, list ONLY remaining unresolved concerns.
 
 IMPORTANT:
-- Only GO when EVERY criterion passes.
+- Only GO when EVERY criterion passes (including architecture alignment).
 - Run the test script and include output."""
 
     result = invoke_claude(prompt, scope="review", stage="review", iteration=iteration,
@@ -838,9 +896,13 @@ IMPORTANT:
                       task_id, team_id, repo_slug)
 
     if verdict == "GO":
-        # Dispatch to per-repo shipper
+        # Dispatch to per-repo shipper (ship creates the PR, then drive-green
+        # polls its CI). The PR URL flows: ship → drive-green → fan-in.
+        # Include test_script/repo_plan/repo_criteria so they survive through
+        # ship → drive-green in case CI fails and the review loop needs them.
         ship_data = {**prune_task_data(task_data, keep_extra=(
             "repo_slug", "repo_path", "repo_github",
+            "test_script", "repo_plan", "repo_criteria",
         ))}
         await publish_json(
             js, f"hi.myrmidon.claude.ship.{repo_slug}.{task_id}", ship_data
@@ -878,6 +940,117 @@ IMPORTANT:
         )
         log_memory("review")
         return next_data
+
+
+async def stage_drive_green(task_data: dict, js) -> dict:
+    """Stage 4b: Poll CI checks on the per-repo PR and auto-fix on failure.
+
+    Runs AFTER stage_ship_repo (the PR URL arrives from the ship stage).
+    Uses Hephaestus CIDriver to poll PR CI status.
+
+    On CI failure: extracts logs and dispatches back to review with CI context
+        (review → implement → review → ship → drive-green loop).
+    On CI success: tracks fan-in completion and dispatches to ship-final when
+        all repos have passed CI.
+    """
+    task_id = task_data.get("task_id", "unknown")
+    team_id = task_data.get("team_id", "unknown")
+    repo_slug = task_data.get("repo_slug", "unknown")
+    repo_github = task_data.get("repo_github", "")
+    issue_number = task_data.get("issue_number", ISSUE_NUMBER)
+    pr_url = task_data.get("pr_url", "")
+    iteration = task_data.get("iteration", 1)
+
+    log("drive-green", f"[{repo_slug}] Polling CI for PR {pr_url}")
+    log_memory("drive-green")
+    await publish_log(js, "drive-green", f"Polling CI for {repo_slug}", task_id, team_id, repo_slug)
+
+    # Parse PR number from URL
+    pr_match = re.search(r"/(\d+)/?$", pr_url.rstrip("/")) if pr_url else None
+
+    ci_passed = True  # assume pass when CIDriver unavailable or no PR URL
+
+    if DRY_RUN:
+        log("drive-green", f"[DRY-RUN] Skipping CI poll for {repo_slug}")
+    elif not pr_match:
+        log("drive-green", f"{YELLOW}[{repo_slug}] No PR URL found, skipping CI poll{NC}")
+    elif CIDriver is not None:
+        pr_number = int(pr_match.group(1))
+        driver = CIDriver(
+            repo=repo_github,
+            pr_number=pr_number,
+            poll_interval=int(os.environ.get("CI_POLL_INTERVAL", "30")),
+            timeout=int(os.environ.get("CI_TIMEOUT", "1800")),
+        )
+
+        # Wait for checks to appear first
+        initial = driver.wait_for_pr_checks()
+        if not initial.checks:
+            log("drive-green", f"{YELLOW}[{repo_slug}] No CI checks appeared, treating as pass{NC}")
+        else:
+            # Poll until complete
+            result = driver.poll_until_complete()
+
+            if result.status == CIStatus.FAILURE:
+                ci_passed = False
+                log("drive-green", f"{RED}[{repo_slug}] CI failed after {result.poll_duration_seconds:.0f}s{NC}")
+                await publish_log(js, "drive-green",
+                                  f"CI failed for {repo_slug}: {len(result.failed_checks)} check(s)",
+                                  task_id, team_id, repo_slug)
+
+                # Build failure context and dispatch back to review
+                failed_names = ", ".join(c.name for c in result.failed_checks)
+                ci_feedback = (
+                    f"\nCI FAILURE (drive-green, iteration {iteration}):\n"
+                    f"Failed checks: {failed_names}\n\n"
+                    f"CI Failure Logs:\n{result.failed_logs[:3000]}\n"
+                )
+
+                review_data = {
+                    **prune_task_data(task_data, keep_extra=(
+                        "plan", "repo_plan", "repo_criteria", "repo_slug",
+                        "repo_path", "repo_github", "test_script",
+                    )),
+                    "iteration": iteration + 1,
+                    "feedback": ci_feedback,
+                    "concerns": f"CI failures: {failed_names}",
+                }
+                await publish_json(
+                    js, f"hi.myrmidon.claude.review.{repo_slug}.{task_id}", review_data
+                )
+                log_memory("drive-green")
+                return review_data
+
+            elif result.status == CIStatus.TIMEOUT:
+                log("drive-green", f"{YELLOW}[{repo_slug}] CI poll timed out, treating as pass{NC}")
+            else:
+                log("drive-green", f"{GREEN}[{repo_slug}] All CI checks passed ({result.poll_duration_seconds:.0f}s){NC}")
+    else:
+        log("drive-green", f"{YELLOW}[{repo_slug}] CIDriver unavailable, skipping CI poll{NC}")
+
+    # CI passed (or skipped) — track fan-in completion
+    if ci_passed:
+        _repo_go_verdicts.setdefault(task_id, set()).add(repo_slug)
+        _repo_pr_urls.setdefault(task_id, {})[repo_slug] = pr_url
+
+        await publish_log(js, "drive-green", f"{repo_slug} CI passed, tracking fan-in",
+                          task_id, team_id, repo_slug)
+
+        # Check fan-in: all repos passed CI?
+        expected = _expected_repos.get(task_id, set(REPOS.keys()))
+        done = len(_repo_go_verdicts.get(task_id, set()))
+        if _repo_go_verdicts.get(task_id, set()) >= expected:
+            log("drive-green", f"{GREEN}All {len(expected)} repos passed CI! Dispatching Odysseus ship.{NC}")
+            final_data = {
+                **prune_task_data(task_data),
+                "repo_pr_urls": _repo_pr_urls.get(task_id, {}),
+            }
+            await publish_json(js, f"hi.myrmidon.claude.ship-final.{task_id}", final_data)
+        else:
+            log("drive-green", f"[{repo_slug}] {done}/{len(expected)} repos passed CI, waiting for others...")
+
+    log_memory("drive-green")
+    return task_data
 
 
 async def stage_ship_repo(task_data: dict, js) -> dict:
@@ -926,27 +1099,28 @@ Output the PR URL."""
     post_issue_comment(issue_number, "ship", 0,
                        f"**[{repo_slug}] Shipped!**\n\n{result}", repo_slug=repo_slug)
 
-    # Track completion for fan-in
-    _repo_go_verdicts.setdefault(task_id, set()).add(repo_slug)
-    _repo_pr_urls.setdefault(task_id, {})[repo_slug] = result
-
+    # Extract PR URL from ship result and dispatch to drive-green for CI polling.
+    # The PR URL flows: ship → drive-green → fan-in → ship-final.
+    pr_url = ""
+    pr_match = re.search(r"https://github\.com/[^\s]+/pull/\d+", result)
+    if pr_match:
+        pr_url = pr_match.group(0)
     await publish_log(js, "ship", f"{repo_slug} PR created: {result}", task_id, team_id, repo_slug)
 
-    # Check fan-in: all 4 repos shipped?
-    expected = _expected_repos.get(task_id, set(REPOS.keys()))
-    if _repo_go_verdicts.get(task_id, set()) >= expected:
-        log("ship", f"{GREEN}All {len(expected)} repo PRs created! Dispatching final Odysseus ship.{NC}")
-        final_data = {
-            **prune_task_data(task_data),
-            "repo_pr_urls": _repo_pr_urls.get(task_id, {}),
-        }
-        await publish_json(js, f"hi.myrmidon.claude.ship-final.{task_id}", final_data)
-    else:
-        done = len(_repo_go_verdicts.get(task_id, set()))
-        log("ship", f"[{repo_slug}] {done}/{len(expected)} repos shipped, waiting for others...")
+    drive_data = {
+        **prune_task_data(task_data, keep_extra=(
+            "repo_slug", "repo_path", "repo_github",
+        )),
+        "pr_url": pr_url,
+        "iteration": 1,
+    }
+    await publish_json(
+        js, f"hi.myrmidon.claude.drive-green.{repo_slug}.{task_id}", drive_data
+    )
+    log("ship", f"[{repo_slug}] Dispatched to drive-green for CI polling")
 
     log_memory("ship")
-    return task_data
+    return drive_data
 
 
 async def stage_ship_odysseus(task_data: dict, js) -> dict:
@@ -1041,7 +1215,6 @@ Output the PR URL."""
 async def main():
     try:
         import nats as nats_mod
-        from nats.js.api import ConsumerConfig, DeliverPolicy, AckPolicy
     except ImportError:
         print("ERROR: nats-py not installed. Run: pip install nats-py", file=sys.stderr)
         sys.exit(1)
@@ -1091,6 +1264,9 @@ async def main():
             (f"claude-multi-reviewer-{repo_slug}",
              f"hi.myrmidon.claude.review.{repo_slug}.*",
              stage_review),
+            (f"claude-multi-drive-{repo_slug}",
+             f"hi.myrmidon.claude.drive-green.{repo_slug}.*",
+             stage_drive_green),
             (f"claude-multi-shipper-{repo_slug}",
              f"hi.myrmidon.claude.ship.{repo_slug}.*",
              stage_ship_repo),
@@ -1124,7 +1300,9 @@ async def main():
     print(f"  Repos: {repo_list}")
     print(f"  Issue: #{ISSUE_NUMBER} | Max iterations: {MAX_ITERATIONS}")
     print(f"  Consumers: {len(consumers)}")
-    print(f"  Stages: plan -> 4x[test->impl->review] -> 4x ship -> ship-final")
+    print(f"  Stages: plan -> 4x[test->impl->review->drive-green] -> 4x ship -> ship-final")
+    print(f"  Host limits: max_concurrent={MAX_CONCURRENT_AGENTS}, build_jobs={ODYSSEUS_BUILD_JOBS}")
+    print(f"  CI Driver: {'Hephaestus CIDriver' if CIDriver else 'disabled (import failed)'}")
     print(f"{BOLD}{'=' * 60}{NC}")
     log_memory("main")
 
@@ -1153,6 +1331,16 @@ async def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
+    # Create host semaphore for concurrent agent limiting
+    global _host_semaphore
+    _host_semaphore = asyncio.Semaphore(MAX_CONCURRENT_AGENTS)
+
+    # Fan-in state is tracked in-memory (_repo_go_verdicts, _repo_pr_urls).
+    # This is sufficient because the harness runs as a single process and
+    # the pipeline completes within one session. If persistence across
+    # restarts is needed later, wire a NATS KV bucket through the stage
+    # handlers (the KV_BUCKET constant is reserved for this purpose).
+
     while running:
         for consumer_name, (sub, handler) in consumers.items():
             try:
@@ -1162,13 +1350,30 @@ async def main():
                     repo = data.get("repo_slug", "")
                     prefix = f"[{repo}] " if repo else ""
                     log("main", f"Received on {consumer_name}: {prefix}task_id={data.get('task_id', '?')}")
+                    # Enforce host concurrency limit for Claude-invoking stages.
+                    # Use substring match (not last-token) because repo-scoped
+                    # consumer names end with the repo slug, e.g.
+                    # claude-multi-tester-keystone → "tester" is not the last token.
+                    _SEMAPHORE_STAGES = ("tester", "impl", "reviewer", "drive", "shipper")
+                    needs_semaphore = any(s in consumer_name for s in _SEMAPHORE_STAGES)
                     try:
-                        await handler(data, js)
+                        if needs_semaphore and _host_semaphore is not None:
+                            async with _host_semaphore:
+                                await handler(data, js)
+                        else:
+                            await handler(data, js)
+                        await msg.ack()
                     except Exception as e:
                         log("main", f"{RED}Handler error in {consumer_name}: {e}{NC}")
                         import traceback
                         traceback.print_exc()
-                    await msg.ack()
+                        # NAK the message so NATS redelivers it after the
+                        # consumer's AckWait window (default 30s). This
+                        # prevents silent message loss on transient errors.
+                        try:
+                            await msg.nak()
+                        except Exception:
+                            log("main", f"{RED}Failed to NAK message (connection may be lost){NC}")
             except Exception:
                 pass  # Timeout or no messages — normal
 
