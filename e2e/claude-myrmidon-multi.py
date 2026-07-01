@@ -557,7 +557,7 @@ _expected_repos: dict[str, set[str]] = {}      # task_id → set of repos that n
 
 # ─── Stage Handlers ────────────────────────────────────────────────────────
 
-async def stage_plan(task_data: dict, js) -> dict:
+async def stage_plan(task_data: dict, js, *, kv=None) -> dict:
     """Stage 1: Unified plan across all 4 repos."""
     task_id = task_data.get("task_id", "unknown")
     team_id = task_data.get("team_id", "unknown")
@@ -623,6 +623,15 @@ work for this issue, write "No changes required." under it. Output ONLY the plan
     if not active_repos:
         active_repos = list(REPOS)  # fall back to all if the plan was unparseable
     _expected_repos[task_id] = set(active_repos)
+
+    # Persist expected repos to KV for cross-restart recovery
+    if kv is not None:
+        try:
+            await kv.put(f"fan-in.{task_id}.expected", ",".join(sorted(active_repos)).encode())
+            log("plan", f"Persisted expected repos to KV bucket '{KV_BUCKET}'")
+        except Exception as e:
+            log("plan", f"{YELLOW}KV persist expected repos failed (non-fatal): {e}{NC}")
+
     log("plan", f"Active repos for this issue: {', '.join(active_repos)}")
 
     # Fan-out: publish one message per ACTIVE repo
@@ -668,7 +677,7 @@ def _extract_section(text: str, header: str) -> str:
     return "\n".join(result_lines).strip()
 
 
-async def stage_test(task_data: dict, js) -> dict:
+async def stage_test(task_data: dict, js, *, kv=None) -> dict:
     """Stage 2: Write validation tests for one repo."""
     task_id = task_data.get("task_id", "unknown")
     team_id = task_data.get("team_id", "unknown")
@@ -742,7 +751,7 @@ Output ONLY the bash script. Start with #!/usr/bin/env bash."""
     return next_data
 
 
-async def stage_implement(task_data: dict, js) -> dict:
+async def stage_implement(task_data: dict, js, *, kv=None) -> dict:
     """Stage 3: Implement justfile recipes for one repo."""
     task_id = task_data.get("task_id", "unknown")
     team_id = task_data.get("team_id", "unknown")
@@ -813,7 +822,7 @@ Output a brief summary of what you did (3-5 lines). Files should already be writ
     return next_data
 
 
-async def stage_review(task_data: dict, js) -> dict:
+async def stage_review(task_data: dict, js, *, kv=None) -> dict:
     """Stage 4: Review implementation. GO or NOGO."""
     task_id = task_data.get("task_id", "unknown")
     team_id = task_data.get("team_id", "unknown")
@@ -942,7 +951,7 @@ IMPORTANT:
         return next_data
 
 
-async def stage_drive_green(task_data: dict, js) -> dict:
+async def stage_drive_green(task_data: dict, js, *, kv=None) -> dict:
     """Stage 4b: Poll CI checks on the per-repo PR and auto-fix on failure.
 
     Runs AFTER stage_ship_repo (the PR URL arrives from the ship stage).
@@ -1030,16 +1039,47 @@ async def stage_drive_green(task_data: dict, js) -> dict:
 
     # CI passed (or skipped) — track fan-in completion
     if ci_passed:
+        # Update in-memory fast cache
         _repo_go_verdicts.setdefault(task_id, set()).add(repo_slug)
         _repo_pr_urls.setdefault(task_id, {})[repo_slug] = pr_url
+
+        # Persist to NATS KV for cross-restart durability
+        if kv is not None:
+            try:
+                await kv.put(f"fan-in.{task_id}.verdicts.{repo_slug}", b"GO")
+                if pr_url:
+                    await kv.put(f"fan-in.{task_id}.pr-urls.{repo_slug}", pr_url.encode())
+                log("drive-green", f"[{repo_slug}] Persisted fan-in state to KV")
+            except Exception as e:
+                log("drive-green", f"{YELLOW}[{repo_slug}] KV persist failed (non-fatal): {e}{NC}")
 
         await publish_log(js, "drive-green", f"{repo_slug} CI passed, tracking fan-in",
                           task_id, team_id, repo_slug)
 
         # Check fan-in: all repos passed CI?
+        # Use in-memory dict as fast path; fall back to KV for restart recovery.
         expected = _expected_repos.get(task_id, set(REPOS.keys()))
-        done = len(_repo_go_verdicts.get(task_id, set()))
-        if _repo_go_verdicts.get(task_id, set()) >= expected:
+        done_slugs = set(_repo_go_verdicts.get(task_id, set()))
+
+        # Hydrate from KV if in-memory state is incomplete (restart recovery)
+        if kv is not None and len(done_slugs) < len(expected):
+            try:
+                for slug in expected - done_slugs:
+                    entry = await kv.get(f"fan-in.{task_id}.verdicts.{slug}")
+                    if entry is not None and entry.value == b"GO":
+                        done_slugs.add(slug)
+                        _repo_go_verdicts.setdefault(task_id, set()).add(slug)
+                # Also hydrate PR URLs from KV
+                for slug in done_slugs:
+                    if slug not in _repo_pr_urls.get(task_id, {}):
+                        url_entry = await kv.get(f"fan-in.{task_id}.pr-urls.{slug}")
+                        if url_entry is not None:
+                            _repo_pr_urls.setdefault(task_id, {})[slug] = url_entry.value.decode()
+            except Exception as e:
+                log("drive-green", f"{YELLOW}KV hydration failed (non-fatal): {e}{NC}")
+
+        done = len(done_slugs)
+        if done_slugs >= expected:
             log("drive-green", f"{GREEN}All {len(expected)} repos passed CI! Dispatching Odysseus ship.{NC}")
             final_data = {
                 **prune_task_data(task_data),
@@ -1053,7 +1093,7 @@ async def stage_drive_green(task_data: dict, js) -> dict:
     return task_data
 
 
-async def stage_ship_repo(task_data: dict, js) -> dict:
+async def stage_ship_repo(task_data: dict, js, *, kv=None) -> dict:
     """Stage 5a: Create PR in the submodule's upstream repo."""
     task_id = task_data.get("task_id", "unknown")
     team_id = task_data.get("team_id", "unknown")
@@ -1123,7 +1163,7 @@ Output the PR URL."""
     return drive_data
 
 
-async def stage_ship_odysseus(task_data: dict, js) -> dict:
+async def stage_ship_odysseus(task_data: dict, js, *, kv=None) -> dict:
     """Stage 5b: Final Odysseus PR — justfile delegation recipes + submodule pin updates."""
     task_id = task_data.get("task_id", "unknown")
     team_id = task_data.get("team_id", "unknown")
@@ -1335,51 +1375,73 @@ async def main():
     global _host_semaphore
     _host_semaphore = asyncio.Semaphore(MAX_CONCURRENT_AGENTS)
 
-    # Fan-in state is tracked in-memory (_repo_go_verdicts, _repo_pr_urls).
-    # This is sufficient because the harness runs as a single process and
-    # the pipeline completes within one session. If persistence across
-    # restarts is needed later, wire a NATS KV bucket through the stage
-    # handlers (the KV_BUCKET constant is reserved for this purpose).
+    # Fan-in state is persisted to NATS KV for cross-restart durability.
+    # In-memory dicts remain as a fast cache; KV is the authoritative source.
+    kv = None
+    try:
+        try:
+            kv = await js.create_key_value(bucket=KV_BUCKET, ttl=86400)
+            log("main", f"KV bucket '{KV_BUCKET}' created (TTL=24h)")
+        except Exception:
+            # Bucket may already exist with different config — bind to it.
+            kv = await js.key_value(bucket=KV_BUCKET)
+            log("main", f"KV bucket '{KV_BUCKET}' bound (existing)")
+    except Exception as e:
+        log("main", f"{YELLOW}KV bucket setup failed (in-memory only): {e}{NC}")
 
-    while running:
-        for consumer_name, (sub, handler) in consumers.items():
+    # ── Concurrent consumer polling ──────────────────────────────────────
+    # Each consumer runs in its own persistent async task so that one slow
+    # handler (e.g. a Claude invocation that takes minutes) does NOT block
+    # the other 70 consumers from fetching messages.  This replaces the old
+    # sequential for-loop that polled each consumer one-at-a-time with a
+    # 1 s timeout — making a full cycle take ~71 s (14 repos × 5 stages).
+    _SEMAPHORE_STAGES = ("tester", "impl", "reviewer", "drive", "shipper")
+
+    async def _consumer_loop(name: str, sub, handler):
+        """Persistent poller for a single NATS pull consumer."""
+        needs_semaphore = any(s in name for s in _SEMAPHORE_STAGES)
+        while running:
             try:
-                msgs = await sub.fetch(batch=1, timeout=1)
+                msgs = await sub.fetch(batch=10, timeout=1)
                 for msg in msgs:
-                    data = json.loads(msg.data.decode())
-                    repo = data.get("repo_slug", "")
-                    prefix = f"[{repo}] " if repo else ""
-                    log("main", f"Received on {consumer_name}: {prefix}task_id={data.get('task_id', '?')}")
-                    # Enforce host concurrency limit for Claude-invoking stages.
-                    # Use substring match (not last-token) because repo-scoped
-                    # consumer names end with the repo slug, e.g.
-                    # claude-multi-tester-keystone → "tester" is not the last token.
-                    _SEMAPHORE_STAGES = ("tester", "impl", "reviewer", "drive", "shipper")
-                    needs_semaphore = any(s in consumer_name for s in _SEMAPHORE_STAGES)
                     try:
+                        data = json.loads(msg.data.decode())
+                        repo = data.get("repo_slug", "")
+                        prefix = f"[{repo}] " if repo else ""
+                        log("main", f"Received on {name}: {prefix}task_id={data.get('task_id', '?')}")
                         if needs_semaphore and _host_semaphore is not None:
                             async with _host_semaphore:
-                                await handler(data, js)
+                                await handler(data, js, kv=kv)
                         else:
-                            await handler(data, js)
+                            await handler(data, js, kv=kv)
                         await msg.ack()
                     except Exception as e:
-                        log("main", f"{RED}Handler error in {consumer_name}: {e}{NC}")
+                        log("main", f"{RED}Handler error in {name}: {e}{NC}")
                         import traceback
                         traceback.print_exc()
-                        # NAK the message so NATS redelivers it after the
-                        # consumer's AckWait window (default 30s). This
-                        # prevents silent message loss on transient errors.
                         try:
                             await msg.nak()
                         except Exception:
                             log("main", f"{RED}Failed to NAK message (connection may be lost){NC}")
             except Exception:
                 pass  # Timeout or no messages — normal
+            await asyncio.sleep(0.1)
 
-        await asyncio.sleep(0.1)
+    consumer_tasks = [
+        asyncio.create_task(_consumer_loop(name, sub, handler),
+                            name=f"poll-{name}")
+        for name, (sub, handler) in consumers.items()
+    ]
+    log("main", f"Launched {len(consumer_tasks)} concurrent consumer pollers")
 
-    # Graceful shutdown
+    # Block until signal — all tasks run until `running` becomes False.
+    while running:
+        await asyncio.sleep(0.5)
+
+    # Graceful shutdown: cancel tasks and drain connection.
+    for t in consumer_tasks:
+        t.cancel()
+    await asyncio.gather(*consumer_tasks, return_exceptions=True)
     log("main", "Shutting down")
     await nc.drain()
 
