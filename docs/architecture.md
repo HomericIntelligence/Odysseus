@@ -28,15 +28,15 @@ a git submodule. Odysseus itself contains no application code.
 |-----------|----------|------|
 | **Odysseus** | meta | User interface, observability hub, and meta-repo. Bidirectional with user. Consumes Argus dashboards. |
 | **ProjectAgamemnon** | control | Planning, coordination, and HMAS orchestration (L0–L3). GitHub Issues/Projects is the backing store. Does not perform research or expose a user UI. |
-| **ProjectNestor** | control | Research, ideation, and search. Idea → research → review brief → handoff to Agamemnon. Uses Telemachy internally for multi-step workflows. |
+| **ProjectNestor** | control | Thin C++ intake/status/dispatch service for research. Accepts ideas (`POST /v1/research`), dispatches them to the research myrmidon pool, tracks status. Research, interviewing, and ideation run in research-pool myrmidons — never inside Nestor itself (LLM work never runs inside C++ services; see [ADR-013](adr/013-hmas-mesh-wire-contracts.md)). |
 | **ProjectKeystone** | transport | Invisible transport layer. BlazingMQ for intra-host (<500 ns, >2 M msg/sec); NATS JetStream (nats.c v3.12.0) for cross-host over Tailscale. Components talk *through* Keystone, never *to* it. |
 | **ProjectHermes** | infrastructure | External message delivery bridge. Routes external-service events into NATS and delivers outbound messages to external services. |
 | **ProjectArgus** | infrastructure | Observability: Prometheus metrics, Loki log aggregation, Grafana dashboards, Promtail scraping. Feeds Odysseus dashboards. |
 | **AchaeanFleet** | infrastructure | Container image library. All agent and service images. Built by Proteus; run on the `homeric-mesh` Podman network. |
 | **Myrmidons repo** | provisioning | GitOps source of truth. YAML manifests describe desired agent state; Agamemnon API reconciliation applies them. Also holds all agent templates and container specs. Multi-host scheduling via Nomad is deferred to a future phase (see [ADR-009](adr/009-defer-multi-host-nomad-scheduling.md)); currently supports `local` and `docker` deployment types only. |
-| **ProjectTelemachy** | provisioning | Declarative workflow engine. Used programmatically by Agamemnon and Nestor. Not a user-facing service. |
+| **ProjectTelemachy** | provisioning | Declarative workflow engine + work description and epic registration. Turns workflow YAML into GitHub epics with child issues and publishes `hi.pipeline.epic.*.registered` ([ADR-013](adr/013-hmas-mesh-wire-contracts.md)). Used programmatically by Agamemnon, Nestor, and research myrmidons. Not a user-facing service. |
 | **ProjectProteus** | ci-cd | CI/CD. Dagger TypeScript pipelines. Builds AchaeanFleet images; dispatches `agamemnon-apply` on merge. |
-| **Myrmidons (workers)** | workers | Single-host worker pool. Pull-based, rate-limited (MaxAckPending=1). Queue subscription determines role. Multi-host clustering via Nomad is deferred to a future phase (see [ADR-009](adr/009-defer-multi-host-nomad-scheduling.md)). |
+| **Myrmidons (workers)** | workers | The worker pool: all nodes that can run myrmidon agents. Pull-based from role-addressed queues `hi.myrmidon.{domain}.{role}.task.>` ([ADR-013](adr/013-hmas-mesh-wire-contracts.md)); myrmidon roles ARE the HMAS agentic roles at every level, crossed with domain (e.g. `research.chief-architect` vs `pipeline.chief-architect`). Multi-host clustering via Nomad is deferred to a future phase (see [ADR-009](adr/009-defer-multi-host-nomad-scheduling.md)). |
 | **ProjectScylla** | testing | AI agent ablation benchmarking; evaluates agent architectures across tiered configurations (T0–T6). |
 | **ProjectCharybdis** | testing | Chaos and resilience testing. Injects faults via Agamemnon `/v1/chaos/*` endpoints. |
 | **ProjectMnemosyne** | shared | Skills marketplace / team-knowledge memory store for the `advise` and `learn` plugins only. Not an agent-template registry. |
@@ -91,13 +91,13 @@ traverse the network.
   │                     ProjectKeystone                                 │
   │   BlazingMQ (intra-host) · NATS JetStream (cross-host/Tailscale)   │
   └──────┬──────────────────────┬──────────────────────────────────────┘
-         │ hi.myrmidon.{type}.> │ hi.research.>
-         ▼                      ▼
-  ┌─────────────────┐   ┌───────────────────┐
-  │  Myrmidons      │   │  Research workers  │
-  │  (worker pool)  │   │  (pull, rate-lim.) │
-  │  MaxAckPending=1│   │  MaxAckPending=1   │
-  └────────┬────────┘   └───────────────────┘
+         │ hi.myrmidon.pipeline.{role}.task.>   │ hi.myrmidon.research.{role}.task.>
+         ▼                                      ▼
+  ┌──────────────────────┐   ┌──────────────────────┐
+  │  Pipeline myrmidons  │   │  Research myrmidons   │
+  │  (pull, per-role     │   │  (pull, per-role      │
+  │   durable consumers) │   │   durable consumers)  │
+  └────────┬─────────────┘   └──────────────────────┘
            │ runs images from
            ▼
   ┌──────────────────────────────────────────────────────────────────┐
@@ -125,13 +125,75 @@ traverse the network.
 
 ## Pipeline Flow
 
+The full HMAS pipeline, end to end (wire contracts in
+[ADR-013](adr/013-hmas-mesh-wire-contracts.md)):
+
 ```
-User ↔ Odysseus ↔ Nestor ↔ Agamemnon ↔ Myrmidons workers
+ 1. User submits a high-level task via the Odysseus console
+       │  POST /v1/research (Nestor)
+       ▼
+ 2. Nestor registers the intake and dispatches to the research pool
+       │  hi.myrmidon.research.chief-architect.task.{id}
+       ▼
+ 3. A research myrmidon claims it: researches the idea, INTERVIEWS the
+    user (console live, GitHub issue comments as fallback), ideates
+    extensions, and produces a researched brief
+       │  hi.pipeline.interview.{intake_id}.question/.answer.{q_id}
+       ▼
+ 4. The work is described via ProjectTelemachy and registered in GitHub
+    as an epic with child issues (task-list body, state:needs-plan)
+       │  hi.pipeline.epic.{epic_key}.registered
+       ▼
+ 5. Agamemnon submits the HMAS root (Pending → Decomposing) and
+    dispatches a planning burst to the pipeline planner queue
+       │  hi.myrmidon.pipeline.chief-architect.task.{id}
+       ▼
+ 6. A planner myrmidon extends the epic into tasks/features/bugs/
+    sub-tasks in GitHub; the resulting brief is ingested
+       │  POST /v1/briefs  →  L0–L3 HmasTask tree (Delegated)
+       ▼
+ 7. Leaf tasks are dispatched to the worker pool; myrmidons on mesh
+    nodes claim individual tasks and move the state machine
+       │  hi.myrmidon.{domain}.{role}.task.{id}   (claim = assignment)
+       │  hi.tasks.{team}.{task}.started/completed/failed  (facts)
+       ▼
+ 8. Each worker: advise (before) → implement → PR → review gate
+    (state:implementation-go) → merge → learn (after)
+       │  child completion wakes blocked parents in Agamemnon
+       ▼
+ 9. delegate_unblocked_children dispatches the next burst until the
+    epic's tree reaches Completed
 ```
 
-Each hop is bidirectional. All communication flows **through** Keystone
-(invisible transport); no component holds a direct socket reference to another.
-Keystone is a transport detail, not a pipeline stage.
+Interviews, escalations, and dashboards flow back up the same subjects, so
+each hop is bidirectional. All communication flows **through** Keystone
+(invisible transport); no component holds a direct socket reference to
+another. Keystone is a transport detail, not a pipeline stage. All workers
+run AchaeanFleet container images and integrate advise-before / learn-after
+around every task.
+
+---
+
+## Task State Machine
+
+Two state systems cooperate, mapped one-to-one in
+[ADR-013](adr/013-hmas-mesh-wire-contracts.md) §10:
+
+- **Agamemnon TaskStateMachine** (per HMAS node):
+  `Pending → Decomposing → Delegated → InProgress → Completed`, with
+  `Escalated` (retry at parent layer) and `Failed` as exception paths.
+  Transitions are driven by NATS facts: worker `started` → InProgress,
+  `completed` → Completed (+ wake blocked children), `failed` → Failed.
+- **Hephaestus `state:*` labels** (per GitHub issue/PR):
+  `state:needs-plan → state:plan-go/-no-go → state:implementation-go/-no-go`,
+  plus `state:skip` on retry exhaustion. Only Hephaestus automation writes
+  these labels; only Agamemnon writes its own store; workers publish events.
+
+Task sizing: leaves are planned to ≲1 h of active work. There is no hard
+limit — a worker that overruns ~1 h checkpoints (commit/push + progress
+comment), registers the remainder as sub-tasks via `POST /v1/tasks/:id/split`,
+and completes its task as the first slice. Leases (5-min heartbeats,
+15-min AckWait, MaxDeliver=3) detect worker death only, never task length.
 
 ---
 
@@ -153,13 +215,20 @@ to Keystone itself; the transport is resolved at startup via configuration.
 
 All subjects use the `hi.` namespace prefix.
 
+See [ADR-013](adr/013-hmas-mesh-wire-contracts.md) for consumer settings,
+payload envelopes, and migration notes.
+
 | Subject pattern | Publishers | Subscribers | Notes |
 |-----------------|-----------|-------------|-------|
-| `hi.research.>` | Agamemnon, Nestor | Research myrmidons (pull) | JetStream pull consumer |
-| `hi.myrmidon.{type}.>` | Agamemnon | Pipeline myrmidons (pull) | JetStream pull consumer; `{type}` maps to queue group |
-| `hi.pipeline.>` | Odysseus, Argus, Hermes | Multiple (pub/sub) | Fan-out; Hermes bridges external events here |
+| `hi.myrmidon.{domain}.{role}.task.{task_id}` | Agamemnon, Nestor | Myrmidon pool (pull) | Role-addressed work queues; durable `myrmidon-{domain}-{role}`, AckWait 15 min, MaxDeliver 3 (ADR-013) |
+| `hi.myrmidon.{type}.{task_id}` | Agamemnon | — (legacy) | Two-token legacy form; dual-published for one release, then removed |
+| `hi.tasks.{team_id}.{task_id}.{verb}` | Workers, Agamemnon | Agamemnon, Odysseus, Argus | State facts; verbs `started`/`updated`/`completed`/`failed` (`started` added by ADR-013) |
+| `hi.pipeline.interview.{intake_id}.{question\|answer}.{q_id}` | Research myrmidons ↔ Odysseus console | Console, interviewing worker | Interview relay; GitHub issue comments as fallback |
+| `hi.pipeline.epic.{epic_key}.registered` | Telemachy | Agamemnon (durable `agamemnon-epics`) | Epic trigger; `epic_key = {repo_slug}-{issue_number}` |
+| `hi.pipeline.>` | Odysseus, Argus, Hermes, Telemachy | Multiple (pub/sub) | Fan-out; Hermes bridges external events here; stream `homeric-pipeline` |
+| `hi.research.{id}` | Nestor | Nestor, console | Research status/compat subject (dispatch rides `hi.myrmidon.research.*`) |
 | `hi.agents.>` | Agamemnon, Hermes | Argus (pub/sub) | Agent lifecycle events |
-| `hi.tasks.>` | Agamemnon | Odysseus, Argus (pub/sub) | Task state changes |
+| `hi.logs.myrmidon.{domain}.{role}.{agent_id}` | Workers | Argus/Loki, Odysseus | Structured worker logs; payloads carry `exec_host` |
 | `hi.logs.>` | All components | Argus/Loki, Odysseus (pub) | Structured log forwarding |
 
 ---
