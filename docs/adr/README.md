@@ -19,6 +19,7 @@ choice, its context, decision rationale, and consequences.
 | [009](009-defer-multi-host-nomad-scheduling.md) | Defer Multi-Host Nomad Scheduling to a Future Phase | Proposed | — | — |
 | [011](011-extract-python-orchestration-to-agamemnon.md) | Extract Python Orchestration Layer from Keystone to ProjectAgamemnon | Accepted | — | — |
 | [012](012-slo-sla-definitions.md) | Define SLO/SLA Targets for the Agent Mesh | Proposed | — | — |
+| [013](013-hmas-mesh-wire-contracts.md) | HMAS Mesh Wire Contracts — Role-Addressed Dispatch, State Events, and Task Sizing | Proposed | — | — |
 
 ## How to Create a New ADR
 
