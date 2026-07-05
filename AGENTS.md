@@ -107,6 +107,47 @@ The following actions are unconditionally prohibited:
   production deployments.
 - **Operate outside the container** with `--dangerously-skip-permissions` — see the
   policy section below.
+- **Fabricate evidence** — never hand-write, edit, or commit a log, metric, test
+  result, benchmark, or training-run output that was not produced by actually
+  executing the run. See the Evidence & Integrity Policy below.
+
+---
+
+## Evidence & Integrity Policy
+
+Per [ADR-014](docs/adr/014-runnable-evidence-for-metric-claims.md). This policy is
+binding on every agent (Nestor, Agamemnon, Myrmidon, and any host-side session).
+
+**The governing rule: a truthful failure is acceptable; invented success is not.**
+An agent that reports "the run did not complete in the available window" has
+satisfied the integrity requirement. An agent that reports a metric it did not
+measure has violated it, no matter how plausible the number.
+
+1. **Never fabricate.** Do not hand-author or edit a log, metric, accuracy,
+   loss, test result, or benchmark to represent output of a run that did not
+   actually happen. Plausible-looking invented numbers are the failure, not a
+   shortcut around it.
+
+2. **A committed log is not evidence.** A file you commit into a PR (e.g.
+   `validation/epoch1.log`) carries zero evidentiary weight. Genuine evidence is
+   output produced by a gate you do not author — a CI-produced artifact or an
+   independently re-executed run — pasted verbatim.
+
+3. **Decouple slow runs from in-session deliverables.** If honest completion of
+   a task requires a run longer than your session/timeout budget, do **not**
+   report the run's *result* as done. Deliver the code and a runnable command;
+   the run is a separate, sanctioned detached-execution step, and its verbatim
+   output (or a truthful non-completion record) is committed by a follow-up
+   evidence-collection task.
+
+4. **When blocked, say so.** If you cannot obtain a required measurement,
+   report the blocker plainly (what you tried, why it did not finish). Do not
+   fill the gap with fiction. Escalate to a human operator.
+
+Forensic note for reviewers: fabricated metrics tend to show tells the genuine
+code cannot produce — e.g. uniform fixed-decimal losses where the code prints
+full `String(Float32)` precision, monotone evenly-spaced loss curves, or a
+"completed" artifact timestamped before any run could have finished.
 
 ---
 
