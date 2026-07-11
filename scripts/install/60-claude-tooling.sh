@@ -4,7 +4,7 @@
 # Steps:
 #   1. Install Claude Code CLI (via curl installer)
 #   2. Merge settings.json: register Hephaestus marketplace + plugin
-#   3. Clone or update ProjectMnemosyne agent brain seed
+#   3. Clone or update Mnemosyne agent brain seed
 #   4. Install Codex skills from Hephaestus (graceful skip if absent)
 #
 # Idempotent: each step checks state before acting.
@@ -97,27 +97,27 @@ PYEOF
     check_pass "settings.json — Hephaestus marketplace and plugin registered"
 fi
 
-# ─── Step 3: ProjectMnemosyne agent brain seed ────────────────────────────────
-MNEMOSYNE_DIR="$HOME/.agent-brain/ProjectMnemosyne"
+# ─── Step 3: Mnemosyne agent brain seed ────────────────────────────────
+MNEMOSYNE_DIR="$HOME/.agent-brain/Mnemosyne"
 mkdir -p "$HOME/.agent-brain"
 
 if [[ -d "$MNEMOSYNE_DIR/.git" ]]; then
     # Already cloned — try to update
     if git -C "$MNEMOSYNE_DIR" pull --ff-only origin main >/dev/null 2>&1; then
-        check_pass "ProjectMnemosyne — up to date"
+        check_pass "Mnemosyne — up to date"
     else
-        check_warn "ProjectMnemosyne pull failed (offline? non-fast-forward?)"
+        check_warn "Mnemosyne pull failed (offline? non-fast-forward?)"
     fi
 else
-    check_warn "ProjectMnemosyne — not seeded at $MNEMOSYNE_DIR"
+    check_warn "Mnemosyne — not seeded at $MNEMOSYNE_DIR"
     if [[ "${INSTALL:-false}" == "true" ]]; then
-        echo -e "    ${BLUE}→${NC} Seeding ProjectMnemosyne..."
+        echo -e "    ${BLUE}→${NC} Seeding Mnemosyne..."
         if git clone --depth 1 \
-            https://github.com/HomericIntelligence/ProjectMnemosyne \
+            https://github.com/HomericIntelligence/Mnemosyne \
             "$MNEMOSYNE_DIR" >/dev/null 2>&1; then
-            check_pass "ProjectMnemosyne — seeded to $MNEMOSYNE_DIR"
+            check_pass "Mnemosyne — seeded to $MNEMOSYNE_DIR"
         else
-            check_warn "ProjectMnemosyne clone failed (offline? check network)"
+            check_warn "Mnemosyne clone failed (offline? check network)"
         fi
     fi
 fi

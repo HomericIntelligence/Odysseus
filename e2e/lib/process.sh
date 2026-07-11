@@ -90,12 +90,12 @@ start_agamemnon_bg() {
 
     # Search for the binary in known locations
     for candidate in \
-        "${odysseus_root}/build/ProjectAgamemnon/ProjectAgamemnon_server" \
-        "${odysseus_root}/control/ProjectAgamemnon/build/debug/ProjectAgamemnon_server" \
-        "$(command -v ProjectAgamemnon_server 2>/dev/null)"; do
+        "${odysseus_root}/build/Agamemnon/Agamemnon_server" \
+        "${odysseus_root}/control/Agamemnon/build/debug/Agamemnon_server" \
+        "$(command -v Agamemnon_server 2>/dev/null)"; do
         [ -x "$candidate" ] && bin="$candidate" && break
     done
-    [ -z "$bin" ] && { echo "ERROR: ProjectAgamemnon_server not found. Run 'just build' first." >&2; return 1; }
+    [ -z "$bin" ] && { echo "ERROR: Agamemnon_server not found. Run 'just build' first." >&2; return 1; }
 
     NATS_URL="nats://localhost:${NATS_PORT}" PORT="$AGAMEMNON_PORT" "$bin" >/dev/null 2>&1 &
     register_pid $!

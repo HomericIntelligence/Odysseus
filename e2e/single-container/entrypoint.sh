@@ -32,7 +32,7 @@ done
 echo "  NATS healthy"
 
 # Start Agamemnon
-NATS_URL=nats://localhost:4222 PORT=8080 ProjectAgamemnon_server >/dev/null 2>&1 &
+NATS_URL=nats://localhost:4222 PORT=8080 Agamemnon_server >/dev/null 2>&1 &
 AGAMEMNON_PID=$!
 echo "  Agamemnon started (PID $AGAMEMNON_PID)"
 
