@@ -3,9 +3,9 @@
 #
 # Steps:
 #   1. Install Claude Code CLI (via curl installer)
-#   2. Merge settings.json: register ProjectHephaestus marketplace + plugin
+#   2. Merge settings.json: register Hephaestus marketplace + plugin
 #   3. Clone or update ProjectMnemosyne agent brain seed
-#   4. Install Codex skills from ProjectHephaestus (graceful skip if absent)
+#   4. Install Codex skills from Hephaestus (graceful skip if absent)
 #
 # Idempotent: each step checks state before acting.
 #
@@ -44,10 +44,10 @@ fi
 SETTINGS="$HOME/.claude/settings.json"
 mkdir -p "$HOME/.claude"
 
-# Values confirmed from shared/ProjectHephaestus/.claude-plugin/marketplace.json
-MARKETPLACE_NAME="ProjectHephaestus"
-MARKETPLACE_URL="https://github.com/HomericIntelligence/ProjectHephaestus.git"
-PLUGIN_KEY="hephaestus@ProjectHephaestus"
+# Values confirmed from shared/Hephaestus/.claude-plugin/marketplace.json
+MARKETPLACE_NAME="Hephaestus"
+MARKETPLACE_URL="https://github.com/HomericIntelligence/Hephaestus.git"
+PLUGIN_KEY="hephaestus@Hephaestus"
 
 if [[ -f "$SETTINGS" ]]; then
     # Check if already configured
@@ -60,9 +60,9 @@ plugins = s.get('enabledPlugins', {})
 ok = ('$MARKETPLACE_NAME' in marketplaces and '$PLUGIN_KEY' in plugins)
 sys.exit(0 if ok else 1)
 " 2>/dev/null; then
-        check_pass "settings.json — ProjectHephaestus marketplace and plugin already configured"
+        check_pass "settings.json — Hephaestus marketplace and plugin already configured"
     else
-        check_fail "settings.json — ProjectHephaestus not registered"
+        check_fail "settings.json — Hephaestus not registered"
         if [[ "${INSTALL:-false}" == "true" ]]; then
             _do_settings_merge=true
         fi
@@ -92,9 +92,9 @@ s.setdefault("enabledPlugins", {})["$PLUGIN_KEY"] = True
 with open(settings_path, "w") as f:
     json.dump(s, f, indent=2)
 
-print("    settings.json updated — ProjectHephaestus registered")
+print("    settings.json updated — Hephaestus registered")
 PYEOF
-    check_pass "settings.json — ProjectHephaestus marketplace and plugin registered"
+    check_pass "settings.json — Hephaestus marketplace and plugin registered"
 fi
 
 # ─── Step 3: ProjectMnemosyne agent brain seed ────────────────────────────────
@@ -123,14 +123,14 @@ else
 fi
 
 # ─── Step 4: Codex skills ─────────────────────────────────────────────────────
-SKILL_INSTALLER="$ODYSSEUS_ROOT/shared/ProjectHephaestus/skills/.system/skill-installer/scripts/install-skill-from-github.py"
+SKILL_INSTALLER="$ODYSSEUS_ROOT/shared/Hephaestus/skills/.system/skill-installer/scripts/install-skill-from-github.py"
 
 if has_cmd codex; then
     if [[ -f "$SKILL_INSTALLER" ]]; then
         if [[ "${INSTALL:-false}" == "true" ]]; then
-            echo -e "    ${BLUE}→${NC} Installing Codex skills from ProjectHephaestus..."
+            echo -e "    ${BLUE}→${NC} Installing Codex skills from Hephaestus..."
             if python3 "$SKILL_INSTALLER" \
-                --repo HomericIntelligence/ProjectHephaestus \
+                --repo HomericIntelligence/Hephaestus \
                 --path skills/repo-analyze skills/repo-analyze-quick skills/repo-analyze-strict \
                        skills/advise skills/learn \
                 --dest "$HOME/.codex/skills" 2>&1; then
@@ -146,7 +146,7 @@ if has_cmd codex; then
             fi
         fi
     else
-        check_warn "Codex: skill-installer not present in ProjectHephaestus (skipped)"
+        check_warn "Codex: skill-installer not present in Hephaestus (skipped)"
     fi
 else
     check_warn "Codex: binary not found on PATH (skipped)"

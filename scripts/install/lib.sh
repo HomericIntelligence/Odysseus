@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/install/lib.sh — Shared helpers for Odysseus install phase scripts
 #
-# Sources ProjectHephaestus install_helpers.sh if available, otherwise defines
+# Sources Hephaestus install_helpers.sh if available, otherwise defines
 # a minimal inline set of the same helpers.
 #
 # Usage: source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -18,7 +18,7 @@ if [[ -z "${ODYSSEUS_ROOT:-}" ]]; then
 fi
 
 # ─── Source or inline helpers ─────────────────────────────────────────────────
-_HELPERS_LIB="$ODYSSEUS_ROOT/shared/ProjectHephaestus/scripts/shell/lib/install_helpers.sh"
+_HELPERS_LIB="$ODYSSEUS_ROOT/shared/Hephaestus/scripts/shell/lib/install_helpers.sh"
 
 if [[ -f "$_HELPERS_LIB" ]]; then
     # shellcheck source=/dev/null

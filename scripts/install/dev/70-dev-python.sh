@@ -27,7 +27,7 @@ PYTHON_REPOS=(
     "provisioning/ProjectTelemachy"
     "provisioning/ProjectKeystone"
     "research/ProjectScylla"
-    "shared/ProjectHephaestus"
+    "shared/Hephaestus"
     "research/ProjectOdyssey"
     "testing/ProjectCharybdis"
 )

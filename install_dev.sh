@@ -75,7 +75,7 @@ if ! command -v pixi >/dev/null 2>&1; then
 fi
 
 # Check at least one submodule is initialized (non-empty submodule dir)
-if [[ ! -f "$ODYSSEUS_ROOT/shared/ProjectHephaestus/scripts/shell/install.sh" ]]; then
+if [[ ! -f "$ODYSSEUS_ROOT/shared/Hephaestus/scripts/shell/install.sh" ]]; then
     PREREQ_ERRORS+=("Submodules not initialized — run: bash install.sh --install first (phase 30)")
 fi
 
@@ -88,7 +88,7 @@ if [[ ${#PREREQ_ERRORS[@]} -gt 0 ]]; then
 fi
 
 # ─── Source helpers ───────────────────────────────────────────────────────────
-HELPERS_LIB="$ODYSSEUS_ROOT/shared/ProjectHephaestus/scripts/shell/lib/install_helpers.sh"
+HELPERS_LIB="$ODYSSEUS_ROOT/shared/Hephaestus/scripts/shell/lib/install_helpers.sh"
 if [[ -f "$HELPERS_LIB" ]]; then
     # shellcheck source=/dev/null
     source "$HELPERS_LIB"
