@@ -272,10 +272,14 @@ if [[ $DRY_RUN -eq 0 ]]; then
     cd "$WORK/$NEW_REPO"
 
     # If gh repo create --add-readme produced an initial commit, reset to a clean tree
-    if [[ -n "$(git status --porcelain 2>/dev/null || true)" || "$(git log --oneline | wc -l)" -gt 0 ]]; then
+    if [[ -n "$(git status --porcelain 2>/dev/null || printf '')" || "$(git log --oneline | wc -l)" -gt 0 ]]; then
         note "  Cleaning initial auto-created README from --add-readme flag"
-        git rm -f README.md 2>/dev/null || true
-        git commit --allow-empty -m "chore: remove auto-created README placeholder" 2>&1 | tail -3 || true
+        if ! git rm -f README.md 2>/dev/null; then
+            warn "README.md removal skipped (may already be absent)"
+        fi
+        if ! { git commit --allow-empty -m "chore: remove auto-created README placeholder" 2>&1 | tail -3; }; then
+            warn "empty-commit step failed (may already be on initial empty commit)"
+        fi
     fi
 
     git add -A
