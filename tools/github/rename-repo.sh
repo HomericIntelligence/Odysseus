@@ -277,7 +277,8 @@ note "Phase 4 — pre-commit guard: residual hit check"
 if [[ $DRY_RUN -eq 1 ]]; then
     note "  dry-run: skipping residual check (workdir is synthetic)."
 else
-    # -I  skip binary files. Allow .git/ to leak (we exclude it above anyway).        HITS="$(
+    # -I  skip binary files. Allow .git/ to leak (we exclude it above anyway).
+    HITS="$(
         grep -RIE \
             --binary-files=without-match \
             -e "${OLD_REPO}" \
