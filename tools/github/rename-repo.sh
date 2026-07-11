@@ -136,7 +136,7 @@ require_cmd mktemp
 require_cmd realpath
 
 # Verify gh auth and capture login
-GH_LOGIN="$(gh api user --jq .login 2>/dev/null || true)"
+GH_LOGIN="$(gh api user --jq .login 2>/dev/null || printf '')"
 [[ -n "$GH_LOGIN" ]] || die "gh CLI is not authenticated. Run 'gh auth login' first."
 
 note "Preflight"
@@ -230,7 +230,7 @@ fi
 # Refuse to run if the worktree has stray uncommitted changes from a prior
 # partial run; the sed pipeline would silently corrupt them.
 if [[ $DRY_RUN -eq 0 ]]; then
-    if [[ -n "$(git status --porcelain 2>/dev/null || true)" ]]; then
+    if [[ -n "$(git status --porcelain 2>/dev/null || printf '')" ]]; then
         KEEP_WORKDIR=1
         die "worktree has uncommitted changes -- clean or stash first"
     fi
@@ -286,7 +286,7 @@ else
             -e "${SHOUTY_OLD}" \
             . 2>/dev/null \
         | grep -v '^\./\.git/' \
-        || true
+        || printf ''
     )"
 
     if [[ -n "$HITS" ]]; then

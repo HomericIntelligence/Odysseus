@@ -65,7 +65,7 @@ USAGE
 die() {
     printf '  ERROR  %s\n' "$*" >&2
     trap - EXIT
-    if [[ -d .git ]] && [[ -n "$(git status --porcelain 2>/dev/null || true)" ]]; then
+    if [[ -d .git ]] && [[ -n "$(git status --porcelain 2>/dev/null || printf '')" ]]; then
         printf '  NOTE   working tree is dirty after this abort -- inspect with: git status --short\n' >&2
     fi
     exit 1
@@ -108,7 +108,7 @@ ok "Hephaestus + Athena both present on GitHub"
 # preview-only --dry-run must work on any working tree state, otherwise
 # an operator cannot sanity-check the script's plan against a tree that
 # still carries partial edits from earlier aborts.
-if [[ ${DRY_RUN:-0} -eq 0 ]] && [[ -n "$(git status --porcelain 2>/dev/null || true)" ]]; then
+if [[ ${DRY_RUN:-0} -eq 0 ]] && [[ -n "$(git status --porcelain 2>/dev/null || printf '')" ]]; then
     die "Working tree is dirty -- commit/stash before running this script:
 $(git status --short | head -10)"
 fi
@@ -122,7 +122,7 @@ fi
 # Cleanup-aware trap: if we exit with a dirty working tree, leave the
 # operator a reminder. (Unlike the other two scripts, Phase D operates
 # in the meta-repo's own working tree, not a /tmp checkout.)
-trap '[[ -n "$(git status --porcelain 2>/dev/null || true)" ]] && \
+trap '[[ -n "$(git status --porcelain 2>/dev/null || printf '')" ]] && \
     note "Meta-repo is dirty on exit -- review with: git diff, then git add -p / git reset as needed"' EXIT
 
 # Branch creation
@@ -365,12 +365,12 @@ if [[ $DRY_RUN -eq 0 ]]; then
         --exclude-dir=infrastructure --exclude-dir=research --exclude-dir=testing \
         --exclude-dir=backups --exclude-dir=tools --exclude-dir=hephaestus-split \
         --exclude=CHANGELOG.md \
-        2>/dev/null || true)
+        2>/dev/null || printf '')
     [[ -z "$HITS" ]] || die "FAIL: residual ProjectHephaestus refs in meta-repo (first 10):
 $(echo "$HITS" | head -10)"
     ok "  0 residual ProjectHephaestus refs in meta-repo"
 
-    DIFFSTAT=$(git diff --shortstat HEAD || true)
+    DIFFSTAT=$(git diff --shortstat HEAD || printf '')
     if [[ -z "$DIFFSTAT" ]]; then
         die "Empty diff -- the script's pre-commit guard caught a no-op (check that the prior phases actually changed anything)"
     fi

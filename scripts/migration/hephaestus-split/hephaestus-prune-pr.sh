@@ -92,7 +92,7 @@ gh repo view "$ORG/$NEW_REPO" --json name >/dev/null 2>&1 \
 # renamed, the old slug URL still resolves -- but the response's `name`
 # field is the *current* canonical name. Only die if the old name is
 # itself still the canonical name (i.e. rename did not actually happen).
-OLD_NAME="$(gh repo view "$ORG/$OLD_REPO" --json name --jq '.name' 2>/dev/null || true)"
+OLD_NAME="$(gh repo view "$ORG/$OLD_REPO" --json name --jq '.name' 2>/dev/null || printf '')"
 case "$OLD_NAME" in
     "$NEW_REPO")
         note "Phase A confirmed via GitHub redirect: old URL $ORG/$OLD_REPO now serves $ORG/$NEW_REPO"
@@ -132,7 +132,7 @@ if [[ $DRY_RUN -eq 0 ]]; then
     fi
 
     # Dirty-worktree guard: refuse to overwrite local edits.
-    if [[ -n "$(git status --porcelain 2>/dev/null || true)" ]]; then
+    if [[ -n "$(git status --porcelain 2>/dev/null || printf '')" ]]; then
         KEEP_WORKDIR=1
         die "Working tree has uncommitted changes; clean (or stash) and re-run."
     fi
@@ -182,16 +182,16 @@ note "Phase 6 — pre-commit residual scan"
 ALLOW_EMPTY=0
 if [[ $DRY_RUN -eq 0 ]]; then
     HITS=$(grep -RIE 'ProjectHephaestus|project-hephaestus' . 2>/dev/null \
-        | grep -v '\.git/' | grep -v '^Binary' || true)
+        | grep -v '\.git/' | grep -v '^Binary' || printf '')
     [[ -z "$HITS" ]] || { KEEP_WORKDIR=1; die "FAIL: residual old-name refs (first 10):
 $(echo "$HITS" | head -10)"; }
     ok "  0 residual ProjectHephaestus|project-hephaestus refs"
 
-    REMAIN=$(find . -maxdepth 1 -type d \( -name .claude-plugin -o -name .codex-plugin -o -name plugins -o -name skills -o -name assets -o -name '.agents' \) 2>/dev/null || true)
+    REMAIN=$(find . -maxdepth 1 -type d \( -name .claude-plugin -o -name .codex-plugin -o -name plugins -o -name skills -o -name assets -o -name '.agents' \) 2>/dev/null || printf '')
     [[ -z "$REMAIN" ]] || { KEEP_WORKDIR=1; die "FAIL: carve-out paths still present: $REMAIN"; }
     ok "  0 carve-out paths remain"
 
-    DIFFSTAT=$(git diff --shortstat || true)
+    DIFFSTAT=$(git diff --shortstat || printf '')
     if [[ -z "$DIFFSTAT" ]]; then
         note "  Empty diff -- will pass --allow-empty to commit"
         ALLOW_EMPTY=1
