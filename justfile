@@ -382,9 +382,9 @@ keystone-status:
 # Workflows
 # ===========================================================================
 
-# Run a named workflow via ProjectTelemachy
+# Run a named workflow via Telemachy
 telemachy-run WORKFLOW:
-    cd provisioning/ProjectTelemachy && just run WORKFLOW={{ WORKFLOW }}
+    cd provisioning/Telemachy && just run WORKFLOW={{ WORKFLOW }}
 
 # ===========================================================================
 # Research / Testing
@@ -661,7 +661,7 @@ odysseus-console NATS_URL="nats://localhost:4222":
 install-python:
     pip install -e shared/Hephaestus
     pip install -e infrastructure/Hermes
-    pip install -e provisioning/ProjectTelemachy
+    pip install -e provisioning/Telemachy
 
 # ===========================================================================
 # IPC E2E Tests (75 test cases × 4 topologies)
