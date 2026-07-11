@@ -6,7 +6,7 @@ set -euo pipefail
 # Requires confirmation before --all.
 
 ORG="HomericIntelligence"
-ALL_REPOS=(Odysseus AchaeanFleet Argus Hermes Telemachy Keystone Myrmidons Proteus Odyssey Scylla Mnemosyne ProjectHephaestus Agamemnon Nestor Charybdis)
+ALL_REPOS=(Odysseus AchaeanFleet Argus Hermes Telemachy Keystone Myrmidons Proteus Odyssey Scylla Mnemosyne Hephaestus Agamemnon Nestor Charybdis Athena)
 
 if [[ "${1:-}" == "--repo" && -n "${2:-}" ]]; then
   repo="$2"
@@ -14,7 +14,7 @@ if [[ "${1:-}" == "--repo" && -n "${2:-}" ]]; then
   gh api -X DELETE "repos/$ORG/$repo/branches/main/protection"
   echo "Done: $repo"
 elif [[ "${1:-}" == "--all" ]]; then
-  echo "WARNING: This will remove classic branch protection from ALL 15 repos."
+  echo "WARNING: This will remove classic branch protection from ALL 16 repos."
   echo "The org-level ruleset must already be active before running this."
   read -r -p "Type 'yes' to confirm: " confirm
   if [[ "$confirm" != "yes" ]]; then
