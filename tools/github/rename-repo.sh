@@ -140,7 +140,7 @@ GH_LOGIN="$(gh api user --jq .login 2>/dev/null || printf '')"
 [[ -n "$GH_LOGIN" ]] || die "gh CLI is not authenticated. Run 'gh auth login' first."
 
 note "Preflight"
-echo "  gh version:        $(gh --version | head -1)"
+echo "  gh version:        $(head -1 <<<"$(gh --version)")"
 echo "  authenticated as:  $GH_LOGIN"
 echo "  target org:        $ORG"
 echo "  old repo:          $OLD_REPO"
@@ -277,8 +277,7 @@ note "Phase 4 — pre-commit guard: residual hit check"
 if [[ $DRY_RUN -eq 1 ]]; then
     note "  dry-run: skipping residual check (workdir is synthetic)."
 else
-    # -I  skip binary files. Allow .git/ to leak (we exclude it above anyway).
-    HITS="$(
+    # -I  skip binary files. Allow .git/ to leak (we exclude it above anyway).        HITS="$(
         grep -RIE \
             --binary-files=without-match \
             -e "${OLD_REPO}" \
@@ -291,7 +290,7 @@ else
 
     if [[ -n "$HITS" ]]; then
         warn "FAIL: residual old-name refs after sed:"
-        printf '%s\n' "$HITS" | head -80 >&2
+        head -80 <<<"$HITS" >&2
         KEEP_WORKDIR=1
         die "manual fixup required — workdir preserved at $WORK/checkout"
     fi
@@ -301,7 +300,11 @@ fi
 # Diff summary (so PR body and human review see what changed)
 if [[ $DRY_RUN -eq 0 ]]; then
     note "Phase 4.5 — diff summary"
-    git status --short | head -50
+    # Use here-string (head -50 <<<"$...") instead of "$cmd | head" —
+    # under `set -euo pipefail`, the latter triggers SIGPIPE once head
+    # exits (very common for renaming massive repos like Odyssey / Scylla).
+    STAT="$(git status --short)"
+    head -50 <<<"$STAT"
     git diff --shortstat
     echo
 fi
@@ -401,7 +404,7 @@ git push -u origin "$BRANCH"
 
 # PR body: auto-generated, references the diff
 PR_DIFF_FULL="$(git diff --name-only "origin/$DEFAULT_BRANCH"...\"$BRANCH\")"
-PR_DIFF_FILES="$(printf '%s\n' "$PR_DIFF_FULL" | head -60)"
+PR_DIFF_FILES="$(head -60 <<<"$PR_DIFF_FULL")"
 PR_DIFF_SHORTSTAT="$(git diff --shortstat "origin/$DEFAULT_BRANCH"..."$BRANCH")"
 
 PR_BODY="$(cat <<EOF
