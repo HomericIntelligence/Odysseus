@@ -14,7 +14,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 section "Pixi Environments"
 
 if ! has_cmd pixi; then
-    check_fail "pixi not found — install it first (phase 20 / ProjectHephaestus installer)"
+    check_fail "pixi not found — install it first (phase 20 / Hephaestus installer)"
     return 0 2>/dev/null || exit 0
 fi
 
@@ -34,7 +34,7 @@ PIXI_DIRS=(
     "provisioning/ProjectTelemachy"
     "research/ProjectOdyssey"
     "research/ProjectScylla"
-    "shared/ProjectHephaestus"
+    "shared/Hephaestus"
     "shared/ProjectMnemosyne"
     "testing/ProjectCharybdis"
 )

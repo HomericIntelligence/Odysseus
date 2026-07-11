@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Phase 20 — Base Tooling
 #
-# Delegates to ProjectHephaestus/scripts/shell/install.sh which handles:
+# Delegates to Hephaestus/scripts/shell/install.sh which handles:
 #   Homebrew, git, curl, jq, just, gh CLI, Node/npm, Tailscale, Python/pixi,
 #   Go, NATS server, container runtime, C++ build chain, Claude Code, etc.
 #
 # Passes through the current --role and --install flags.
-# Non-zero exit from ProjectHephaestus is recorded as a failure but execution
+# Non-zero exit from Hephaestus is recorded as a failure but execution
 # continues so subsequent phases can still run.
 #
 # shellcheck disable=SC2015
@@ -15,13 +15,13 @@ set -uo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-section "Base Tooling (ProjectHephaestus)"
+section "Base Tooling (Hephaestus)"
 
-HEPHAESTUS="$ODYSSEUS_ROOT/shared/ProjectHephaestus"
+HEPHAESTUS="$ODYSSEUS_ROOT/shared/Hephaestus"
 HEPHAESTUS_INSTALLER="$HEPHAESTUS/scripts/shell/install.sh"
 
 if [[ ! -f "$HEPHAESTUS_INSTALLER" ]]; then
-    check_fail "ProjectHephaestus installer not found at $HEPHAESTUS_INSTALLER"
+    check_fail "Hephaestus installer not found at $HEPHAESTUS_INSTALLER"
     check_warn "Run phase 30 (submodule init) first, then re-run phase 20."
     return 0 2>/dev/null || exit 0
 fi
@@ -36,7 +36,7 @@ echo -e "    ${BLUE}→${NC} Running: bash $HEPHAESTUS_INSTALLER ${ARGS[*]}"
 # in its summary). Treat non-zero as a warning so the Odysseus phase summary
 # doesn't incorrectly mark phase 20 as failed.
 if bash "$HEPHAESTUS_INSTALLER" "${ARGS[@]}"; then
-    check_pass "ProjectHephaestus base tooling: all checks passed"
+    check_pass "Hephaestus base tooling: all checks passed"
 else
-    check_warn "ProjectHephaestus base tooling: some items needed installation (see output above)"
+    check_warn "Hephaestus base tooling: some items needed installation (see output above)"
 fi
