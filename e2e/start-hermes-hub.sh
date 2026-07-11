@@ -77,8 +77,8 @@ cd ~/Odysseus
 
 # Resolve symlinks for podman (can't follow symlinks in build contexts)
 PROJECT_ROOT="\$(pwd)"
-HERMES_DIR="\$(readlink -f infrastructure/ProjectHermes)"
-ARGUS_DIR="\$(readlink -f infrastructure/ProjectArgus)"
+HERMES_DIR="\$(readlink -f infrastructure/Hermes)"
+ARGUS_DIR="\$(readlink -f infrastructure/Argus)"
 MYRMIDONS_DIR="\$(readlink -f provisioning/Myrmidons)"
 PODMAN_SOCK="\${XDG_RUNTIME_DIR:-/run/user/\$(id -u)}/podman/podman.sock"
 

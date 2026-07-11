@@ -10,8 +10,8 @@ COMPOSE_FILE="$ODYSSEUS_ROOT/docker-compose.e2e.yml"
 
 # Resolve symlink paths for podman (can't follow symlinks as build contexts)
 PROJECT_ROOT="$ODYSSEUS_ROOT"
-HERMES_DIR="$(readlink -f "$ODYSSEUS_ROOT/infrastructure/ProjectHermes")"
-ARGUS_DIR="$(readlink -f "$ODYSSEUS_ROOT/infrastructure/ProjectArgus")"
+HERMES_DIR="$(readlink -f "$ODYSSEUS_ROOT/infrastructure/Hermes")"
+ARGUS_DIR="$(readlink -f "$ODYSSEUS_ROOT/infrastructure/Argus")"
 MYRMIDONS_DIR="$(readlink -f "$ODYSSEUS_ROOT/provisioning/Myrmidons")"
 PODMAN_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
 
