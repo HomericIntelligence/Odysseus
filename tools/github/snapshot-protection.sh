@@ -6,7 +6,7 @@ set -euo pipefail
 # Usage: ./tools/github/snapshot-protection.sh > configs/github/backups/branch-protection-$(date +%Y%m%d).json
 
 ORG="HomericIntelligence"
-REPOS=(Odysseus AchaeanFleet ProjectArgus ProjectHermes ProjectTelemachy ProjectKeystone Myrmidons ProjectProteus ProjectOdyssey ProjectScylla ProjectMnemosyne ProjectHephaestus ProjectAgamemnon ProjectNestor ProjectCharybdis)
+REPOS=(Odysseus AchaeanFleet Argus Hermes Telemachy Keystone Myrmidons Proteus Odyssey Scylla Mnemosyne ProjectHephaestus Agamemnon Nestor Charybdis)
 
 result="[]"
 for repo in "${REPOS[@]}"; do

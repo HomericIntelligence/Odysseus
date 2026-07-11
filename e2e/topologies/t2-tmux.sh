@@ -38,11 +38,11 @@ case "$ACTION" in
         # Pane 1: Agamemnon
         agamemnon_bin=""
         for candidate in \
-            "${ODYSSEUS_ROOT}/build/ProjectAgamemnon/ProjectAgamemnon_server" \
-            "${ODYSSEUS_ROOT}/control/ProjectAgamemnon/build/debug/ProjectAgamemnon_server"; do
+            "${ODYSSEUS_ROOT}/build/Agamemnon/Agamemnon_server" \
+            "${ODYSSEUS_ROOT}/control/Agamemnon/build/debug/Agamemnon_server"; do
             [ -x "$candidate" ] && agamemnon_bin="$candidate" && break
         done
-        [ -z "$agamemnon_bin" ] && { echo "ERROR: ProjectAgamemnon_server not found" >&2; exit 1; }
+        [ -z "$agamemnon_bin" ] && { echo "ERROR: Agamemnon_server not found" >&2; exit 1; }
 
         tmux split-window -t "$SESSION_NAME" -h \
             "NATS_URL=nats://localhost:$NATS_PORT PORT=$AGAMEMNON_PORT $agamemnon_bin 2>&1; read"

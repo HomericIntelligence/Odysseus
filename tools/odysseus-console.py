@@ -6,7 +6,7 @@ they arrive, providing real-time visibility into the distributed agent mesh.
 Interview questions published by research myrmidons (ADR-013 §5) are surfaced
 as interactive prompts; answers are published back on the answer subject.
 
-Submit mode registers a new high-level task with ProjectNestor
+Submit mode registers a new high-level task with Nestor
 (POST /v1/research) and then drops into watch mode so the interview can begin.
 
 Handles NATS connection gracefully: shows [DISCONNECTED] / [CONNECTED] state

@@ -6,7 +6,7 @@ set -euo pipefail
 # Requires confirmation before --all.
 
 ORG="HomericIntelligence"
-ALL_REPOS=(Odysseus AchaeanFleet ProjectArgus ProjectHermes ProjectTelemachy ProjectKeystone Myrmidons ProjectProteus ProjectOdyssey ProjectScylla ProjectMnemosyne ProjectHephaestus ProjectAgamemnon ProjectNestor ProjectCharybdis)
+ALL_REPOS=(Odysseus AchaeanFleet Argus Hermes Telemachy Keystone Myrmidons Proteus Odyssey Scylla Mnemosyne ProjectHephaestus Agamemnon Nestor Charybdis)
 
 if [[ "${1:-}" == "--repo" && -n "${2:-}" ]]; then
   repo="$2"
