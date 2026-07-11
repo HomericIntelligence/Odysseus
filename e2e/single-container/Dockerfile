@@ -11,25 +11,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip3 install --break-system-packages conan
 
 WORKDIR /src
-COPY control/ProjectAgamemnon/conanfile.py ./
-COPY control/ProjectAgamemnon/conan/ conan/
+COPY control/Agamemnon/conanfile.py ./
+COPY control/Agamemnon/conan/ conan/
 RUN conan install . --output-folder=build --profile=conan/profiles/default --build=missing
 
-COPY control/ProjectAgamemnon/CMakeLists.txt ./
-COPY control/ProjectAgamemnon/CMakePresets.json ./
-COPY control/ProjectAgamemnon/cmake/ cmake/
-COPY control/ProjectAgamemnon/include/ include/
-COPY control/ProjectAgamemnon/src/ src/
-COPY control/ProjectAgamemnon/test/ test/
+COPY control/Agamemnon/CMakeLists.txt ./
+COPY control/Agamemnon/CMakePresets.json ./
+COPY control/Agamemnon/cmake/ cmake/
+COPY control/Agamemnon/include/ include/
+COPY control/Agamemnon/src/ src/
+COPY control/Agamemnon/test/ test/
 
 RUN cmake -B build -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake \
     -DCMAKE_BUILD_TYPE=Release \
-    -DProjectAgamemnon_BUILD_TESTING=OFF \
-    -DProjectAgamemnon_ENABLE_CLANG_TIDY=OFF \
-    -DProjectAgamemnon_ENABLE_CPPCHECK=OFF \
-    -DProjectAgamemnon_WARNINGS_AS_ERRORS=OFF \
-    && cmake --build build --target ProjectAgamemnon_server
+    -DAgamemnon_BUILD_TESTING=OFF \
+    -DAgamemnon_ENABLE_CLANG_TIDY=OFF \
+    -DAgamemnon_ENABLE_CPPCHECK=OFF \
+    -DAgamemnon_WARNINGS_AS_ERRORS=OFF \
+    && cmake --build build --target Agamemnon_server
 
 # ── Stage 2: Runtime with all 3 processes ────────────────────────────────────
 FROM ubuntu:24.04
@@ -49,7 +49,7 @@ RUN wget -qO /tmp/nats.tar.gz \
 RUN pip3 install --break-system-packages --no-cache-dir nats-py
 
 # Copy Agamemnon binary
-COPY --from=agamemnon-builder /src/build/ProjectAgamemnon_server /usr/local/bin/
+COPY --from=agamemnon-builder /src/build/Agamemnon_server /usr/local/bin/
 
 # Copy hello-myrmidon
 COPY provisioning/Myrmidons/hello-world/main.py /app/myrmidon/main.py

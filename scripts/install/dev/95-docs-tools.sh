@@ -21,8 +21,8 @@ fi
 
 # Repos expected to have docs tooling (mkdocs, sphinx, etc.)
 DOCS_REPOS=(
-    "research/ProjectOdyssey"
-    "research/ProjectScylla"
+    "research/Odyssey"
+    "research/Scylla"
 )
 
 for repo in "${DOCS_REPOS[@]}"; do
