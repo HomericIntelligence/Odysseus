@@ -5,7 +5,7 @@
 #
 # Runs only the phases that require root:
 #   Phase 10 — apt system packages
-#   Phase 20 — ProjectHephaestus base tooling (installs system-level tools)
+#   Phase 20 — Hephaestus base tooling (installs system-level tools)
 #
 # Reads STATE_FILE (written by Phase 1) to skip phases already satisfied.
 # Positional args: phase numbers to skip (forwarded from --skip flags).
@@ -54,7 +54,7 @@ else
     source "$(dirname "${BASH_SOURCE[0]}")/10-system-deps.sh"
 fi
 
-# ─── Phase 20: Base tooling (ProjectHephaestus) ───────────────────────────────
+# ─── Phase 20: Base tooling (Hephaestus) ───────────────────────────────
 if _should_skip "20"; then
     check_skip "Phase 20: skipped (--skip)"
 elif [[ "${PHASE_20_MISSING:-true}" == "false" ]]; then

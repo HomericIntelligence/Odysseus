@@ -65,12 +65,12 @@ fi
 export ODYSSEUS_ROOT
 
 # ─── Source helpers ───────────────────────────────────────────────────────────
-HELPERS_LIB="$ODYSSEUS_ROOT/shared/ProjectHephaestus/scripts/shell/lib/install_helpers.sh"
+HELPERS_LIB="$ODYSSEUS_ROOT/shared/Hephaestus/scripts/shell/lib/install_helpers.sh"
 if [[ -f "$HELPERS_LIB" ]]; then
     # shellcheck source=/dev/null
     source "$HELPERS_LIB"
 else
-    # Inline minimal helpers — used only until phase 20 delegates to ProjectHephaestus
+    # Inline minimal helpers — used only until phase 20 delegates to Hephaestus
     RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
     BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
     _PASS=0; _FAIL=0; _WARN=0; _SKIP=0

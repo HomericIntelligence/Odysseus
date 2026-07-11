@@ -58,9 +58,9 @@
     path = shared/ProjectMnemosyne
     url = https://github.com/HomericIntelligence/ProjectMnemosyne.git
 
-[submodule "shared/ProjectHephaestus"]
-    path = shared/ProjectHephaestus
-    url = https://github.com/HomericIntelligence/ProjectHephaestus.git
+[submodule "shared/Hephaestus"]
+	path = shared/Hephaestus
+    url = https://github.com/HomericIntelligence/Hephaestus.git
 
 # ===========================================================================
 # Control
@@ -81,3 +81,6 @@
 [submodule "testing/ProjectCharybdis"]
     path = testing/ProjectCharybdis
     url = https://github.com/HomericIntelligence/ProjectCharybdis.git
+[submodule "agentic/Athena"]
+	path = agentic/Athena
+	url = https://github.com/HomericIntelligence/Athena.git

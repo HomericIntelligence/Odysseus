@@ -522,7 +522,7 @@ proteus-check:
     cd ci-cd/ProjectProteus && just check
 
 # ===========================================================================
-# Skills Marketplace (ProjectMnemosyne)
+# Skills Marketplace (Mnemosyne)
 # ===========================================================================
 
 # Validate all skill files in ProjectMnemosyne
@@ -542,32 +542,32 @@ mnemosyne-check:
     cd shared/ProjectMnemosyne && just check
 
 # ===========================================================================
-# Shared Utilities (ProjectHephaestus)
+# Shared Utilities (Hephaestus)
 # ===========================================================================
 
-# Run ProjectHephaestus unit + integration tests
+# Run Hephaestus unit + integration tests
 hephaestus-test:
-    cd shared/ProjectHephaestus && just test
+    cd shared/Hephaestus && just test
 
-# Run ProjectHephaestus linter
+# Run Hephaestus linter
 hephaestus-lint:
-    cd shared/ProjectHephaestus && just lint
+    cd shared/Hephaestus && just lint
 
-# Run ProjectHephaestus formatter
+# Run Hephaestus formatter
 hephaestus-format:
-    cd shared/ProjectHephaestus && just format
+    cd shared/Hephaestus && just format
 
-# Run ProjectHephaestus type checker
+# Run Hephaestus type checker
 hephaestus-typecheck:
-    cd shared/ProjectHephaestus && just typecheck
+    cd shared/Hephaestus && just typecheck
 
 # Run lint + format-check + typecheck quality gate
 hephaestus-check:
-    cd shared/ProjectHephaestus && just check
+    cd shared/Hephaestus && just check
 
 # Run pip-audit dependency vulnerability scan
 hephaestus-audit:
-    cd shared/ProjectHephaestus && just audit
+    cd shared/Hephaestus && just audit
 
 # ===========================================================================
 # E2E Pipeline Testing
@@ -665,7 +665,7 @@ odysseus-console NATS_URL="nats://localhost:4222":
 
 # Install all Python packages in editable mode
 install-python:
-    pip install -e shared/ProjectHephaestus
+    pip install -e shared/Hephaestus
     pip install -e infrastructure/ProjectHermes
     pip install -e provisioning/ProjectTelemachy
 
@@ -863,3 +863,20 @@ ecosystem-install-check role="all":
 # Run container-based install tests
 test-install os="all" role="worker":
     bash tests/install/run_install_tests.sh {{os}} {{role}}
+
+# ─── Athena (agent-host plugins/skills surface) ────────────────
+# Carved out of Hephaestus per ADR-016. Library half stays in
+# shared/Hephaestus; plugin/skill half lives here.
+
+athena-start:
+    cd agentic/Athena && just start
+
+athena-lint:
+    cd agentic/Athena && just lint
+
+athena-test:
+    cd agentic/Athena && just test
+
+athena-bootstrap:
+    @echo "Athena plugin manifest: agentic/Athena/.claude-plugin/plugin.json"
+    @echo "Enable in Claude Code: 'athena@Athena: true' in ~/.claude/settings.json"

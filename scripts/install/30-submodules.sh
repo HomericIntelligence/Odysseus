@@ -14,7 +14,7 @@ section "Submodule Initialization"
 
 # Key sentinel files — if these exist the submodule is properly initialized
 declare -A SENTINEL_FILES=(
-    ["shared/ProjectHephaestus"]="shared/ProjectHephaestus/scripts/shell/install.sh"
+    ["shared/Hephaestus"]="shared/Hephaestus/scripts/shell/install.sh"
     ["control/ProjectAgamemnon"]="control/ProjectAgamemnon/CMakeLists.txt"
     ["control/ProjectNestor"]="control/ProjectNestor/CMakeLists.txt"
     ["infrastructure/ProjectHermes"]="infrastructure/ProjectHermes/pixi.toml"

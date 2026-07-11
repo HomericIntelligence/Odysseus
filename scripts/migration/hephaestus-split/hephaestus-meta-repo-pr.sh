@@ -58,7 +58,18 @@ Flags:
 USAGE
 }
 
-die()  { printf '  ERROR  %s\n' "$*" >&2; exit 1; }
+# Silenced EXIT trap on die (so the trailing "Meta-repo is dirty on exit"
+# reminder doesn't double up with the error), but we still surface a
+# one-line git-status hint to the operator -- useful when partial edits
+# from Phases 4-8 are sitting in the working tree on a guarded abort.
+die() {
+    printf '  ERROR  %s\n' "$*" >&2
+    trap - EXIT
+    if [[ -d .git ]] && [[ -n "$(git status --porcelain 2>/dev/null || true)" ]]; then
+        printf '  NOTE   working tree is dirty after this abort -- inspect with: git status --short\n' >&2
+    fi
+    exit 1
+}
 note() { printf '  ----   %s\n' "$*"; }
 ok()   { printf '  OK     %s\n' "$*"; }
 
@@ -93,12 +104,20 @@ gh repo view "$ORG/Athena"    --json name >/dev/null 2>&1 \
     || die "$ORG/Athena not on GitHub -- Phase C incomplete"
 ok "Hephaestus + Athena both present on GitHub"
 
-# Working-tree must be clean
-if [[ -n "$(git status --porcelain 2>/dev/null || true)" ]]; then
+# Working-tree must be clean — but only when actually executing.  A
+# preview-only --dry-run must work on any working tree state, otherwise
+# an operator cannot sanity-check the script's plan against a tree that
+# still carries partial edits from earlier aborts.
+if [[ ${DRY_RUN:-0} -eq 0 ]] && [[ -n "$(git status --porcelain 2>/dev/null || true)" ]]; then
     die "Working tree is dirty -- commit/stash before running this script:
 $(git status --short | head -10)"
 fi
-ok "Working tree clean"
+if [[ ${DRY_RUN:-0} -eq 0 ]]; then
+    ok "Working tree clean"
+else
+    CT=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+    note "(dry-run: $CT modified file(s) in working tree -- preview only, no commit/push)"
+fi
 
 # Cleanup-aware trap: if we exit with a dirty working tree, leave the
 # operator a reminder. (Unlike the other two scripts, Phase D operates
@@ -272,6 +291,31 @@ if [[ $DRY_RUN -eq 0 ]]; then
         find .github/PULL_REQUEST_TEMPLATE -type f -exec sed -i 's|ProjectArgus|Argus|g' {} +
         ok "  .github/PULL_REQUEST_TEMPLATE/* updated"
     fi
+
+    # Meta-repo-owned install + e2e scripts (per ADR-015/016 — meta-repo
+    # owns top-level install runners; renaming inside each submodule is
+    # the submodule's own PR concern, NOT ours).
+    for f in install.sh install_dev.sh e2e/claude-myrmidon-multi.py; do
+        if [[ -f "$f" ]] && grep -qE 'ProjectHephaestus|project-hephaestus' "$f"; then
+            sed -i -e 's|ProjectHephaestus|Hephaestus|g' \
+                   -e 's|project-hephaestus|hephaestus|g' "$f"
+            ok "  $f updated"
+        fi
+    done
+    if [[ -d scripts/install ]] && grep -RlE 'ProjectHephaestus|project-hephaestus' scripts/install/ >/dev/null 2>&1; then
+        find scripts/install -type f -exec sed -i -e 's|ProjectHephaestus|Hephaestus|g' \
+                                              -e 's|project-hephaestus|hephaestus|g' {} +
+        ok "  scripts/install/* updated"
+    fi
+    # Other e2e shell harnesses (validate-conan-install.sh, validate-pip-install.sh, etc.)
+    for f in e2e/*.sh; do
+        [[ -f "$f" ]] || continue
+        if grep -qE 'ProjectHephaestus|project-hephaestus' "$f"; then
+            sed -i -e 's|ProjectHephaestus|Hephaestus|g' \
+                   -e 's|project-hephaestus|hephaestus|g' "$f"
+            ok "  $(basename "$f") updated"
+        fi
+    done
 fi
 
 # ─── Phase 8: README ecosystem board auto-regen ─────────────────
@@ -294,12 +338,34 @@ fi
 note "Phase 9 — pre-commit guard + commit + push + open PR (HUMAN MERGE per AGENTS.md)"
 
 if [[ $DRY_RUN -eq 0 ]]; then
-    # Exclude docs/: ADR-015, ADR-016, and docs/runbooks/rename-and-split.md
-    # legitimately keep "ProjectHephaestus" references for historical reasons.
+    # Exclude:
+    #   docs/        — ADR-015, ADR-016, docs/runbooks/rename-and-split.md
+    #                  legitimately keep "ProjectHephaestus" for historical
+    #                  reasons (the ADRs *describe* the rename).
+    #   agentic/, shared/, ci-cd/, control/, provisioning/, infrastructure/,
+    #     research/, testing/   — submodules; each is its own repo per
+    #                  AGENTS.md ("Changes belong in each submodule's own
+    #                  repo and PR process"). The meta-repo PR has zero
+    #                  authority to rewrite content inside a submodule.
+    #   backups/     — configs/github/backups/ is a verbatim GitHub-API
+    #                  snapshot from a prior migration. Renaming inside it
+    #                  would destroy historical fidelity for no win.
+    #   tools/, hephaestus-split/ — long-lived wrappers (rename-repo.sh,
+    #                  snapshot-protection.sh) and the migration scripts
+    #                  themselves intentionally reference the old name on
+    #                  purpose; they ARE the rename gas pedal.
+    #   CHANGELOG.md — version-history ledger. Entries like
+    #                  "v0.4.0: enabled hephaestus@ProjectHephaestus"
+    #                  are historical record; rewriting them would
+    #                  falsify what actually shipped.
     HITS=$(grep -RnE 'ProjectHephaestus|project-hephaestus' . \
         --exclude-dir=.git --exclude-dir=.pixi --exclude-dir=node_modules \
-        --exclude-dir=agentic --exclude-dir=shared \
-        --exclude-dir=docs 2>/dev/null || true)
+        --exclude-dir=agentic --exclude-dir=shared --exclude-dir=docs \
+        --exclude-dir=ci-cd --exclude-dir=control --exclude-dir=provisioning \
+        --exclude-dir=infrastructure --exclude-dir=research --exclude-dir=testing \
+        --exclude-dir=backups --exclude-dir=tools --exclude-dir=hephaestus-split \
+        --exclude=CHANGELOG.md \
+        2>/dev/null || true)
     [[ -z "$HITS" ]] || die "FAIL: residual ProjectHephaestus refs in meta-repo (first 10):
 $(echo "$HITS" | head -10)"
     ok "  0 residual ProjectHephaestus refs in meta-repo"
