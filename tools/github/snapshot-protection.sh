@@ -2,11 +2,11 @@
 set -euo pipefail
 
 # snapshot-protection.sh
-# Snapshots classic branch protection from all 15 repos to stdout as JSON array.
+# Snapshots classic branch protection from all 16 repos to stdout as JSON array.
 # Usage: ./tools/github/snapshot-protection.sh > configs/github/backups/branch-protection-$(date +%Y%m%d).json
 
 ORG="HomericIntelligence"
-REPOS=(Odysseus AchaeanFleet Argus Hermes Telemachy Keystone Myrmidons Proteus Odyssey Scylla Mnemosyne ProjectHephaestus Agamemnon Nestor Charybdis)
+REPOS=(Odysseus AchaeanFleet Argus Hermes Telemachy Keystone Myrmidons Proteus Odyssey Scylla Mnemosyne Hephaestus Agamemnon Nestor Charybdis Athena)
 
 result="[]"
 for repo in "${REPOS[@]}"; do
