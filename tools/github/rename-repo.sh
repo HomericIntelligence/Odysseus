@@ -400,7 +400,8 @@ git commit "${commit_args[@]}" || {
 git push -u origin "$BRANCH"
 
 # PR body: auto-generated, references the diff
-PR_DIFF_FILES="$(git diff --name-only "origin/$DEFAULT_BRANCH"..."$BRANCH" | head -60)"
+PR_DIFF_FULL="$(git diff --name-only "origin/$DEFAULT_BRANCH"...\"$BRANCH\")"
+PR_DIFF_FILES="$(printf '%s\n' "$PR_DIFF_FULL" | head -60)"
 PR_DIFF_SHORTSTAT="$(git diff --shortstat "origin/$DEFAULT_BRANCH"..."$BRANCH")"
 
 PR_BODY="$(cat <<EOF
