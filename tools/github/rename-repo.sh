@@ -404,7 +404,7 @@ git commit "${commit_args[@]}" || {
 git push -u origin "$BRANCH"
 
 # PR body: auto-generated, references the diff
-PR_DIFF_FULL="$(git diff --name-only "origin/$DEFAULT_BRANCH"...\"$BRANCH\")"
+PR_DIFF_FULL="$(git diff --name-only "origin/$DEFAULT_BRANCH"..."$BRANCH")"
 PR_DIFF_FILES="$(head -60 <<<"$PR_DIFF_FULL")"
 PR_DIFF_SHORTSTAT="$(git diff --shortstat "origin/$DEFAULT_BRANCH"..."$BRANCH")"
 
