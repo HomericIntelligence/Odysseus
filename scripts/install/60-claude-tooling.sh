@@ -3,7 +3,7 @@
 #
 # Steps:
 #   1. Install Claude Code CLI (via curl installer)
-#   2. Merge settings.json: register both Hephaestus + Athena marketplaces & plugins (ADR-016 split)
+#   2. Merge settings.json: register Athena marketplace + plugin (Hephaestus removed per user directive)
 #   3. Clone or update Mnemosyne agent brain seed
 #   4. Install Codex skills from Hephaestus (graceful skip if absent)
 #
@@ -44,38 +44,38 @@ fi
 SETTINGS="$HOME/.claude/settings.json"
 mkdir -p "$HOME/.claude"
 
-# Values confirmed from shared/Hephaestus/.claude-plugin/marketplace.json
-MARKETPLACE_NAME="Hephaestus"
-MARKETPLACE_URL="https://github.com/HomericIntelligence/Hephaestus.git"
-PLUGIN_KEY="hephaestus@Hephaestus"
-# Per ADR-016, also register the Athena marketplace + plugin (the agentic-plugins
-# half of the Hephaestus -> Hephaestus + Athena split). Athena hosts Claude Code
-# marketplace plugins; skills code that needs the `hephaestus` orchestrator library
-# continues to `pip install hephaestus[automation]` from the Hephaestus repo.
+# The Athena marketplace + plugin is the sole Claude Code surface registered
+# by this install script. The Hephaestus marketplace registration that this
+# script previously wrote has been removed per the user's directive; the
+# `hephaestus` orchestrator library remains installable directly from the
+# Hephaestus repo (pip install hephaestus[automation]) without any Claude
+# Code marketplace registration required.
+# URL matches .gitmodules [submodule "agentic/Athena"].
 ATHENA_MARKETPLACE_NAME="Athena"
 ATHENA_MARKETPLACE_URL="https://github.com/HomericIntelligence/Athena.git"
 ATHENA_PLUGIN_KEY="athena@Athena"
 
-# Plugin keys from PRE-ADR-016 installs (dead marketplace names) and the
+# Plugin keys from PRE-ADR-016 installs (dead marketplace names), the
 # non-canonical `hephaestus@Athena` mapping (Claude Code auto-resolved
-# `hephaestus` to the Athena marketplace at some point; per ADR-016 the
-# canonical mapping is `hephaestus@Hephaestus`). Space-separated so it can be
-# `.split()` into a Python tuple. Single source of truth — both the
-# precondition diagnostic AND the merge purge derive from this; add new
-# legacy keys here only.
-LEGACY_PLUGIN_KEYS_CSV="hephaestus@ProjectHephaestus hephaestus@Athena"
+# `hephaestus` to the Athena marketplace at some point), and the canonical
+# `hephaestus@Hephaestus` key that this install script used to register but
+# no longer does (per the user's directive). All three are now cleaned
+# on --install — leaving any of them in enabledPlugins causes noise-level
+# 404s on every plugin enumeration. Space-separated so it can be .split()
+# into a Python tuple. Single source of truth — both the precondition
+# diagnostic AND the merge purge derive from this; add new legacy keys
+# here only.
+LEGACY_PLUGIN_KEYS_CSV="hephaestus@ProjectHephaestus hephaestus@Hephaestus hephaestus@Athena"
 
 if [[ -f "$SETTINGS" ]]; then
-    # Per-item diagnostic (ADR-016 conformance). Python's stdout is captured
-    # into DIAGNOSTICS via command substitution. Safe because the data flows
-    # through the COMMAND (stdout -> bash variable via $()), not through
-    # Python-to-bash variable scope (which doesn't work; see bug note in the
-    # merge block below). Detects canonical-marketplace presence, stale URLs
-    # (a pre-rename `ProjectHephaestus.git` would pass key-equality but fail
-    # canonical URL match), missing plugin keys, and any non-canonical legacy
-    # plugin keys. URL comparison tolerates trailing-slash and
-    # with/without-.git variants (`Hephaestus.git` and `Hephaestus/` both
-    # count as configured); stale `ProjectHephaestus` references do not.
+    # Per-item diagnostic (Athena marketplace + plugin conformance). Python's
+    # stdout is captured into DIAGNOSTICS via command substitution. Safe
+    # because the data flows through the COMMAND (stdout -> bash variable via
+    # $()), not through Python-to-bash variable scope (which doesn't work;
+    # see bug note in the merge block below). Detects canonical-marketplace
+    # presence, missing plugin keys, and any non-canonical legacy plugin
+    # keys. URL comparison tolerates trailing-slash and with/without-.git
+    # variants.
     if DIAGNOSTICS=$(python3 2>/dev/null <<PYEOF
 import json, sys
 with open("$SETTINGS") as f:
@@ -95,13 +95,11 @@ def get_url(name):
 def norm(u):
     return u.rstrip("/").removesuffix(".git") if u else ""
 
-h_ok = norm(get_url("$MARKETPLACE_NAME")) == norm("$MARKETPLACE_URL")
 a_ok = norm(get_url("$ATHENA_MARKETPLACE_NAME")) == norm("$ATHENA_MARKETPLACE_URL")
-p_h = pl.get("$PLUGIN_KEY") is True
 p_a = pl.get("$ATHENA_PLUGIN_KEY") is True
 legacy = [k for k in "$LEGACY_PLUGIN_KEYS_CSV".split() if k in pl]
 
-if h_ok and a_ok and p_h and p_a and not legacy:
+if a_ok and p_a and not legacy:
     sys.exit(0)
 
 def fmt_marketplace(name, ok, actual):
@@ -110,9 +108,7 @@ def fmt_marketplace(name, ok, actual):
     return "marketplace " + name + ": missing or wrong URL (found: " + (actual or "not configured") + ")"
 
 out = []
-out.append(fmt_marketplace("$MARKETPLACE_NAME", h_ok, get_url("$MARKETPLACE_NAME")))
 out.append(fmt_marketplace("$ATHENA_MARKETPLACE_NAME", a_ok, get_url("$ATHENA_MARKETPLACE_NAME")))
-out.append("plugin $PLUGIN_KEY: " + ("enabled" if p_h else "missing or disabled"))
 out.append("plugin $ATHENA_PLUGIN_KEY: " + ("enabled" if p_a else "missing or disabled"))
 if legacy:
     out.append("non-canonical plugin keys present (will be cleaned on --install): " + ", ".join(legacy))
@@ -120,9 +116,9 @@ print("\n".join(out))
 sys.exit(1)
 PYEOF
 ); then
-        check_pass "settings.json — Hephaestus + Athena marketplaces and plugins match ADR-016"
+        check_pass "settings.json — Athena marketplace and plugin configured"
     else
-        check_fail "settings.json — ADR-016 conformance gap detected:
+        check_fail "settings.json — Athena marketplace+plugin gap detected:
 $DIAGNOSTICS
 tip: re-run with --install to apply the canonical fix; or manually edit ~/.claude/settings.json"
         [[ "${INSTALL:-false}" == "true" ]] && _do_settings_merge=true
@@ -150,21 +146,9 @@ else:
 mp = s.setdefault("extraKnownMarketplaces", {})
 plugins = s.setdefault("enabledPlugins", {})
 
-# Register Hephaestus marketplace + plugin (the library half of ADR-016).
-# Idempotent AND URL-aware: a plain setdefault would silently preserve a
-# stale 'Hephaestus' URL (e.g. the dead pre-rename 'ProjectHephaestus.git'
-# reference) and the marketplace load would 404. Overwrite only when the
-# existing URL does not match the canonical one.
-existing_h = mp.get("$MARKETPLACE_NAME")
-h_url_match = (
-    isinstance(existing_h, dict)
-    and isinstance(existing_h.get("source"), dict)
-    and norm(existing_h["source"].get("url")) == norm("$MARKETPLACE_URL")
-)
-if not h_url_match:
-    mp["$MARKETPLACE_NAME"] = {"source": {"source": "git", "url": "$MARKETPLACE_URL"}}
-
-# Same URL-aware overwrite for the Athena marketplace + plugin key.
+# Register the Athena marketplace + plugin (URL-aware idempotency: a plain
+# setdefault would silently preserve a stale URL on disk; we only overwrite
+# when the existing URL does not match the canonical one).
 existing_a = mp.get("$ATHENA_MARKETPLACE_NAME")
 a_url_match = (
     isinstance(existing_a, dict)
@@ -178,15 +162,15 @@ if not a_url_match:
 # dev environment into a KNOWN-GOOD state; if a user previously disabled a
 # plugin, the install script re-enables it. For a syncing/share tool we would
 # use 'setdefault' instead, but this is an installer.
-plugins["$PLUGIN_KEY"] = True
 plugins["$ATHENA_PLUGIN_KEY"] = True
 
-# Migration cleanup: drop any PRE-RENAME plugin keys AND the non-canonical
-# 'hephaestus@Athena' mapping (Claude Code auto-resolved 'hephaestus' to the
-# Athena marketplace at some point; per ADR-016 the canonical mapping is
-# 'hephaestus@Hephaestus' and the marketplace name is now 'Hephaestus', not
-# 'Athena'). Leaving any of them in 'enabledPlugins' causes noise-level 404s
-# on every plugin enumeration. Source of truth is $LEGACY_PLUGIN_KEYS_CSV
+# Migration cleanup: drop any LEGACY plugin keys (pre-rename
+# 'ProjectHephaestus'; the canonical 'hephaestus@Hephaestus' which this
+# install script no longer registers per the user's athena-only directive;
+# and the non-canonical 'hephaestus@Athena' mapping Claude Code auto-resolved
+# at some point, where the marketplace name is incorrectly 'Athena' instead
+# of 'Hephaestus'). Leaving any of them in 'enabledPlugins' causes noise-level
+# 404s on every plugin enumeration. Source of truth is $LEGACY_PLUGIN_KEYS_CSV
 # at the top of this step — extend it (not this tuple) if more cruft surfaces.
 LEGACY_PLUGIN_KEYS = "$LEGACY_PLUGIN_KEYS_CSV".split()
 purged_legacy = 0
@@ -202,16 +186,16 @@ with open(settings_path, "w") as f:
 # below just confirms success without trying to inspect Python locals (which
 # would not propagate across the heredoc boundary).
 if purged_legacy:
-    print(f"    settings.json updated — Hephaestus + Athena marketplaces and plugins reconciled ({purged_legacy} legacy plugin key(s) purged)")
+    print(f"    settings.json updated — Athena marketplace and plugin reconciled ({purged_legacy} legacy plugin key(s) purged)")
 else:
-    print("    settings.json updated — Hephaestus + Athena marketplaces and plugins reconciled")
+    print("    settings.json updated — Athena marketplace and plugin reconciled")
 PYEOF
     # Confirm success. Do NOT try to branch on Python locals here — they do
     # not propagate across the heredoc boundary (a real bug that would trip
     # `set -u` nounset + `[ "" -gt 0 ]` integer-expression errors). Python's
     # print above already carries the per-action detail, including the
     # legacy-purge count when applicable.
-    check_pass "settings.json — Hephaestus + Athena marketplaces and plugins reconciled"
+    check_pass "settings.json — Athena marketplace and plugin reconciled"
 fi
 
 # ─── Step 3: Mnemosyne agent brain seed ────────────────────────────────
