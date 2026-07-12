@@ -61,9 +61,9 @@ rolls forward in an ordered sequence (soft cutover).
 >   tree to recorded SHA `5a70ad2`. This is the only material submodule
 >   state change in this branch.
 > - The corruption cascade (commit `0651c1c`) committed `<<<<<<<` markers as
->   file content into PR #385 and was followed by 4 fixup commits
->   (`7332fc5`, `4de6377`) plus a workflow-hardening commit (`0dd44f8`,
->   `07fd153`). See `AGENTS.md` for the regression-prevention script
+>   file content into PR #385 and was followed by 3 fixup commits on top
+>   (`7332fc5`, `4de6377`, `07fd153`) plus a workflow-hardening commit
+>   (`0dd44f8`). See `AGENTS.md` for the regression-prevention script
 >   (`scripts/git/safe-merge.sh`) and hook (`forbid-merge-conflict-markers`).
 > - `tools/apply-odysseus-rename.sh --check` still reports 79 stale `Project<X>`
 >   refs across `.gitmodules` (33), `docker-compose.e2e.yml` (3),
