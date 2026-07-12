@@ -874,6 +874,7 @@ athena-test:
 athena-bootstrap:
     @echo "Athena plugin manifest: agentic/Athena/.claude-plugin/plugin.json"
     @echo "Enable in Claude Code: 'athena@Athena: true' in ~/.claude/settings.json"
+<<<<<<< HEAD
 
 # ===========================================================================
 # Claude Code Tooling (settings.json reconciliation)
@@ -884,3 +885,5 @@ athena-bootstrap:
 # check-only; pass install="true" to apply changes.
 claude-setup install="false":
     INSTALL={{ install }} bash scripts/install/60-claude-tooling.sh
+=======
+>>>>>>> origin/chore/split-hephaestus-athena

@@ -15,6 +15,7 @@ rolls forward in an ordered sequence (soft cutover).
 > [ADR-016](../adr/016-split-hephaestus.md) — this runbook is the
 > mechanical execution of those decisions.
 
+<<<<<<< HEAD
 > **Current Execution Status (commit `0a6fb6f`, 2026-07-12):**
 >
 > - ✅ **Step 1 + 1b:** `Hephaestus` split → `shared/Hephaestus` +
@@ -47,6 +48,8 @@ rolls forward in an ordered sequence (soft cutover).
 >        by hand (NOT auto-merge; AGENTS.md forbids auto-merge for
 >        cross-repo integration PRs).
 
+=======
+>>>>>>> origin/chore/split-hephaestus-athena
 ---
 
 ## 0. Pre-flight

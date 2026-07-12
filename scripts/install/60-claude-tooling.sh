@@ -3,7 +3,11 @@
 #
 # Steps:
 #   1. Install Claude Code CLI (via curl installer)
+<<<<<<< HEAD
 #   2. Merge settings.json: register Athena marketplace + plugin (Hephaestus removed per user directive)
+=======
+#   2. Merge settings.json: register Hephaestus marketplace + plugin
+>>>>>>> origin/chore/split-hephaestus-athena
 #   3. Clone or update Mnemosyne agent brain seed
 #   4. Install Codex skills from Hephaestus (graceful skip if absent)
 #
@@ -44,6 +48,7 @@ fi
 SETTINGS="$HOME/.claude/settings.json"
 mkdir -p "$HOME/.claude"
 
+<<<<<<< HEAD
 # The Athena marketplace + plugin is the sole Claude Code surface registered
 # by this install script. The Hephaestus marketplace registration that this
 # script previously wrote has been removed per the user's directive; the
@@ -66,6 +71,12 @@ ATHENA_PLUGIN_KEY="athena@Athena"
 # diagnostic AND the merge purge derive from this; add new legacy keys
 # here only.
 LEGACY_PLUGIN_KEYS_CSV="hephaestus@ProjectHephaestus hephaestus@Hephaestus hephaestus@Athena"
+=======
+# Values confirmed from shared/Hephaestus/.claude-plugin/marketplace.json
+MARKETPLACE_NAME="Hephaestus"
+MARKETPLACE_URL="https://github.com/HomericIntelligence/Hephaestus.git"
+PLUGIN_KEY="hephaestus@Hephaestus"
+>>>>>>> origin/chore/split-hephaestus-athena
 
 if [[ -f "$SETTINGS" ]]; then
     # Per-item diagnostic (Athena marketplace + plugin conformance). Python's
@@ -80,6 +91,7 @@ if [[ -f "$SETTINGS" ]]; then
 import json, sys
 with open("$SETTINGS") as f:
     s = json.load(f)
+<<<<<<< HEAD
 mp = s.get("extraKnownMarketplaces", {})
 pl = s.get("enabledPlugins", {})
 
@@ -122,6 +134,19 @@ PYEOF
 $DIAGNOSTICS
 tip: re-run with --install to apply the canonical fix; or manually edit ~/.claude/settings.json"
         [[ "${INSTALL:-false}" == "true" ]] && _do_settings_merge=true
+=======
+marketplaces = s.get('extraKnownMarketplaces', {})
+plugins = s.get('enabledPlugins', {})
+ok = ('$MARKETPLACE_NAME' in marketplaces and '$PLUGIN_KEY' in plugins)
+sys.exit(0 if ok else 1)
+" 2>/dev/null; then
+        check_pass "settings.json — Hephaestus marketplace and plugin already configured"
+    else
+        check_fail "settings.json — Hephaestus not registered"
+        if [[ "${INSTALL:-false}" == "true" ]]; then
+            _do_settings_merge=true
+        fi
+>>>>>>> origin/chore/split-hephaestus-athena
     fi
 else
     check_warn "settings.json — not found (will create)"
@@ -181,6 +206,7 @@ for legacy_key in LEGACY_PLUGIN_KEYS:
 with open(settings_path, "w") as f:
     json.dump(s, f, indent=2)
 
+<<<<<<< HEAD
 # Per-action message: includes the legacy-purge count when applicable. This is
 # the AUTHORITATIVE user-visible result for this step; the bash 'check_pass'
 # below just confirms success without trying to inspect Python locals (which
@@ -196,6 +222,11 @@ PYEOF
     # print above already carries the per-action detail, including the
     # legacy-purge count when applicable.
     check_pass "settings.json — Athena marketplace and plugin reconciled"
+=======
+print("    settings.json updated — Hephaestus registered")
+PYEOF
+    check_pass "settings.json — Hephaestus marketplace and plugin registered"
+>>>>>>> origin/chore/split-hephaestus-athena
 fi
 
 # ─── Step 3: Mnemosyne agent brain seed ────────────────────────────────

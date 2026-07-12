@@ -56,6 +56,7 @@ fi
 # transient `git diff` failure during the loop would otherwise EOF
 # `read -d ''` immediately and silently bypass every check below.
 #
+<<<<<<< HEAD
 # `mktemp "${TMPDIR:-/tmp}/pre-commit.XXXXXX"` creates a unique file in
 # $TMPDIR (or /tmp on systems without TMPDIR) with mode 0600 (no leakage
 # to other users). Using the POSIX template form — NO `-t` flag — keeps
@@ -74,6 +75,12 @@ fi
 # cleanup pattern and is documented as a known best-effort mitigation,
 # not a hard guarantee.
 temp_diff=$(mktemp "${TMPDIR:-/tmp}/pre-commit.XXXXXX")
+=======
+# `mktemp -t pre-commit.XXXXXX` creates a unique file in $TMPDIR or /tmp
+# with mode 600 (no leakage to other users). The `trap ... EXIT` fires
+# on every exit path (clean, `set -e`, or explicit `exit 1`) and cleans up.
+temp_diff=$(mktemp -t pre-commit.XXXXXX)
+>>>>>>> origin/chore/split-hephaestus-athena
 trap 'rm -f "$temp_diff"' EXIT
 
 if ! git diff --cached --name-only -z --diff-filter=ACMR > "$temp_diff"; then

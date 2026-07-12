@@ -1,5 +1,9 @@
 {
   "enabledPlugins": {
+<<<<<<< HEAD
+=======
+    "hephaestus@Hephaestus": true,
+>>>>>>> origin/chore/split-hephaestus-athena
     "athena@Athena": true
   }
 }
