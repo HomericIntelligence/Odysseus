@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit — Odysseus meta-repo commit-time guardrails.
+#
+# Installed via `just install-hooks` (sets `git config core.hooksPath .githooks`).
+# This hook is the last-mile layer on top of:
+#   - global commit.gpgsign = true (already enforced via ~/.gitconfig)
+#   - the banned-paths list in .gitignore
+#   - the "Prohibited Actions — Commit secrets" clause in AGENTS.md
+#
+# Scope of THIS hook: refuse to commit a staged file that matches a banned
+# credential / secret / private-key / large-file pattern. The hook fails
+# loudly with a remediation hint, never silently bypasses.
+#
+# Per AGENTS.md "Prohibited Actions", `--no-verify` is forbidden. If this
+# hook fails, fix the staged set: `git restore --staged <path>`, edit the
+# file, or `git rm --cached <path>` to untrack a tracked file.
+#
+# Exit code: 0 on clean, 1 on any banned path detected.
+
+set -euo pipefail
+
+# Use -z (NUL-separated) so paths with whitespace, tabs, or newlines are
+# preserved. `git diff --cached --name-only` (newline-separated) loses
+# fidelity on those; the agent fix here swaps it for the NUL form.
+staged=$(git diff --cached --name-only -z --diff-filter=ACMR || true)
+
+if [ -z "${staged:-}" ]; then
+    exit 0
+fi
+
+# Banned patterns. Each is anchored to a typical credential / secret shape.
+# Match against staged basenames (not full paths) so a repo-level
+# `secrets/dev-notes.md` (which we DO want to keep) does not false-positive,
+# but `secrets/` (top-level credentials dir) does.
+banned='(^|/)(secrets/|\.env$|\.env\.[^/]+$|\.pem$|\.key$|\.p12$|\.pfx$|id_rsa$|id_ed25519$|\.gpg$|credentials\.json$|service-account.*\.json$)'
+
+# Large-file guard: 512 KiB — matches pre-commit-config.yaml
+# `check-added-large-files` (maxkb=512). Single source of truth.
+max_bytes=$((512 * 1024))
+
+bad_paths=()
+big_files=()
+# Iterate via -z (NUL-separated) and read with -d '' so paths containing
+# spaces, tabs, or newlines are preserved. Avoids `for f in $staged` which
+# would word-split on $IFS and break on whitespace in paths.
+while IFS= read -r -d '' f; do
+    if printf '%s\n' "$f" | grep -Eq "$banned"; then
+        bad_paths+=("$f")
+    fi
+    if [ -f "$f" ]; then
+        size=$(wc -c < "$f" | tr -d ' ')
+        if [ "$size" -gt "$max_bytes" ]; then
+            big_files+=("$f (${size} bytes)")
+        fi
+    fi
+done < <(printf '%s' "$staged")
+
+if [ "${#bad_paths[@]}" -gt 0 ]; then
+    cat >&2 <<EOF
+ERROR: Banned credential / secret file(s) staged. Commit aborted.
+
+  AGENTS.md prohibits committing .env, *.key, *.pem, secrets/, etc.
+  See "Prohibited Actions — Commit secrets" in the agent contract.
+
+Staged files matching the banned pattern:
+EOF
+    for p in "${bad_paths[@]}"; do
+        printf '  - %s\n' "$p" >&2
+    done
+    cat >&2 <<'EOF'
+
+To remediate:
+  git restore --staged <path>      # unstage a file you did not intend to add
+  git rm --cached <path>           # untrack a tracked file (then add to .gitignore)
+  # If the path is genuinely required, move it OUTSIDE the repo and load
+  # via an environment loader, never commit it.
+
+The --no-verify flag is FORBIDDEN per AGENTS.md. Fix the staged set.
+EOF
+    exit 1
+fi
+
+if [ "${#big_files[@]}" -gt 0 ]; then
+    cat >&2 <<'EOF'
+ERROR: File(s) larger than 1 MiB staged. Commit aborted.
+
+  Meta-repo commits are expected to be small (text-only). A 1 MiB+ file
+  is almost certainly a build artefact, dataset, or accidental binary.
+  See `.github/workflows/_required.yml` "check-added-large-files" hook
+  (maxkb=512) for the stricter pre-commit-config.yaml gate.
+EOF
+    for f in "${big_files[@]}"; do
+        printf '  - %s\n' "$f" >&2
+    done
+    cat >&2 <<'EOF'
+
+To remediate:
+  echo "<pattern>" >> .gitignore      # if the path should never be tracked
+  git restore --staged <path>         # if you did not intend to add it
+EOF
+    exit 1
+fi
+
+# Note: commit signing is enforced globally via commit.gpgsign = true in
+# ~/.gitconfig. This hook does not re-check signatures — git itself
+# refuses to commit unsigned, so re-checking here would be redundant.
+# Operators can still attempt `git commit --no-verify` to bypass BOTH this
+# hook AND the global sign requirement; AGENTS.md "Prohibited Actions"
+# forbids that path.
+
+exit 0
