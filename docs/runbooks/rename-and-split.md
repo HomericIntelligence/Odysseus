@@ -15,6 +15,38 @@ rolls forward in an ordered sequence (soft cutover).
 > [ADR-016](../adr/016-split-hephaestus.md) — this runbook is the
 > mechanical execution of those decisions.
 
+> **Current Execution Status (commit `0a6fb6f`, 2026-07-12):**
+>
+> - ✅ **Step 1 + 1b:** `Hephaestus` split → `shared/Hephaestus` +
+>   `agentic/Athena` carve-out complete. Both gitlink pins already
+>   updated in `.gitmodules`. The `scripts/install/60-claude-tooling.sh
+>   --install` flow registers ONLY `athena@Athena`; the canonical
+>   post-install template (`.claude/settings.json`) was aligned with
+>   that in commit `0a6fb6f`.
+> - ⏳ **Steps 2–12:** Ten upstream `HomericIntelligence/Project<X>`
+>   renames remaining. Each requires (a) a GitHub web UI rename, (b) a
+>   per-repo internal-touch PR (CMake options, pyproject.toml name
+>   changes, internal doc references), (c) wait for merge. Order
+>   matters: least-coupled first (ProjectScylla, ProjectCharybdis),
+>   `ProjectAgamemnon` LAST (HMAS orchestrator with the largest blast
+>   radius).
+> - ⏳ **Step 13:** Odysseus-side finish. Blocked until 2–12 are green.
+>   Operator workflow:
+>     1. Confirm upstream stability: `git ls-remote
+>        https://github.com/HomericIntelligence/<X>.git` for each renamed
+>        repo.
+>     2. Pre-stage on a feature branch.
+>     3. `tools/apply-odysseus-rename.sh --check` (no writes; reports
+>        stale `Project<X>` refs in scope files).
+>     4. `tools/apply-odysseus-rename.sh --apply` (mass rewrite of
+>        `.gitmodules`, `justfile`, `docker-compose.e2e.yml`,
+>        `tools/github/*.sh`).
+>     5. `just ecosystem-table` to regenerate the README
+>        `<!-- ECOSYSTEM-CI-TABLE:START -->` block.
+>     6. Open the meta-repo finish PR per section 4 — `@mvillmow` merges
+>        by hand (NOT auto-merge; AGENTS.md forbids auto-merge for
+>        cross-repo integration PRs).
+
 ---
 
 ## 0. Pre-flight
