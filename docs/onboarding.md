@@ -57,9 +57,9 @@ podman --version
 
 ---
 
-## Ecosystem Overview: The 12 Repositories
+## Ecosystem Overview: The Repositories
 
-HomericIntelligence is a distributed system built from 12 specialized repositories. **Odysseus** is the top-level meta-repo that coordinates them all.
+HomericIntelligence is a distributed system built from a coordinated set of specialized repositories. **Odysseus** is the top-level meta-repo that coordinates them all. The subset below is the canonical quick-reference — see [`docs/architecture.md`](architecture.md) for the full component inventory and system diagram. (The repository count fluctuates as new components are carved out under ADR-015/ADR-016; the diagram and table below are authoritative.)
 
 ### The Big Picture
 
@@ -79,7 +79,8 @@ Odysseus (meta-repo, orchestration hub)
   ├─→ ProjectCharybdis (chaos testing)
   ├─→ ProjectScylla (ablation benchmarks)
   ├─→ ProjectMnemosyne (shared memory)
-  └─→ ProjectHephaestus (shared utilities & skills)
+  ├─→ Athena (agentic plugins & skills)
+  └─→ Hephaestus (shared utilities)
 ```
 
 ### Quick Reference: What Each Repo Does
@@ -99,7 +100,8 @@ Odysseus (meta-repo, orchestration hub)
 | **ProjectCharybdis** | testing | Chaos and resilience testing | Python | Testing |
 | **ProjectScylla** | testing | AI agent ablation and benchmarking | Python, Mojo | Research |
 | **ProjectMnemosyne** | shared | Memory store for `advise` and `learn` plugins | Python | Utility |
-| **ProjectHephaestus** | shared | Shared utilities, Claude Code plugins | Python, TypeScript | Utility |
+| **Hephaestus** | shared | Shared utilities (Python library + TS tooling, hosts `hephaestus@Hephaestus` marketplace entry) | Python, TypeScript | Utility |
+| **Athena** | agentic | Agentic plugins & skills (hosts `athena@Athena` marketplace entry per ADR-016) | Python | Utility |
 
 ---
 
@@ -467,9 +469,12 @@ research/
 testing/
 └── ProjectCharybdis          # Chaos testing
 
+agentic/
+└── Athena                     # Agentic plugins & skills (CLAUDE Code marketplace)
+
 shared/
 ├── ProjectMnemosyne          # Memory store
-└── ProjectHephaestus         # Shared utilities
+└── Hephaestus                # Shared utilities (Python library; `hephaestus` Python pkg + `hephaestus.automation` orchestrator)
 ```
 
 ---
