@@ -1,0 +1,33 @@
+=== tools/propagate-pre-commit-hooks.sh ===
+timestamp:        2026-07-12T14:25:24Z
+source hook:      /home/mvillmow/Projects/Odysseus/.githooks/pre-commit
+source sha256:    495288dbae065577f68c938958a43c6a0ddb285fae86fd82f0b467fbf8bcd688
+mode:             live
+
+--- per-submodule status ---
+[copy]   infrastructure/AchaeanFleet -> .git/modules/infrastructure/AchaeanFleet/hooks/pre-commit  (mode=755, sha256 matches)
+[copy]   infrastructure/ProjectArgus -> .git/modules/infrastructure/ProjectArgus/hooks/pre-commit  (mode=755, sha256 matches)
+[copy]   infrastructure/ProjectHermes -> .git/modules/infrastructure/ProjectHermes/hooks/pre-commit  (mode=755, sha256 matches)
+[copy]   provisioning/ProjectTelemachy -> .git/modules/provisioning/ProjectTelemachy/hooks/pre-commit  (mode=755, sha256 matches)
+[copy]   provisioning/ProjectKeystone -> .git/modules/provisioning/ProjectKeystone/hooks/pre-commit  (mode=755, sha256 matches)
+[copy]   provisioning/Myrmidons -> .git/modules/provisioning/Myrmidons/hooks/pre-commit  (mode=755, sha256 matches)
+[copy]   ci-cd/ProjectProteus -> .git/modules/ci-cd/ProjectProteus/hooks/pre-commit  (mode=755, sha256 matches)
+[copy]   research/ProjectOdyssey -> .git/modules/research/ProjectOdyssey/hooks/pre-commit  (mode=755, sha256 matches)
+[copy]   research/ProjectScylla -> .git/modules/research/ProjectScylla/hooks/pre-commit  (mode=755, sha256 matches)
+[copy]   shared/ProjectMnemosyne -> .git/modules/shared/ProjectMnemosyne/hooks/pre-commit  (mode=755, sha256 matches)
+[skip]   shared/Hephaestus  (not initialized; run: git submodule update --init --recursive)
+[copy]   control/ProjectAgamemnon -> .git/modules/control/ProjectAgamemnon/hooks/pre-commit  (mode=755, sha256 matches)
+[copy]   control/ProjectNestor -> .git/modules/control/ProjectNestor/hooks/pre-commit  (mode=755, sha256 matches)
+[copy]   testing/ProjectCharybdis -> .git/modules/testing/ProjectCharybdis/hooks/pre-commit  (mode=755, sha256 matches)
+[copy]   agentic/Athena -> .git/modules/agentic/Athena/hooks/pre-commit  (mode=755, sha256 matches)
+--- end ---
+
+=== SUMMARY ===
+total submodules parsed:       15
+copied (live):                14
+stale or failed (live):       0
+skipped (uninitialized):      1
+
+Some submodules are uninitialized. To populate then re-run:
+  git submodule update --init --recursive
+  ./tools/propagate-pre-commit-hooks.sh --verify

@@ -1,0 +1,31 @@
+=== tools/propagate-pre-commit-hooks.sh ===
+timestamp:        2026-07-12T14:25:24Z
+source hook:      /home/mvillmow/Projects/Odysseus/.githooks/pre-commit
+source sha256:    495288dbae065577f68c938958a43c6a0ddb285fae86fd82f0b467fbf8bcd688
+mode:             dry-run
+
+--- per-submodule status ---
+[plan]   infrastructure/AchaeanFleet -> .git/modules/infrastructure/AchaeanFleet/hooks/pre-commit  (current mode=(none), submodule-status='b51138dd78c74441d281842e77ede0c10d066cb0')
+[plan]   infrastructure/ProjectArgus -> .git/modules/infrastructure/ProjectArgus/hooks/pre-commit  (current mode=(none), submodule-status='f9508988a4c5825530b319b35fc92d965a931f40')
+[plan]   infrastructure/ProjectHermes -> .git/modules/infrastructure/ProjectHermes/hooks/pre-commit  (current mode=(none), submodule-status='dc987ce3633776f7e0b4001c34696428a5abe1d8')
+[plan]   provisioning/ProjectTelemachy -> .git/modules/provisioning/ProjectTelemachy/hooks/pre-commit  (current mode=(none), submodule-status='05d0755861b9221ec6bc38c4ea6e8dbe61cfe3f3')
+[plan]   provisioning/ProjectKeystone -> .git/modules/provisioning/ProjectKeystone/hooks/pre-commit  (current mode=(none), submodule-status='2af23919634ec2abf6fb6e179bd56f07dbbfa314')
+[plan]   provisioning/Myrmidons -> .git/modules/provisioning/Myrmidons/hooks/pre-commit  (current mode=(none), submodule-status='2e25501d3bdf11b590b6a8575514071995ecb896')
+[plan]   ci-cd/ProjectProteus -> .git/modules/ci-cd/ProjectProteus/hooks/pre-commit  (current mode=(none), submodule-status='d08025cdc359285ddc36f85eb7a7123f31c0e88c')
+[plan]   research/ProjectOdyssey -> .git/modules/research/ProjectOdyssey/hooks/pre-commit  (current mode=(none), submodule-status='ff58c9b2e5f946e1a342a11d06fcb258fbe40634')
+[plan]   research/ProjectScylla -> .git/modules/research/ProjectScylla/hooks/pre-commit  (current mode=(none), submodule-status='c0171d00200298e97c136618cc751082ce5da93e')
+[plan]   shared/ProjectMnemosyne -> .git/modules/shared/ProjectMnemosyne/hooks/pre-commit  (current mode=(none), submodule-status='12742771db5304dd40a23b1f27a9f556a90649dd')
+[skip]   shared/Hephaestus  (not initialized; run: git submodule update --init --recursive)
+[plan]   control/ProjectAgamemnon -> .git/modules/control/ProjectAgamemnon/hooks/pre-commit  (current mode=(none), submodule-status='153944cc0dfe1660c7857ed7733f6e302cd67217')
+[plan]   control/ProjectNestor -> .git/modules/control/ProjectNestor/hooks/pre-commit  (current mode=(none), submodule-status='859f8106ff853c7269f5d239f44b0e7b2177b8bd')
+[plan]   testing/ProjectCharybdis -> .git/modules/testing/ProjectCharybdis/hooks/pre-commit  (current mode=(none), submodule-status='4144d28d7e8ed2b32dc057dfff56c316c1bc6935')
+[plan]   agentic/Athena -> .git/modules/agentic/Athena/hooks/pre-commit  (current mode=(none), submodule-status='+bebd539d7fae6005a0cf59a717477bcb1c1497ea')
+--- end ---
+
+=== SUMMARY ===
+total submodules parsed:       15
+(dry run; nothing copied)
+
+Some submodules are uninitialized. To populate then re-run:
+  git submodule update --init --recursive
+  ./tools/propagate-pre-commit-hooks.sh --verify
