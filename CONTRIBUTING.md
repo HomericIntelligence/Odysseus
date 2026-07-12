@@ -258,26 +258,28 @@ Address review comments promptly:
 
 ## Branch Protection Policy
 
-The `main` branch is protected by GitHub branch protection rules to ensure code quality and prevent accidents. These rules are enforced automatically by GitHub:
+The `main` branch is protected by a GitHub **repository ruleset** (not classic branch protection) to ensure code quality and prevent accidents. The active ruleset is committed at `configs/github/repo-ruleset-active.json` and is the source of truth for these rules; see the runbook `docs/runbooks/branch-protection-rollout.md` for how it is applied. These rules are enforced automatically by GitHub:
 
 ### Protection Rules
 
-- **Direct pushes blocked** - All changes to `main` must go through pull requests. Direct `git push` to `main` will be rejected.
-- **PR approval required** - At least 1 approval from a maintainer is required before merging.
-- **CI status checks must pass** - All automated checks (tests, linting, validations) must pass before merge is allowed.
-- **Linear history enforced** - Only rebase-based merges are allowed. This prevents merge commits and keeps the history clean and linear.
+- **Direct pushes blocked** - All changes to `main` must go through pull requests (`deletion` and non-PR pushes are rejected).
+- **PR approval required** - At least 1 approving review is required before merging (`required_approving_review_count: 1`).
+- **Review threads must be resolved** - All PR review conversations must be resolved before merge (`required_review_thread_resolution`).
+- **Signed commits required** - Commits on `main` must be signed (`required_signatures`).
+- **CI status checks must pass** - The required checks must be green before merge: `lint`, `unit-tests`, `integration-tests`, `security/dependency-scan`, `security/secrets-scan`, `build`, `schema-validation`, `deps/version-sync`.
+- **Linear history enforced** - Only squash merges are allowed (repo setting: `allow_squash_merge` only; merge-commit and rebase-merge are disabled). Squashing collapses each PR into a single commit on `main`, keeping the history clean and linear.
 
 ### Merge Convention
 
 Always use the following command to merge your PR:
 
 ```bash
-gh pr merge --auto --rebase
+gh pr merge --auto --squash
 ```
 
 This will:
 1. Enable auto-merge on your PR (merge happens as soon as all conditions are met)
-2. Use rebase strategy, maintaining linear history
+2. Use squash strategy (the only strategy this repo permits), collapsing the PR into one linear-history commit
 3. Keep your branch name clean and commit history readable
 
 ### For Repo Admins
