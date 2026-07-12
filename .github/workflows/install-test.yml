@@ -117,10 +117,21 @@ jobs:
           echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
 
       - name: Assert run 1 exit 0
+        env:
+          RUN1_EXIT: ${{ steps.run1.outputs.exit_code }}
         run: |
+          set -euo pipefail
+          # Assert on the captured exit code, not just a log grep. install.sh
+          # now exits non-zero when any check fails (issue #372); the previous
+          # 'Install complete' grep always matched because that string printed
+          # unconditionally, making a failed install structurally invisible.
+          if [[ "${RUN1_EXIT}" != "0" ]]; then
+            echo "ERROR: install.sh --install exited ${RUN1_EXIT} (expected 0)"
+            exit 1
+          fi
           grep -q "Install complete" /tmp/install-${{ matrix.os }}-run1.log || \
             { echo "ERROR: 'Install complete' not found in run 1 output"; exit 1; }
-          echo "Run 1: OK"
+          echo "Run 1: OK (exit ${RUN1_EXIT})"
 
       - name: Run 2 — idempotency check
         run: |
