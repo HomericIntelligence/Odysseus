@@ -19,15 +19,20 @@
 
 set -euo pipefail
 
-# Use -z (NUL-separated) so paths with whitespace, tabs, or newlines are
-# preserved. `git diff --cached --name-only` (newline-separated) loses
-# fidelity on those; the agent fix here swaps it for the NUL form.
-#
-# We deliberately DO NOT swallow git's exit code here. A `git diff --cached`
-# failure (no PATH, corrupt index, partial clone, etc.) means we cannot
-# enumerate what is about to be committed — and the only safe response to
+# Detect staged files. The `if !` wrapper fails loud on a real `git diff`
+# failure (no PATH, corrupt index, partial clone, etc.) — we cannot
+# enumerate what is about to be committed, so the only safe response to
 # "we don't know" is to fail loud, not to silently let the commit through.
-if ! staged=$(git diff --cached --name-only -z --diff-filter=ACMR); then
+#
+# CRITICAL: we deliberately do NOT use `-z` here. Bash command substitution
+# `$(...)` strips NUL bytes from the captured output, so `staged` would
+# become a path-concatenated blob with no separators — and the downstream
+# `read -d ''` would silently EOF without ever iterating the loop body.
+# The newline-separated form lets `[ -z "$staged" ]` reliably detect an
+# empty index (no staged files). The NUL-delimited stream is re-fetched
+# via process substitution at the loop site so `read -d ''` can split
+# paths correctly (preserving spaces, tabs, and newlines in filenames).
+if ! staged=$(git diff --cached --name-only --diff-filter=ACMR); then
     echo "ERROR: 'git diff --cached --name-only' failed; refusing to commit unverified." >&2
     echo "       Re-run with 'git commit --no-verify' only if you understand why." >&2
     exit 1
@@ -65,7 +70,7 @@ while IFS= read -r -d '' f; do
             big_files+=("$f (${size} bytes)")
         fi
     fi
-done < <(printf '%s' "$staged")
+done < <(git diff --cached --name-only -z --diff-filter=ACMR)
 
 if [ "${#bad_paths[@]}" -gt 0 ]; then
     cat >&2 <<EOF
