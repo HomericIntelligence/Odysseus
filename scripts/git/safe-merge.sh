@@ -17,6 +17,10 @@
 
 set -euo pipefail
 
+# Inhibit interactive editor on `git merge --no-ff` (would otherwise pause
+# in any TTY context, contradicting the documented exit codes).
+export GIT_MERGE_AUTOEDIT=no
+
 BRANCH="${1:?usage: $0 <upstream-branch>}"
 
 # Guard 1: refuse to merge into a dirty working tree.
