@@ -87,6 +87,36 @@ OUT_OF_SCOPE=(
     "docs/adr/00*.md — append-only per CLAUDE.md principle 3"
 )
 
+# Hyphen/underscore-prefix sanity guard.
+#
+# Word-boundary \b in GNU grep/sed MATCHES ACROSS '-' and '_' (both
+# are \W). A scope file MUST NOT contain `Project<X>-foo` or
+# `Project<X>_bar` tokens because the rewrite would replace only
+# `Project<X>`, leaving the `-suffix` / `_suffix` stuck on the new
+# name (e.g. `ProjectHermes-foo` → `Hermes-foo`, not the intended
+# bare `Hermes`). The current meta-repo scope set has zero such
+# prefix-affixed tokens, but the script guards against future scope
+# expansion introducing one.
+#
+# Called by --apply (bail, exit 4) and dryrun (warn but proceed).
+# Not called by --check (which is purely informational).
+hyphen_sanity_check() {
+    local hits
+    hits=$(grep -nHE '\bProject[A-Z][a-zA-Z]+[-_]' "${SCOPE_FILES[@]}" 2>/dev/null || true)
+    if [ -n "$hits" ]; then
+        echo "── Hyphen/underscore-prefix sanity FAILED ──" >&2
+        echo "" >&2
+        echo "$hits" >&2
+        echo "" >&2
+        echo "Word-boundary \b matches across '-' and '_' (both are \W)." >&2
+        echo "The above lines contain tokens like 'ProjectX-foo' or 'ProjectX_bar'" >&2
+        echo "that would be incorrectly rewritten. Resolve manually before" >&2
+        echo "re-running --apply. (See code-reviewer note from commit 4c607b2.)" >&2
+        return 1
+    fi
+    return 0
+}
+
 # Mode parsing. Default is dry-run.
 MODE="dryrun"
 case "${1:-}" in
@@ -154,6 +184,13 @@ case "$MODE" in
         exit 0
         ;;
     dryrun)
+        echo "── Hyphen/underscore-prefix sanity ──"
+        if ! hyphen_sanity_check; then
+            echo "  (continuing dry-run; --apply would refuse; see code-reviewer note from commit 4c607b2)"
+        else
+            echo "  clean (no \`ProjectX-\` / \`ProjectX_\` tokens found in scope files)"
+        fi
+        echo
         echo "── Stale Project<X> refs in scope files (count) ──"
         report_stale_counts "${SCOPE_FILES[@]}"
         echo
@@ -165,7 +202,12 @@ case "$MODE" in
             sed "$SED_PROG" "$f" > "$local_tmp"
             if ! diff -q "$f" "$local_tmp" >/dev/null 2>&1; then
                 echo "── diff: $f ──"
-                diff -u "$f" "$local_tmp" | head -80 || true
+                full_diff=$(diff -u "$f" "$local_tmp" || true)
+                diff_lines=$(printf '%s\n' "$full_diff" | wc -l)
+                printf '%s\n' "$full_diff" | head -80
+                if [ "${diff_lines:-0}" -gt 80 ]; then
+                    echo "    (diff truncated — showing 80 of ${diff_lines} lines; for full diff, redirect stdout: 'tools/apply-odysseus-rename.sh 2>/dev/null > rename.diff')"
+                fi
                 local_changes=$((local_changes + 1))
             fi
             rm -f "$local_tmp"
@@ -186,6 +228,12 @@ case "$MODE" in
             echo "ERROR: working tree has uncommitted changes. Commit or stash first." >&2
             git status --short
             exit 3
+        fi
+        # Hyphen/underscore-prefix sanity guard: bail before any rewrite
+        # (exit 4) if scope files contain 'Project<X>-' or 'Project<X>_'
+        # tokens that would be incorrectly rewritten.
+        if ! hyphen_sanity_check; then
+            exit 4
         fi
         echo "── Applying rewrites ──"
         applied=0
