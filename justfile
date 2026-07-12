@@ -309,6 +309,10 @@ test-justfile-recipes:
     bash tests/test-justfile-recipes.sh
     bash tests/test-config-validators.sh
 
+# Lint test scripts for corrupted / non-runnable artifacts (guards #374)
+lint-test-scripts:
+    bash scripts/lint-test-scripts.sh
+
 # Render Nomad config placeholders to a deploy-local dir (default /etc/nomad.d).
 # Nomad agent HCL does NOT expand OS env vars, so render before `nomad agent -config`.
 # Requires NOMAD_SERVER_IP and NOMAD_ADVERTISE_ADDR (e.g. export NOMAD_SERVER_IP=$(tailscale ip -4)).
@@ -626,12 +630,14 @@ e2e-conan-validate:
 e2e-pip-validate:
     bash e2e/validate-pip-install.sh
 
-# Run all Phase 6 justfile delegation tests (103 checks across 4 submodules)
+# Phase 6 justfile delegation tests were removed as corrupted artifacts (#374).
+# The referenced e2e/test-justfile-*.sh scripts were failed-agent-output garbage
+# (each contained only "ERROR: Claude returned empty output"), never real tests.
+# For actual justfile-recipe integrity coverage, see `just test-justfile-recipes`
+# (tests/test-justfile-recipes.sh), which IS a valid, CI-enforced test.
 e2e-test-justfiles:
-    bash e2e/test-justfile-achaean-fleet.sh
-    bash e2e/test-justfile-proteus.sh
-    bash e2e/test-justfile-mnemosyne.sh
-    bash e2e/test-justfile-hephaestus.sh
+    @echo "Phase 6 justfile delegation tests were removed as corrupted artifacts (ref #374)."
+    @echo "Run 'just test-justfile-recipes' for valid justfile-recipe integrity checks."
 
 # Full validation suite (Docker E2E + Conan + pip)
 e2e-full: e2e-test e2e-conan-validate e2e-pip-validate

@@ -81,6 +81,9 @@ jobs:
             echo "No tools/github directory; skipping shell-script bash -n check"
           fi
 
+      - name: Lint test scripts for corrupted / non-runnable artifacts (#374)
+        run: bash scripts/lint-test-scripts.sh
+
   forbid-suppressions:
     name: forbid-suppressions
     runs-on: ubuntu-latest
