@@ -880,3 +880,13 @@ athena-test:
 athena-bootstrap:
     @echo "Athena plugin manifest: agentic/Athena/.claude-plugin/plugin.json"
     @echo "Enable in Claude Code: 'athena@Athena: true' in ~/.claude/settings.json"
+
+# ===========================================================================
+# Claude Code Tooling (settings.json reconciliation)
+# ===========================================================================
+
+# Reconcile ~/.claude/settings.json: register the Athena marketplace + plugin
+# (and drop pre-ADR-016 / non-canonical legacy plugin keys). Default is
+# check-only; pass install="true" to apply changes.
+claude-setup install="false":
+    INSTALL={{ install }} bash scripts/install/60-claude-tooling.sh
