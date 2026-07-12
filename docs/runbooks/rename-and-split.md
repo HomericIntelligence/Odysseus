@@ -47,6 +47,29 @@ rolls forward in an ordered sequence (soft cutover).
 >        by hand (NOT auto-merge; AGENTS.md forbids auto-merge for
 >        cross-repo integration PRs).
 
+> **Submodule pin audit (commit `07fd153`, 2026-07-12):**
+>
+> - The `chore(submodules): bump all 15 pins to latest upstream main` commit on
+>   `chore/split-hephaestus-athena` verified **no SHA movement**: all 15
+>   submodule gitlinks in `0bfe3dc` already tracked upstream-tracking SHAs and
+>   remained unchanged through the bump. The meta-repo's pins are therefore
+>   already current per the operator's "more recent pin" intent; an explicit
+>   SHA-reset is unnecessary until upstream repos move following `Project<X>`
+>   renames on GitHub.
+> - `shared/Hephaestus` was uninitialized (`-`-prefixed in `git submodule
+>   status`) at this branch's start; the bump cycle populated its working
+>   tree to recorded SHA `5a70ad2`. This is the only material submodule
+>   state change in this branch.
+> - The corruption cascade (commit `0651c1c`) committed `<<<<<<<` markers as
+>   file content into PR #385 and was followed by 4 fixup commits
+>   (`7332fc5`, `4de6377`) plus a workflow-hardening commit (`0dd44f8`,
+>   `07fd153`). See `AGENTS.md` for the regression-prevention script
+>   (`scripts/git/safe-merge.sh`) and hook (`forbid-merge-conflict-markers`).
+> - `tools/apply-odysseus-rename.sh --check` still reports 79 stale `Project<X>`
+>   refs across `.gitmodules` (33), `docker-compose.e2e.yml` (3),
+>   `docs/architecture.md` (30), `CLAUDE.md` (13). Stays the same baseline
+>   for rename-side step 13.
+
 ---
 
 ## 0. Pre-flight
