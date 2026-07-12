@@ -100,7 +100,7 @@ Odysseus (meta-repo, orchestration hub)
 | **ProjectCharybdis** | testing | Chaos and resilience testing | Python | Testing |
 | **ProjectScylla** | testing | AI agent ablation and benchmarking | Python, Mojo | Research |
 | **ProjectMnemosyne** | shared | Memory store for `advise` and `learn` plugins | Python | Utility |
-| **Hephaestus** | shared | Shared utilities (Python library + TS tooling, hosts `hephaestus@Hephaestus` marketplace entry) | Python, TypeScript | Utility |
+| **Hephaestus** | shared | Shared utilities (Python library + TS tooling) | Python, TypeScript | Utility |
 | **Athena** | agentic | Agentic plugins & skills (hosts `athena@Athena` marketplace entry per ADR-016) | Python | Utility |
 
 ---

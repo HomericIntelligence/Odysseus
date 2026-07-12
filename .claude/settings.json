@@ -1,6 +1,5 @@
 {
   "enabledPlugins": {
-    "hephaestus@Hephaestus": true,
     "athena@Athena": true
   }
 }
