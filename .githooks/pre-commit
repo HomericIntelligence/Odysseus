@@ -22,8 +22,20 @@ set -euo pipefail
 # Use -z (NUL-separated) so paths with whitespace, tabs, or newlines are
 # preserved. `git diff --cached --name-only` (newline-separated) loses
 # fidelity on those; the agent fix here swaps it for the NUL form.
-staged=$(git diff --cached --name-only -z --diff-filter=ACMR || true)
+#
+# We deliberately DO NOT swallow git's exit code here. A `git diff --cached`
+# failure (no PATH, corrupt index, partial clone, etc.) means we cannot
+# enumerate what is about to be committed — and the only safe response to
+# "we don't know" is to fail loud, not to silently let the commit through.
+if ! staged=$(git diff --cached --name-only -z --diff-filter=ACMR); then
+    echo "ERROR: 'git diff --cached --name-only' failed; refusing to commit unverified." >&2
+    echo "       Re-run with 'git commit --no-verify' only if you understand why." >&2
+    exit 1
+fi
 
+# Empty-staged guard. New commits, merges of unrelated branches, and
+# `git commit --allow-empty` all leave no files in the index. Nothing
+# to check; exit 0 so the commit proceeds.
 if [ -z "${staged:-}" ]; then
     exit 0
 fi
@@ -82,9 +94,9 @@ fi
 
 if [ "${#big_files[@]}" -gt 0 ]; then
     cat >&2 <<'EOF'
-ERROR: File(s) larger than 1 MiB staged. Commit aborted.
+ERROR: File(s) larger than 512 KiB staged. Commit aborted.
 
-  Meta-repo commits are expected to be small (text-only). A 1 MiB+ file
+  Meta-repo commits are expected to be small (text-only). A 512 KiB+ file
   is almost certainly a build artefact, dataset, or accidental binary.
   See `.github/workflows/_required.yml` "check-added-large-files" hook
   (maxkb=512) for the stricter pre-commit-config.yaml gate.
