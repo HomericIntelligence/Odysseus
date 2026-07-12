@@ -38,8 +38,9 @@ if ! git diff --quiet --cached; then
     exit 2
 fi
 
-# Run the merge. Capture stdout/stderr so we can inspect for conflict signals
-# after git's own exit code.
+# Capture `git merge` exit code BEFORE set -e aborts on conflict. The +e/-e
+# pair is intentional; do not collapse — the post-capture `set -e` is what
+# makes the `git merge --abort` path reachable on conflict.
 set +e
 merge_out="$(git merge --no-ff "$BRANCH" 2>&1)"
 merge_rc=$?
