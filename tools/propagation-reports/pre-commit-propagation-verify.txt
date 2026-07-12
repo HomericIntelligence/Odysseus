@@ -1,0 +1,29 @@
+=== tools/propagate-pre-commit-hooks.sh ===
+timestamp:        2026-07-12T14:25:25Z
+source hook:      /home/mvillmow/Projects/Odysseus/.githooks/pre-commit
+source sha256:    495288dbae065577f68c938958a43c6a0ddb285fae86fd82f0b467fbf8bcd688
+mode:             verify
+
+--- per-submodule status ---
+[ok]     infrastructure/AchaeanFleet  (sha256 matches; mode=755)
+[ok]     infrastructure/ProjectArgus  (sha256 matches; mode=755)
+[ok]     infrastructure/ProjectHermes  (sha256 matches; mode=755)
+[ok]     provisioning/ProjectTelemachy  (sha256 matches; mode=755)
+[ok]     provisioning/ProjectKeystone  (sha256 matches; mode=755)
+[ok]     provisioning/Myrmidons  (sha256 matches; mode=755)
+[ok]     ci-cd/ProjectProteus  (sha256 matches; mode=755)
+[ok]     research/ProjectOdyssey  (sha256 matches; mode=755)
+[ok]     research/ProjectScylla  (sha256 matches; mode=755)
+[ok]     shared/ProjectMnemosyne  (sha256 matches; mode=755)
+[skip]   shared/Hephaestus  (not initialized; run: git submodule update --init --recursive)
+[ok]     control/ProjectAgamemnon  (sha256 matches; mode=755)
+[ok]     control/ProjectNestor  (sha256 matches; mode=755)
+[ok]     testing/ProjectCharybdis  (sha256 matches; mode=755)
+[ok]     agentic/Athena  (sha256 matches; mode=755)
+--- end ---
+
+=== SUMMARY ===
+total submodules parsed:       15
+verified (matches source):    14
+stale or absent:              0
+skipped (uninitialized):      1
