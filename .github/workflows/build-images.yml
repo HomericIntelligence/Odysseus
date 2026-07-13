@@ -1,0 +1,112 @@
+name: Build Images
+
+# Builds and publishes the mesh component container images that Odysseus's
+# e2e stack builds ad-hoc from docker-compose.e2e.yml `build:` contexts, giving
+# each a single pinnable, published artifact in GHCR.
+#
+# Registry:   ghcr.io/homericintelligence/<component> (lowercase)
+# Promotion:  pull_request -> BUILD ONLY (no push; validates images build)
+#             push to main -> build + push :sha-<short> and :latest
+#             push tag v*  -> build + push :<semver> tags
+#
+# The component build contexts live in git submodules, so checkout uses
+# submodules: recursive. hello-myrmidon is intentionally OMITTED: its context
+# ${MYRMIDONS_DIR}/hello-world/ references a worker missing from the Myrmidons
+# submodule (tracked in #392). Add a matrix entry for it once the worker is
+# restored.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+
+concurrency:
+  group: build-images-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: ghcr.io/homericintelligence
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # agamemnon: control plane / HMAS orchestration
+          - component: agamemnon
+            context: control/ProjectAgamemnon
+            file: control/ProjectAgamemnon/Dockerfile
+          # nestor: research / ideation / handoff to Agamemnon
+          - component: nestor
+            context: control/ProjectNestor
+            file: control/ProjectNestor/Dockerfile
+          # hermes: NATS event bridge (compose uses ${HERMES_DIR} ->
+          # infrastructure/ProjectHermes)
+          - component: hermes
+            context: infrastructure/ProjectHermes
+            file: infrastructure/ProjectHermes/Dockerfile
+          # argus-exporter: Prometheus exporter. Its Dockerfile (COPY exporter.py .)
+          # needs the exporter/ dir as build context, while the Dockerfile itself
+          # lives at repo root under e2e/ (compose references it as
+          # dockerfile: ../../../e2e/Dockerfile.argus-exporter, relative to the
+          # context). In Actions, `context` and `file` are both repo-root-relative,
+          # so file: e2e/Dockerfile.argus-exporter resolves correctly.
+          - component: argus-exporter
+            context: infrastructure/ProjectArgus/exporter
+            file: e2e/Dockerfile.argus-exporter
+    steps:
+      - name: Checkout (with submodule contexts)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: Verify build context exists
+        run: test -f "${MATRIX_FILE}" && test -d "${MATRIX_CONTEXT}"
+        env:
+          MATRIX_FILE: ${{ matrix.file }}
+          MATRIX_CONTEXT: ${{ matrix.context }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567  # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@369eb591f429131d6889c46b94e711f089e6ca96  # v5.6.1
+        with:
+          images: ${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
