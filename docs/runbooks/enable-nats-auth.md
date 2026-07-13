@@ -4,6 +4,10 @@ This runbook enables the `verify_and_map` authentication and subject-scoped `acc
 authorization defined in ADR-010. Follow these steps top-to-bottom on every host before
 restarting NATS with the updated `configs/nats/server.conf` and `configs/nats/leaf.conf`.
 
+> **Already enabled?** For the operational lifecycle of these credentials — routine cert
+> rotation, CA rotation, and suspected-compromise / revocation response — see
+> [nats-credential-rotation](nats-credential-rotation.md).
+
 **CRITICAL:** Steps 1–3 must be completed and verified **before** restarting NATS in step 4.
 NATS with `verify_and_map = true` is fail-closed — all existing plain `nats://` connections
 will be rejected as soon as the new config is loaded.
