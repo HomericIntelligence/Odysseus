@@ -74,7 +74,7 @@ repos:
         language: pygrep
         entry: '^(?!\\s*#)(<<<<<<<[^<]|=======$|>>>>>>>[^<])'
         files: '\\.(sh|bash|py|md|ya?ml|json|hcl|justfile)$'
-        exclude: '^(agentic/|control/|infrastructure/|provisioning/|ci-cd/|research/|shared/|testing/)'
+        exclude: '^(agentic/|control/|infrastructure/|provisioning/|ci-cd/|research/|shared/|testing/|\.githooks/)'
         types: [text]
         pass_filenames: true
 
