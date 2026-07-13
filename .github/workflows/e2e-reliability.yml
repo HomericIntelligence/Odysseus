@@ -1,0 +1,147 @@
+# e2e-reliability.yml — EXECUTE the mesh reliability scenario suite in CI.
+#
+# Fixes audit finding #373: the ~38 scenario scripts under
+#   e2e/tests/{fault,chaos,perf,protocol,security}/*.sh
+# were run by ZERO workflows. The only prior e2e CI touch (_required.yml)
+# validates the coverage README *matrix* — it never EXECUTES a scenario.
+# This workflow actually stands up the mesh and runs the scripts, and FAILS
+# the job when any scenario fails.
+#
+# ── Exit-code contract (why a failing scenario fails the job) ────────────────
+# Each scenario ends with `exit_code` (e2e/lib/common.sh) → returns 1 if any
+# `fail` was recorded. run-ipc-tests.sh counts a non-zero scenario as a
+# TOTAL_FAIL (run_test_script), runs under `set -euo pipefail`, and ends with
+#   [ "$TOTAL_FAIL" -eq 0 ]
+# as its final statement — so the harness exits non-zero iff a scenario failed.
+# `just` propagates that non-zero exit, which fails the step and the job.
+#
+# ── Tier choice ──────────────────────────────────────────────────────────────
+# T1 (local host processes, NO containers) is the PR gate: it is the only tier
+# that both (a) runs on a stock GitHub runner without prebuilt images / a
+# podman DNS workaround, and (b) actually executes the 38 scenario scripts
+# against a live NATS + Agamemnon + myrmidon mesh. It needs only nats-server
+# (curl download, same idiom as ci.yml) and a source build of Agamemnon
+# (`just build`, the meta-repo's canonical pixi+conan+cmake path).
+#
+# T4 (podman compose, all services built from source) is the deeper net and
+# runs nightly + on manual dispatch — it is heavier (per-service image builds +
+# a rootless-podman DNS workaround in e2e/start-stack.sh) and is intentionally
+# NOT a PR gate so infra flakiness cannot block PRs.
+#
+# ── KNOWN CAVEAT (documented, not hidden) ────────────────────────────────────
+# The `hello-world` worker the harness dispatches to
+# (provisioning/Myrmidons/hello-world/main.py, referenced by process.sh,
+# start-stack.sh, the T3 Dockerfile, and the `start-myrmidon` recipe) is NOT
+# present in the currently-pinned Myrmidons submodule — that repo is now a
+# declarative agent-manifest repo. Until a `hello-world` worker is restored to
+# the Myrmidons pin, the mesh cannot complete tasks and these jobs will fail at
+# myrmidon startup. That is a submodule-pin gap, tracked separately; this
+# workflow is authored so it becomes a real, meaningful gate the moment the
+# worker is back. See the PR body for #373 for the full trace.
+#
+# ── Security ─────────────────────────────────────────────────────────────────
+# Static commands only. No `${{ github.event.* }}` interpolation in any run:
+# block (avoids the Actions script-injection class). Third-party actions are
+# pinned to a commit SHA, matching the convention in .github/workflows/*.yml.
+
+name: e2e-reliability
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # 07:00 UTC — low-traffic hour — nightly deep T4 compose run.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-reliability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── T1 local host-process mesh, executes all 38 scenarios ───────────────────
+  # PARKED off the PR/push path until the `hello-world` myrmidon worker is
+  # restored to the Myrmidons submodule (it is absent from the current pin AND
+  # from Myrmidons upstream main — `agents/` has only `_templates` + `hermes`).
+  # With the worker missing, this job fails at myrmidon startup, so gating every
+  # PR on it would show a permanent (non-required, but noisy) red check. Kept on
+  # nightly schedule + manual dispatch so it runs and surfaces the gap without
+  # spamming PRs. FLIP the `if:` back to include `pull_request`/`push` in the
+  # follow-up that restores the worker — the job body is already a correct gate.
+  e2e-reliability-t1:
+    name: e2e-reliability-t1 (nightly until #391 worker restored)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: Install pixi
+        uses: prefix-dev/setup-pixi@a09b6247153796b190642a2b53fac4241043cf6f  # v0.10.0
+        with:
+          pixi-version: latest
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
+
+      - name: Install nats-server
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/nats-io/nats-server/releases/download/v2.10.24/nats-server-v2.10.24-linux-amd64.tar.gz \
+            | tar xz --wildcards --strip-components=1 -C /usr/local/bin '*/nats-server'
+          nats-server --version
+
+      - name: Install Python NATS client (used by scenario assertions)
+        run: pip install nats-py
+
+      - name: Build mesh binaries (Agamemnon + myrmidon) from source
+        # `just build` produces build/ProjectAgamemnon/ProjectAgamemnon_server —
+        # the first path start_agamemnon_bg (e2e/lib/process.sh) searches.
+        run: just build
+
+      - name: Run T1 reliability suite (all categories) and assert exit 0
+        # `just e2e-test-local` == run-ipc-tests.sh --topology t1 --category all.
+        # A failing scenario -> non-zero harness exit -> this step fails the job.
+        run: just e2e-test-local
+
+  # ── NIGHTLY / DISPATCH: T4 podman-compose mesh, deeper net ──────────────────
+  e2e-reliability-t4:
+    name: e2e-reliability-t4 (nightly compose)
+    # Nightly schedule + manual dispatch only — never a PR gate.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
+
+      - name: Install podman + podman-compose
+        # e2e/start-stack.sh uses `podman compose` and rootless podman inspect;
+        # ubuntu-latest ships podman, but ensure the compose provider is present.
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends podman podman-compose
+          podman --version
+          podman compose version || podman-compose --version
+
+      - name: Bring up the T4 compose stack
+        run: just e2e-up
+
+      - name: Run T4 reliability suite (all categories) and assert exit 0
+        run: just e2e-test-all-categories
+
+      - name: Tear down the T4 compose stack
+        if: always()
+        run: just e2e-down
