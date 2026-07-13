@@ -42,7 +42,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # ─── Ensure hephaestus is importable from Odysseus root ────────────────────
-_HEPHAESTUS_ROOT = Path(__file__).resolve().parent.parent / "shared" / "ProjectHephaestus"
+_HEPHAESTUS_ROOT = Path(__file__).resolve().parent.parent / "shared" / "Hephaestus"
 if str(_HEPHAESTUS_ROOT) not in sys.path:
     sys.path.insert(0, str(_HEPHAESTUS_ROOT))
 
@@ -176,8 +176,8 @@ REPOS: dict[str, dict] = {
         "description": "Skills marketplace and knowledge registry",
     },
     "hephaestus": {
-        "path": "shared/ProjectHephaestus",
-        "github_repo": "HomericIntelligence/ProjectHephaestus",
+        "path": "shared/Hephaestus",
+        "github_repo": "HomericIntelligence/Hephaestus",
         "description": "Shared tooling, linting, and CI helpers",
     },
 }

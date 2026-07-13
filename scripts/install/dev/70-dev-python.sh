@@ -22,14 +22,14 @@ fi
 
 # Repos that are expected to have [feature.dev] in pixi.toml
 PYTHON_REPOS=(
-    "infrastructure/ProjectHermes"
-    "infrastructure/ProjectArgus"
-    "provisioning/ProjectTelemachy"
-    "provisioning/ProjectKeystone"
-    "research/ProjectScylla"
-    "shared/ProjectHephaestus"
-    "research/ProjectOdyssey"
-    "testing/ProjectCharybdis"
+    "infrastructure/Hermes"
+    "infrastructure/Argus"
+    "provisioning/Telemachy"
+    "provisioning/Keystone"
+    "research/Scylla"
+    "shared/Hephaestus"
+    "research/Odyssey"
+    "testing/Charybdis"
 )
 
 for repo in "${PYTHON_REPOS[@]}"; do

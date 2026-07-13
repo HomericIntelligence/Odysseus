@@ -29,10 +29,10 @@ echo "╚═══════════════════════�
 info "Phase 1: Export C++ packages to local Conan cache"
 
 for pkg_dir in \
-    "$ODYSSEUS_ROOT/control/ProjectAgamemnon" \
-    "$ODYSSEUS_ROOT/control/ProjectNestor" \
-    "$ODYSSEUS_ROOT/testing/ProjectCharybdis" \
-    "$ODYSSEUS_ROOT/provisioning/ProjectKeystone"; do
+    "$ODYSSEUS_ROOT/control/Agamemnon" \
+    "$ODYSSEUS_ROOT/control/Nestor" \
+    "$ODYSSEUS_ROOT/testing/Charybdis" \
+    "$ODYSSEUS_ROOT/provisioning/Keystone"; do
     pkg_name="$(basename "$pkg_dir")"
     if [ -f "$pkg_dir/conanfile.py" ]; then
         conan export "$pkg_dir" && pass "Exported $pkg_name" \
@@ -76,7 +76,7 @@ info "Phase 3: CMake install to staging prefix"
 
 BUILD_ROOT="$ODYSSEUS_ROOT/build"
 
-for pkg in ProjectAgamemnon ProjectNestor ProjectCharybdis ProjectKeystone; do
+for pkg in Agamemnon Nestor Charybdis Keystone; do
     build_dir="$BUILD_ROOT/$pkg"
     if [ -d "$build_dir" ]; then
         cmake --install "$build_dir" --prefix "$STAGING_PREFIX" 2>/dev/null \
@@ -90,7 +90,7 @@ done
 # Verify expected files exist
 info "Phase 4: Verify installed artifacts"
 
-for binary in ProjectAgamemnon_server ProjectNestor_server; do
+for binary in Agamemnon_server Nestor_server; do
     if [ -f "$STAGING_PREFIX/bin/$binary" ]; then
         pass "Binary exists: bin/$binary"
     else

@@ -78,79 +78,79 @@ setup: bootstrap build
 
 # Install all server binaries and libraries to a prefix (default: /usr/local)
 install PREFIX="/usr/local":
-    cmake --install "{{BUILD_ROOT}}/ProjectAgamemnon" --prefix "{{PREFIX}}"
-    cmake --install "{{BUILD_ROOT}}/ProjectNestor" --prefix "{{PREFIX}}"
-    cmake --install "{{BUILD_ROOT}}/ProjectCharybdis" --prefix "{{PREFIX}}"
-    cmake --install "{{BUILD_ROOT}}/ProjectKeystone" --prefix "{{PREFIX}}"
+    cmake --install "{{BUILD_ROOT}}/Agamemnon" --prefix "{{PREFIX}}"
+    cmake --install "{{BUILD_ROOT}}/Nestor" --prefix "{{PREFIX}}"
+    cmake --install "{{BUILD_ROOT}}/Charybdis" --prefix "{{PREFIX}}"
+    cmake --install "{{BUILD_ROOT}}/Keystone" --prefix "{{PREFIX}}"
 
-# Build ProjectAgamemnon (C++/CMake + Conan, debug preset)
+# Build Agamemnon (C++/CMake + Conan, debug preset)
 _build-agamemnon:
     @echo "--- Conan deps for control/ProjectAgamemnon ---"
     cd control/ProjectAgamemnon && pixi run conan install . \
-        --output-folder="{{BUILD_ROOT}}/ProjectAgamemnon" \
+        --output-folder="{{BUILD_ROOT}}/Agamemnon" \
         --profile=conan/profiles/debug \
         --build=missing
     @echo "--- Building control/ProjectAgamemnon ---"
-    @if [ -d "{{BUILD_ROOT}}/ProjectAgamemnon" ]; then rm -rf "{{BUILD_ROOT}}/ProjectAgamemnon/CMakeCache.txt" "{{BUILD_ROOT}}/ProjectAgamemnon/CMakeFiles" "{{BUILD_ROOT}}/ProjectAgamemnon/_deps"; fi
-    pixi run cmake -S control/ProjectAgamemnon -B "{{BUILD_ROOT}}/ProjectAgamemnon" \
-        -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectAgamemnon/conan_toolchain.cmake" \
+    @if [ -d "{{BUILD_ROOT}}/Agamemnon" ]; then rm -rf "{{BUILD_ROOT}}/Agamemnon/CMakeCache.txt" "{{BUILD_ROOT}}/Agamemnon/CMakeFiles" "{{BUILD_ROOT}}/Agamemnon/_deps"; fi
+    pixi run cmake -S control/ProjectAgamemnon -B "{{BUILD_ROOT}}/Agamemnon" \
+        -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/Agamemnon/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
         -G Ninja \
         -DProjectAgamemnon_BUILD_TESTING=ON \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-    pixi run cmake --build "{{BUILD_ROOT}}/ProjectAgamemnon"
+    pixi run cmake --build "{{BUILD_ROOT}}/Agamemnon"
 
-# Build ProjectNestor (C++/CMake + Conan, debug preset)
+# Build Nestor (C++/CMake + Conan, debug preset)
 _build-nestor:
     @echo "--- Conan deps for control/ProjectNestor ---"
     cd control/ProjectNestor && pixi run conan install . \
-        --output-folder="{{BUILD_ROOT}}/ProjectNestor" \
+        --output-folder="{{BUILD_ROOT}}/Nestor" \
         --profile=conan/profiles/debug \
         --build=missing
     @echo "--- Building control/ProjectNestor ---"
-    @if [ -d "{{BUILD_ROOT}}/ProjectNestor" ]; then rm -rf "{{BUILD_ROOT}}/ProjectNestor/CMakeCache.txt" "{{BUILD_ROOT}}/ProjectNestor/CMakeFiles" "{{BUILD_ROOT}}/ProjectNestor/_deps"; fi
-    pixi run cmake -S control/ProjectNestor -B "{{BUILD_ROOT}}/ProjectNestor" \
-        -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectNestor/conan_toolchain.cmake" \
+    @if [ -d "{{BUILD_ROOT}}/Nestor" ]; then rm -rf "{{BUILD_ROOT}}/Nestor/CMakeCache.txt" "{{BUILD_ROOT}}/Nestor/CMakeFiles" "{{BUILD_ROOT}}/Nestor/_deps"; fi
+    pixi run cmake -S control/ProjectNestor -B "{{BUILD_ROOT}}/Nestor" \
+        -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/Nestor/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
         -G Ninja \
         -DProjectNestor_BUILD_TESTING=ON \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-    pixi run cmake --build "{{BUILD_ROOT}}/ProjectNestor"
+    pixi run cmake --build "{{BUILD_ROOT}}/Nestor"
 
-# Build ProjectCharybdis (C++/CMake + Conan, debug preset)
+# Build Charybdis (C++/CMake + Conan, debug preset)
 _build-charybdis:
     @echo "--- Conan deps for testing/ProjectCharybdis ---"
     cd testing/ProjectCharybdis && pixi run conan install . \
-        --output-folder="{{BUILD_ROOT}}/ProjectCharybdis" \
+        --output-folder="{{BUILD_ROOT}}/Charybdis" \
         --profile=conan/profiles/debug \
         --build=missing
     @echo "--- Building testing/ProjectCharybdis ---"
-    @if [ -d "{{BUILD_ROOT}}/ProjectCharybdis" ]; then rm -rf "{{BUILD_ROOT}}/ProjectCharybdis/CMakeCache.txt" "{{BUILD_ROOT}}/ProjectCharybdis/CMakeFiles" "{{BUILD_ROOT}}/ProjectCharybdis/_deps"; fi
-    pixi run cmake -S testing/ProjectCharybdis -B "{{BUILD_ROOT}}/ProjectCharybdis" \
-        -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectCharybdis/conan_toolchain.cmake" \
+    @if [ -d "{{BUILD_ROOT}}/Charybdis" ]; then rm -rf "{{BUILD_ROOT}}/Charybdis/CMakeCache.txt" "{{BUILD_ROOT}}/Charybdis/CMakeFiles" "{{BUILD_ROOT}}/Charybdis/_deps"; fi
+    pixi run cmake -S testing/ProjectCharybdis -B "{{BUILD_ROOT}}/Charybdis" \
+        -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/Charybdis/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
         -G Ninja \
         -DProjectCharybdis_BUILD_TESTING=ON \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-    pixi run cmake --build "{{BUILD_ROOT}}/ProjectCharybdis"
+    pixi run cmake --build "{{BUILD_ROOT}}/Charybdis"
 
-# Build ProjectKeystone (C++/CMake + Conan, debug preset)
+# Build Keystone (C++/CMake + Conan, debug preset)
 _build-keystone:
     @echo "--- Conan deps for provisioning/ProjectKeystone ---"
     cd provisioning/ProjectKeystone && pixi run conan install . \
-        --output-folder="{{BUILD_ROOT}}/ProjectKeystone" \
+        --output-folder="{{BUILD_ROOT}}/Keystone" \
         --profile=conan/profiles/debug \
         --build=missing
     @echo "--- Building provisioning/ProjectKeystone ---"
-    @if [ -d "{{BUILD_ROOT}}/ProjectKeystone" ]; then rm -rf "{{BUILD_ROOT}}/ProjectKeystone/CMakeCache.txt" "{{BUILD_ROOT}}/ProjectKeystone/CMakeFiles" "{{BUILD_ROOT}}/ProjectKeystone/_deps"; fi
-    pixi run cmake -S provisioning/ProjectKeystone -B "{{BUILD_ROOT}}/ProjectKeystone" \
-        -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectKeystone/conan_toolchain.cmake" \
+    @if [ -d "{{BUILD_ROOT}}/Keystone" ]; then rm -rf "{{BUILD_ROOT}}/Keystone/CMakeCache.txt" "{{BUILD_ROOT}}/Keystone/CMakeFiles" "{{BUILD_ROOT}}/Keystone/_deps"; fi
+    pixi run cmake -S provisioning/ProjectKeystone -B "{{BUILD_ROOT}}/Keystone" \
+        -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/Keystone/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
         -G Ninja \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-    pixi run cmake --build "{{BUILD_ROOT}}/ProjectKeystone"
+    pixi run cmake --build "{{BUILD_ROOT}}/Keystone"
 
-# Build ProjectOdyssey (Mojo — outputs to submodule build/ directory)
+# Build Odyssey (Mojo — outputs to submodule build/ directory)
 # Skipped when SKIP_ODYSSEY_BUILD=true or when podman is not available (e.g. CI).
 _build-odyssey:
     #!/usr/bin/env bash
@@ -164,7 +164,7 @@ _build-odyssey:
         exit 0
     fi
     cd research/ProjectOdyssey
-    BUILD_ROOT="{{BUILD_ROOT}}/ProjectOdyssey" just build
+    BUILD_ROOT="{{BUILD_ROOT}}/Odyssey" just build
 
 # ===========================================================================
 # Test
@@ -175,20 +175,20 @@ test: _test-agamemnon _test-nestor _test-charybdis _test-keystone
     @echo "=== Tests complete ==="
 
 _test-agamemnon:
-    @echo "--- Testing control/ProjectAgamemnon ---"
-    ctest --test-dir "{{BUILD_ROOT}}/ProjectAgamemnon" --output-on-failure --no-tests=error
+    @echo "--- Testing control/Agamemnon ---"
+    ctest --test-dir "{{BUILD_ROOT}}/Agamemnon" --output-on-failure --no-tests=error
 
 _test-nestor:
-    @echo "--- Testing control/ProjectNestor ---"
-    ctest --test-dir "{{BUILD_ROOT}}/ProjectNestor" --output-on-failure --no-tests=error
+    @echo "--- Testing control/Nestor ---"
+    ctest --test-dir "{{BUILD_ROOT}}/Nestor" --output-on-failure --no-tests=error
 
 _test-charybdis:
-    @echo "--- Testing testing/ProjectCharybdis ---"
-    ctest --test-dir "{{BUILD_ROOT}}/ProjectCharybdis" --output-on-failure --no-tests=error
+    @echo "--- Testing testing/Charybdis ---"
+    ctest --test-dir "{{BUILD_ROOT}}/Charybdis" --output-on-failure --no-tests=error
 
 _test-keystone:
-    @echo "--- Testing provisioning/ProjectKeystone ---"
-    ctest --test-dir "{{BUILD_ROOT}}/ProjectKeystone" --output-on-failure
+    @echo "--- Testing provisioning/Keystone ---"
+    ctest --test-dir "{{BUILD_ROOT}}/Keystone" --output-on-failure
 
 # ===========================================================================
 # Lint
@@ -362,11 +362,11 @@ apply-all:
 # Infrastructure Services
 # ===========================================================================
 
-# Start ProjectHermes NATS event bridge
+# Start Hermes NATS event bridge
 hermes-start:
     cd infrastructure/ProjectHermes && just start
 
-# Start ProjectArgus observability stack
+# Start Argus observability stack
 argus-start:
     cd infrastructure/ProjectArgus && just start
 
@@ -374,11 +374,11 @@ argus-start:
 # Provisioning Services
 # ===========================================================================
 
-# Start ProjectKeystone DAG executor daemon
+# Start Keystone DAG executor daemon
 keystone-start:
     cd provisioning/ProjectKeystone && just start
 
-# Print ProjectKeystone DAG status across all teams
+# Print Keystone DAG status across all teams
 keystone-status:
     cd provisioning/ProjectKeystone && just status
 
@@ -386,7 +386,7 @@ keystone-status:
 # Workflows
 # ===========================================================================
 
-# Run a named workflow via ProjectTelemachy
+# Run a named workflow via Telemachy
 telemachy-run WORKFLOW:
     cd provisioning/ProjectTelemachy && just run WORKFLOW={{ WORKFLOW }}
 
@@ -394,7 +394,7 @@ telemachy-run WORKFLOW:
 # Research / Testing
 # ===========================================================================
 
-# Run ProjectScylla ablation benchmarks
+# Run Scylla ablation benchmarks
 scylla-test:
     cd research/ProjectScylla && just test
 
@@ -428,23 +428,23 @@ start-nats:
       nats:alpine -js -m 8222
     @echo "NATS running at nats://$(hostname -I | awk '{print $1}'):4222"
 
-# Start ProjectAgamemnon (C++ binary, connects to NATS)
+# Start Agamemnon (C++ binary, connects to NATS)
 start-agamemnon NATS_URL="nats://localhost:4222":
-    NATS_URL={{ NATS_URL }} "{{BUILD_ROOT}}/ProjectAgamemnon/ProjectAgamemnon_server"
+    NATS_URL={{ NATS_URL }} "{{BUILD_ROOT}}/Agamemnon/Agamemnon_server"
 
-# Start ProjectNestor (C++ binary, connects to NATS)
+# Start Nestor (C++ binary, connects to NATS)
 start-nestor NATS_URL="nats://localhost:4222":
-    NATS_URL={{ NATS_URL }} "{{BUILD_ROOT}}/ProjectNestor/ProjectNestor_server"
+    NATS_URL={{ NATS_URL }} "{{BUILD_ROOT}}/Nestor/Nestor_server"
 
-# Start Agamemnon using submodule-local pixi build (control/ProjectAgamemnon/build/debug/)
+# Start Agamemnon using submodule-local pixi build (control/Agamemnon/build/debug/)
 start-agamemnon-native NATS_URL="nats://localhost:4222":
-    NATS_URL={{ NATS_URL }} control/ProjectAgamemnon/build/debug/ProjectAgamemnon_server
+    NATS_URL={{ NATS_URL }} control/Agamemnon/build/debug/Agamemnon_server
 
-# Start Nestor using submodule-local pixi build (control/ProjectNestor/build/debug/)
+# Start Nestor using submodule-local pixi build (control/Nestor/build/debug/)
 start-nestor-native NATS_URL="nats://localhost:4222":
-    NATS_URL={{ NATS_URL }} control/ProjectNestor/build/debug/ProjectNestor_server
+    NATS_URL={{ NATS_URL }} control/Nestor/build/debug/Nestor_server
 
-# Start ProjectHermes webhook-to-NATS bridge (Python/FastAPI)
+# Start Hermes webhook-to-NATS bridge (Python/FastAPI)
 start-hermes NATS_URL="nats://localhost:4222":
     cd infrastructure/ProjectHermes && NATS_URL={{ NATS_URL }} just start
 
@@ -453,7 +453,7 @@ start-myrmidon NATS_URL="nats://localhost:4222" AGAMEMNON_URL="http://localhost:
     NATS_URL={{ NATS_URL }} AGAMEMNON_URL={{ AGAMEMNON_URL }} \
       python3 provisioning/Myrmidons/hello-world/main.py
 
-# Start ProjectArgus observability stack (Prometheus + Loki + Grafana)
+# Start Argus observability stack (Prometheus + Loki + Grafana)
 start-argus:
     cd infrastructure/ProjectArgus && just start
 
@@ -490,7 +490,7 @@ fleet-clean:
     cd infrastructure/AchaeanFleet && just clean
 
 # ===========================================================================
-# CI/CD Pipelines (ProjectProteus)
+# CI/CD Pipelines (Proteus)
 # ===========================================================================
 
 # Build an OCI image via Dagger pipeline (e.g. just proteus-build myapp)
@@ -522,10 +522,10 @@ proteus-check:
     cd ci-cd/ProjectProteus && just check
 
 # ===========================================================================
-# Skills Marketplace (ProjectMnemosyne)
+# Skills Marketplace (Mnemosyne)
 # ===========================================================================
 
-# Validate all skill files in ProjectMnemosyne
+# Validate all skill files in Mnemosyne
 mnemosyne-validate:
     cd shared/ProjectMnemosyne && just validate
 
@@ -533,7 +533,7 @@ mnemosyne-validate:
 mnemosyne-generate-marketplace:
     cd shared/ProjectMnemosyne && just generate-marketplace
 
-# Run ProjectMnemosyne tests
+# Run Mnemosyne tests
 mnemosyne-test:
     cd shared/ProjectMnemosyne && just test
 
@@ -542,32 +542,32 @@ mnemosyne-check:
     cd shared/ProjectMnemosyne && just check
 
 # ===========================================================================
-# Shared Utilities (ProjectHephaestus)
+# Shared Utilities (Hephaestus)
 # ===========================================================================
 
-# Run ProjectHephaestus unit + integration tests
+# Run Hephaestus unit + integration tests
 hephaestus-test:
-    cd shared/ProjectHephaestus && just test
+    cd shared/Hephaestus && just test
 
-# Run ProjectHephaestus linter
+# Run Hephaestus linter
 hephaestus-lint:
-    cd shared/ProjectHephaestus && just lint
+    cd shared/Hephaestus && just lint
 
-# Run ProjectHephaestus formatter
+# Run Hephaestus formatter
 hephaestus-format:
-    cd shared/ProjectHephaestus && just format
+    cd shared/Hephaestus && just format
 
-# Run ProjectHephaestus type checker
+# Run Hephaestus type checker
 hephaestus-typecheck:
-    cd shared/ProjectHephaestus && just typecheck
+    cd shared/Hephaestus && just typecheck
 
 # Run lint + format-check + typecheck quality gate
 hephaestus-check:
-    cd shared/ProjectHephaestus && just check
+    cd shared/Hephaestus && just check
 
 # Run pip-audit dependency vulnerability scan
 hephaestus-audit:
-    cd shared/ProjectHephaestus && just audit
+    cd shared/Hephaestus && just audit
 
 # ===========================================================================
 # E2E Pipeline Testing
@@ -665,7 +665,7 @@ odysseus-console NATS_URL="nats://localhost:4222":
 
 # Install all Python packages in editable mode
 install-python:
-    pip install -e shared/ProjectHephaestus
+    pip install -e shared/Hephaestus
     pip install -e infrastructure/ProjectHermes
     pip install -e provisioning/ProjectTelemachy
 
@@ -822,11 +822,11 @@ protection-remove-all:
 
 # Dispatch 6-dimension review wave for an Atlas milestone PR via Agamemnon
 atlas-review-dispatch MILESTONE PR AGAMEMNON_URL="http://localhost:8080":
-    infrastructure/ProjectArgus/dashboard/scripts/atlas-review-dispatch.sh {{MILESTONE}} {{PR}} {{AGAMEMNON_URL}}
+    infrastructure/Argus/dashboard/scripts/atlas-review-dispatch.sh {{MILESTONE}} {{PR}} {{AGAMEMNON_URL}}
 
 # Aggregate review wave results — exits 0 when 6/6 dimensions approved
 atlas-review-aggregate MILESTONE TEAM AGAMEMNON_URL="http://localhost:8080":
-    infrastructure/ProjectArgus/dashboard/scripts/atlas-review-aggregate.sh {{MILESTONE}} {{TEAM}} {{AGAMEMNON_URL}}
+    infrastructure/Argus/dashboard/scripts/atlas-review-aggregate.sh {{MILESTONE}} {{TEAM}} {{AGAMEMNON_URL}}
 
 # Post GitHub commit status for the review wave outcome
 atlas-review-status MILESTONE TEAM SHA AGAMEMNON_URL="http://localhost:8080":
@@ -863,3 +863,30 @@ ecosystem-install-check role="all":
 # Run container-based install tests
 test-install os="all" role="worker":
     bash tests/install/run_install_tests.sh {{os}} {{role}}
+
+# ─── Athena (agent-host plugins/skills surface) ────────────────
+# Carved out of Hephaestus per ADR-016. Library half stays in
+# shared/Hephaestus; plugin/skill half lives here.
+
+athena-start:
+    cd agentic/Athena && just start
+
+athena-lint:
+    cd agentic/Athena && just lint
+
+athena-test:
+    cd agentic/Athena && just test
+
+athena-bootstrap:
+    @echo "Athena plugin manifest: agentic/Athena/.claude-plugin/plugin.json"
+    @echo "Enable in Claude Code: 'athena@Athena: true' in ~/.claude/settings.json"
+
+# ===========================================================================
+# Claude Code Tooling (settings.json reconciliation)
+# ===========================================================================
+
+# Reconcile ~/.claude/settings.json: register the Athena marketplace + plugin
+# (and drop pre-ADR-016 / non-canonical legacy plugin keys). Default is
+# check-only; pass install="true" to apply changes.
+claude-setup install="false":
+    INSTALL={{ install }} bash scripts/install/60-claude-tooling.sh

@@ -126,7 +126,7 @@ does not already provide `just` via the system.
 
 Python repositories use **flat layout** by default — the package directory
 sits directly at the repo root (e.g. `hephaestus/`, not `src/hephaestus/`).
-This is intentional: src-layout was evaluated and reverted in ProjectHephaestus
+This is intentional: src-layout was evaluated and reverted in Hephaestus
 because it conflicted with hatchling VCS versioning and editable-install
 expectations in the pixi environment. Do **not** migrate Python repos to
 src-layout without a new ADR.

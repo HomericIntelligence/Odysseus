@@ -12,7 +12,7 @@ Odysseus itself contains no application code. Its value is coordination: it ensu
 ## Key Principles
 
 1. **Odysseus is read-mostly.** Most day-to-day changes happen in the individual submodule repos, not here.
-2. **ai-maestro has been removed per ADR-006.** ProjectAgamemnon (control/ProjectAgamemnon) replaces ai-maestro's task coordination role.
+2. **ai-maestro has been removed per ADR-006.** ProjectAgamemnon (control/Agamemnon) replaces ai-maestro's task coordination role.
 3. **ADRs are append-only.** Once an ADR is accepted it is never edited. Superseding decisions get a new ADR that references the old one.
 4. **Configs here are canonical.** The Nomad and NATS configs in `configs/` are the authoritative source. Individual hosts copy or symlink from here.
 5. **Submodule pins matter.** The submodule SHAs in this repo represent the last known-good cross-repo integration point.
@@ -56,7 +56,7 @@ Odysseus/
 ├── infrastructure/               # git submodules
 │   ├── AchaeanFleet
 │   ├── ProjectArgus
-│   └── ProjectHermes
+│   └── Hermes
 ├── control/                      # git submodules
 │   ├── ProjectAgamemnon          # Planning + HMAS orchestration (replaces ai-maestro)
 │   └── ProjectNestor             # Research, ideation, handoff to Agamemnon
@@ -72,8 +72,8 @@ Odysseus/
 ├── testing/                      # git submodules
 │   └── ProjectCharybdis          # Chaos/resilience testing via Agamemnon /v1/chaos/*
 ├── shared/                       # git submodules
-│   ├── ProjectMnemosyne
-│   └── ProjectHephaestus
+│   ├── Mnemosyne
+│   └── Hephaestus
 ├── .gitmodules
 ├── justfile
 └── pixi.toml
@@ -125,7 +125,7 @@ just status
 # Apply Myrmidons declarative YAML manifests via Agamemnon API
 just apply-all
 
-# Start the NATS event bridge (ProjectHermes)
+# Start the NATS event bridge (Hermes)
 just hermes-start
 
 # Start the observability stack (ProjectArgus)

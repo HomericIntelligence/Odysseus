@@ -62,6 +62,22 @@ repos:
         files: ^\.github/workflows/.*\.ya?ml$
         exclude: ^\.github/workflows/_required\.yml$
         pass_filenames: true
+      - id: forbid-merge-conflict-markers
+        name: "forbid unresolved merge-conflict markers in tracked source"
+        description: >
+          Rejects `<<<<<<<`, `=======`, `>>>>>>>` markers in any staged file.
+          Regression guard for the 0651c1c corruption on chore/split-hephaestus-athena
+          where conflict-marker block content was committed into 4 files because
+          pre-commit hooks (this one did not exist yet) had nothing to detect it.
+          Scope: tracked first-party source only - skips submodule working trees
+          (their own repos' hooks gate their commits) per AGENTS.md.
+        language: pygrep
+        entry: '^(?!\\s*#)(<<<<<<<[^<]|=======$|>>>>>>>[^<])'
+        files: '\\.(sh|bash|py|md|ya?ml|json|hcl|justfile)$'
+        exclude: '^(agentic/|control/|infrastructure/|provisioning/|ci-cd/|research/|shared/|testing/|\.githooks/)'
+        types: [text]
+        pass_filenames: true
+
       - id: check-grafana-credentials
         name: "Grafana default-cred rotation warning + anonymous-read marker (#179)"
         description: >

@@ -21,10 +21,10 @@ section "C++ Release Builds"
 
 # All four C++ repos have CMakePresets.json with a "release" configurePreset
 CPP_REPOS=(
-    "control/ProjectAgamemnon"
-    "control/ProjectNestor"
-    "provisioning/ProjectKeystone"
-    "testing/ProjectCharybdis"
+    "control/Agamemnon"
+    "control/Nestor"
+    "provisioning/Keystone"
+    "testing/Charybdis"
 )
 
 RUNTIME_PREFIX="${ODYSSEUS_RUNTIME_PREFIX:-$HOME/.local}"
@@ -153,10 +153,10 @@ build_cpp_repo() {
         # causing cmake --install to fail.
         echo -e "      ${DIM}cmake --preset release...${NC}"
         pixi run -- cmake --preset release \
-            -DProjectAgamemnon_ENABLE_CLANG_TIDY=OFF \
-            -DProjectNestor_ENABLE_CLANG_TIDY=OFF \
-            -DProjectKeystone_ENABLE_CLANG_TIDY=OFF \
-            -DProjectCharybdis_ENABLE_CLANG_TIDY=OFF \
+            -DAgamemnon_ENABLE_CLANG_TIDY=OFF \
+            -DNestor_ENABLE_CLANG_TIDY=OFF \
+            -DKeystone_ENABLE_CLANG_TIDY=OFF \
+            -DCharybdis_ENABLE_CLANG_TIDY=OFF \
             -DNATS_BUILD_LIBS_SHARED=OFF \
             2>&1
 

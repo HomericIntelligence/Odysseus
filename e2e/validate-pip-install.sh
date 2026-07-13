@@ -27,10 +27,10 @@ echo "╚═══════════════════════�
 
 # Package definitions: directory|import_name|cli_entry_points (comma-separated, optional)
 PACKAGES=(
-    "shared/ProjectHephaestus|hephaestus|hephaestus-changelog,hephaestus-system-info"
-    "infrastructure/ProjectHermes|hermes|"
-    "provisioning/ProjectTelemachy|telemachy|"
-    "research/ProjectScylla|scylla|"
+    "shared/Hephaestus|hephaestus|hephaestus-changelog,hephaestus-system-info"
+    "infrastructure/Hermes|hermes|"
+    "provisioning/Telemachy|telemachy|"
+    "research/Scylla|scylla|"
 )
 
 for pkg_spec in "${PACKAGES[@]}"; do

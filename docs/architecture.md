@@ -31,7 +31,7 @@ a git submodule. Odysseus itself contains no application code.
 | **ProjectNestor** | control | Thin C++ intake/status/dispatch service for research. Accepts ideas (`POST /v1/research`), dispatches them to the research myrmidon pool, tracks status. Research, interviewing, and ideation run in research-pool myrmidons — never inside Nestor itself (LLM work never runs inside C++ services; see [ADR-013](adr/013-hmas-mesh-wire-contracts.md)). |
 | **ProjectKeystone** | transport | Invisible transport layer. BlazingMQ for intra-host (<500 ns, >2 M msg/sec); NATS JetStream (nats.c v3.12.0) for cross-host over Tailscale. Components talk *through* Keystone, never *to* it. |
 | **ProjectHermes** | infrastructure | External message delivery bridge. Routes external-service events into NATS and delivers outbound messages to external services. |
-| **ProjectArgus** | infrastructure | Observability: Prometheus metrics, Loki log aggregation, Grafana dashboards, Promtail scraping. Feeds Odysseus dashboards. |
+| **Argus** | infrastructure | Observability: Prometheus metrics, Loki log aggregation, Grafana dashboards, Promtail scraping. Feeds Odysseus dashboards. |
 | **AchaeanFleet** | infrastructure | Container image library. All agent and service images. Built by Proteus; run on the `homeric-mesh` Podman network. |
 | **Myrmidons repo** | provisioning | GitOps source of truth. YAML manifests describe desired agent state; Agamemnon API reconciliation applies them. Also holds all agent templates and container specs. Multi-host scheduling via Nomad is deferred to a future phase (see [ADR-009](adr/009-defer-multi-host-nomad-scheduling.md)); currently supports `local` and `docker` deployment types only. |
 | **ProjectTelemachy** | provisioning | Declarative workflow engine + work description and epic registration. Turns workflow YAML into GitHub epics with child issues and publishes `hi.pipeline.epic.*.registered` ([ADR-013](adr/013-hmas-mesh-wire-contracts.md)). Used programmatically by Agamemnon, Nestor, and research myrmidons. Not a user-facing service. |
@@ -39,8 +39,8 @@ a git submodule. Odysseus itself contains no application code.
 | **Myrmidons (workers)** | workers | The worker pool: all nodes that can run myrmidon agents. Pull-based from role-addressed queues `hi.myrmidon.{domain}.{role}.task.>` ([ADR-013](adr/013-hmas-mesh-wire-contracts.md)); myrmidon roles ARE the HMAS agentic roles at every level, crossed with domain (e.g. `research.chief-architect` vs `pipeline.chief-architect`). Multi-host clustering via Nomad is deferred to a future phase (see [ADR-009](adr/009-defer-multi-host-nomad-scheduling.md)). |
 | **ProjectScylla** | testing | AI agent ablation benchmarking; evaluates agent architectures across tiered configurations (T0–T6). |
 | **ProjectCharybdis** | testing | Chaos and resilience testing. Injects faults via Agamemnon `/v1/chaos/*` endpoints. |
-| **ProjectMnemosyne** | shared | Skills marketplace / team-knowledge memory store for the `advise` and `learn` plugins only. Not an agent-template registry. |
-| **ProjectHephaestus** | shared | Shared utilities, Claude Code plugins, and skills registry. Used across all repos. |
+| **Mnemosyne** | shared | Skills marketplace / team-knowledge memory store for the `advise` and `learn` plugins only. Not an agent-template registry. |
+| **Hephaestus** | shared | Shared utilities, Claude Code plugins, and skills registry. Used across all repos. |
 | **ProjectOdyssey** | research | Standalone Mojo ML training framework. Reproduces classic AI/ML research papers; provides reusable tensor ops, autograd, and training infrastructure. Not integrated with the agent mesh; implementations live entirely in-repo as Mojo libraries and executables. |
 | ~~ai-maestro~~ | removed | Removed per [ADR-006](adr/006-decouple-from-ai-maestro.md). No submodule entry and no `infrastructure/ai-maestro/` directory. Do not reintroduce. |
 
@@ -74,7 +74,7 @@ traverse the network.
                    │ research requests             │ dashboards / alerts
                    ▼                               ▼
   ┌────────────────────────────┐    ┌──────────────────────────────────┐
-  │       ProjectNestor        │    │          ProjectArgus            │
+  │       ProjectNestor        │    │          Argus            │
   │  research · ideation       │    │  Prometheus · Loki · Grafana     │
   │  Telemachy workflows       │    │  Promtail                        │
   └────────────────┬───────────┘    └──────────────────────────────────┘
@@ -116,8 +116,8 @@ traverse the network.
   ProjectTelemachy  ◄── used by Agamemnon + Nestor programmatically
   ProjectCharybdis  ──► Agamemnon /v1/chaos/* (fault injection)
   ProjectScylla     ──► ablation benchmarking (T0–T6 tiers)
-  ProjectMnemosyne  ──► advise/learn plugins only
-  ProjectHephaestus ──► shared utilities, skills registry (all repos)
+  Mnemosyne  ──► advise/learn plugins only
+  Hephaestus ──► shared utilities, skills registry (all repos)
   ProjectOdyssey    ──► standalone Mojo ML framework (paper reproductions, in-repo only)
 ```
 
@@ -233,9 +233,9 @@ payload envelopes, and migration notes.
 
 ---
 
-## Observability (ProjectArgus)
+## Observability (Argus)
 
-ProjectArgus provides the full observability stack:
+Argus provides the full observability stack:
 
 - **Prometheus** — scrapes metrics from Agamemnon, Nestor, Keystone, Hermes,
   and Myrmidon workers.
@@ -245,9 +245,9 @@ ProjectArgus provides the full observability stack:
 - **SLOs / SLAs** — Service-level objectives for availability, task success,
   NATS event latency, reconnect time, and throughput are defined in
   [ADR-012](adr/012-slo-sla-definitions.md). Alert rules for the SLIs that are
-  measurable today live in ProjectArgus (`rules/slo_alerts.yml`); see
+  measurable today live in Argus (`rules/slo_alerts.yml`); see
   [runbooks/slo-alerting-rules.md](runbooks/slo-alerting-rules.md). Latency and
-  reconnect SLOs are gated on instrumentation that ProjectArgus does not yet
+  reconnect SLOs are gated on instrumentation that Argus does not yet
   emit (ADR-012, Tier 2).
 
 Argus does not control or coordinate components; it is read-only with respect
@@ -262,7 +262,7 @@ YAML manifests in the Myrmidons repo describe the desired state of the agent
 mesh. Proteus dispatches `agamemnon-apply` on merge; Agamemnon reconciles live
 state against the manifests via its REST API. The Myrmidons repo is the
 authoritative source of container specs and agent templates (not
-ProjectMnemosyne).
+Mnemosyne).
 
 **Current state:** Myrmidons supports single-host deployments with `local` and
 `docker` deployment types. Multi-host agent scheduling via Nomad is deferred to
@@ -316,12 +316,12 @@ directly.
 
 ## Shared Infrastructure
 
-### ProjectMnemosyne
+### Mnemosyne
 Skills marketplace and team-knowledge memory store backing the `advise` and
 `learn` plugins only. Mnemosyne is not an agent-template registry and does not
 hold agent specs; those live in the Myrmidons repo.
 
-### ProjectHephaestus
+### Hephaestus
 Shared utilities, Claude Code plugins, and the skills registry. Consumed by all
 HomericIntelligence repos. Includes changelog tooling, system-info helpers, and
 markdown utilities.

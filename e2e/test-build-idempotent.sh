@@ -32,19 +32,19 @@ echo "=== Step 2: first build ==="
 pixi run just build
 
 echo "=== Step 3: assert artifacts after first build ==="
-check "Agamemnon CMakeCache (run 1)"  "${BUILD_ROOT}/ProjectAgamemnon/CMakeCache.txt"
-check "Nestor CMakeCache (run 1)"     "${BUILD_ROOT}/ProjectNestor/CMakeCache.txt"
-check "Charybdis CMakeCache (run 1)"  "${BUILD_ROOT}/ProjectCharybdis/CMakeCache.txt"
-check "Keystone CMakeCache (run 1)"   "${BUILD_ROOT}/ProjectKeystone/CMakeCache.txt"
+check "Agamemnon CMakeCache (run 1)"  "${BUILD_ROOT}/Agamemnon/CMakeCache.txt"
+check "Nestor CMakeCache (run 1)"     "${BUILD_ROOT}/Nestor/CMakeCache.txt"
+check "Charybdis CMakeCache (run 1)"  "${BUILD_ROOT}/Charybdis/CMakeCache.txt"
+check "Keystone CMakeCache (run 1)"   "${BUILD_ROOT}/Keystone/CMakeCache.txt"
 
 echo "=== Step 4: second build (idempotency check) ==="
 pixi run just build
 
 echo "=== Step 5: assert artifacts survive second build ==="
-check "Agamemnon CMakeCache (run 2)"  "${BUILD_ROOT}/ProjectAgamemnon/CMakeCache.txt"
-check "Nestor CMakeCache (run 2)"     "${BUILD_ROOT}/ProjectNestor/CMakeCache.txt"
-check "Charybdis CMakeCache (run 2)"  "${BUILD_ROOT}/ProjectCharybdis/CMakeCache.txt"
-check "Keystone CMakeCache (run 2)"   "${BUILD_ROOT}/ProjectKeystone/CMakeCache.txt"
+check "Agamemnon CMakeCache (run 2)"  "${BUILD_ROOT}/Agamemnon/CMakeCache.txt"
+check "Nestor CMakeCache (run 2)"     "${BUILD_ROOT}/Nestor/CMakeCache.txt"
+check "Charybdis CMakeCache (run 2)"  "${BUILD_ROOT}/Charybdis/CMakeCache.txt"
+check "Keystone CMakeCache (run 2)"   "${BUILD_ROOT}/Keystone/CMakeCache.txt"
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"

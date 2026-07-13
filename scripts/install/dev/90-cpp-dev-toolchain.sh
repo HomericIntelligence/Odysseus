@@ -44,10 +44,10 @@ fi
 # ─── Configure debug presets for each C++ repo ───────────────────────────────
 # All four repos have CMakePresets.json with a "debug" configurePreset.
 CPP_REPOS=(
-    "control/ProjectAgamemnon"
-    "control/ProjectNestor"
-    "provisioning/ProjectKeystone"
-    "testing/ProjectCharybdis"
+    "control/Agamemnon"
+    "control/Nestor"
+    "provisioning/Keystone"
+    "testing/Charybdis"
 )
 
 if ! has_cmd cmake; then
@@ -77,8 +77,8 @@ for repo in "${CPP_REPOS[@]}"; do
         cd "$dir"
         pixi run -- cmake --preset debug \
             -DENABLE_CLANG_TIDY=ON \
-            -DProjectAgamemnon_ENABLE_CLANG_TIDY=ON \
-            -DProjectNestor_ENABLE_CLANG_TIDY=ON \
+            -DAgamemnon_ENABLE_CLANG_TIDY=ON \
+            -DNestor_ENABLE_CLANG_TIDY=ON \
             2>&1
     ); then
         check_pass "$repo — debug preset configured"

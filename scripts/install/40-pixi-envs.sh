@@ -14,14 +14,14 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 section "Pixi Environments"
 
 if ! has_cmd pixi; then
-    # pixi is provisioned by phase 20 (ProjectHephaestus). During Phase-1 detect
+    # pixi is provisioned by phase 20 (Hephaestus). During Phase-1 detect
     # (which sources this script before phase 20 has run) pixi is legitimately
     # absent, so this is a WARN, not a hard fail: it flags the phase for install
     # without counting toward the exit gate. On the real install pass phase 20
     # runs first, pixi is on PATH, and this branch is not taken. If pixi is
     # somehow still missing at real-install time, the downstream pixi env checks
     # surface it — see issue #393.
-    check_warn "pixi not found — will be installed by phase 20 (ProjectHephaestus)"
+    check_warn "pixi not found — will be installed by phase 20 (Hephaestus)"
     return 0 2>/dev/null || exit 0
 fi
 
@@ -30,20 +30,20 @@ check_pass "pixi $(pixi --version 2>&1 | grep -oP '\d+\.\d+[\.\d]*' | head -1)"
 # All directories (relative to ODYSSEUS_ROOT) that contain pixi.toml
 PIXI_DIRS=(
     "."
-    "ci-cd/ProjectProteus"
-    "control/ProjectAgamemnon"
-    "control/ProjectNestor"
+    "ci-cd/Proteus"
+    "control/Agamemnon"
+    "control/Nestor"
     "infrastructure/AchaeanFleet"
-    "infrastructure/ProjectArgus"
-    "infrastructure/ProjectHermes"
+    "infrastructure/Argus"
+    "infrastructure/Hermes"
     "provisioning/Myrmidons"
-    "provisioning/ProjectKeystone"
-    "provisioning/ProjectTelemachy"
-    "research/ProjectOdyssey"
-    "research/ProjectScylla"
-    "shared/ProjectHephaestus"
-    "shared/ProjectMnemosyne"
-    "testing/ProjectCharybdis"
+    "provisioning/Keystone"
+    "provisioning/Telemachy"
+    "research/Odyssey"
+    "research/Scylla"
+    "shared/Hephaestus"
+    "shared/Mnemosyne"
+    "testing/Charybdis"
 )
 
 pixi_install_dir() {
