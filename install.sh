@@ -156,12 +156,22 @@ _detect_phase() {
 
     echo ""
     echo -e "${BOLD}▶ Phase ${phase_num}${NC} — $(basename "$script" .sh | sed 's/^[0-9]*-//')"
-    local pre_fail=$_FAIL
+    # A phase "needs install" when detect surfaces either a check_fail OR a
+    # check_warn delta. Detect mode is read-only, so a phase that reports a
+    # genuinely-missing-but-installable component as check_warn (the sanctioned
+    # non-fatal signal — see 40-pixi-envs.sh) must still be picked up here.
+    # Keying off both deltas lets detect stay warn-only (so the parent exit
+    # gate is not tripped by things the install phases then provision), while
+    # still scheduling the phase to run. See issue #393.
+    local pre_fail=$_FAIL pre_warn=$_WARN
     # shellcheck source=/dev/null
     source "$script"
-    local post_fail=$_FAIL
-    [[ $post_fail -gt $pre_fail ]] && echo "PHASE_${phase_num}_MISSING=true" >> "$STATE_FILE" \
-                                   || echo "PHASE_${phase_num}_MISSING=false" >> "$STATE_FILE"
+    local post_fail=$_FAIL post_warn=$_WARN
+    if [[ $post_fail -gt $pre_fail || $post_warn -gt $pre_warn ]]; then
+        echo "PHASE_${phase_num}_MISSING=true" >> "$STATE_FILE"
+    else
+        echo "PHASE_${phase_num}_MISSING=false" >> "$STATE_FILE"
+    fi
 }
 
 # Root-required phases
@@ -318,4 +328,13 @@ echo -e "  ${GREEN}✓${NC} Passed checks:  ${_PASS}"
 [[ $_FAIL -gt 0 ]] && echo -e "  ${RED}✗${NC} Failed checks:  ${_FAIL}"
 [[ $_WARN -gt 0 ]] && echo -e "  ${YELLOW}⚠${NC} Warnings:       ${_WARN}"
 [[ $_SKIP -gt 0 ]] && echo -e "  ${DIM}–${NC} Skipped:        ${_SKIP}"
+
+# Gate the final result on the failure counter. A trailing `echo` exits 0, so
+# without this the script always reported success — a broken install would
+# still exit 0 and CI could not detect it (issue #372).
+if [[ $_FAIL -gt 0 ]]; then
+    echo -e "${RED}Install FAILED — ${_FAIL} check(s) did not pass.${NC}" >&2
+    exit 1
+fi
 echo -e "${GREEN}All phases passed.${NC}"
+exit 0

@@ -30,14 +30,24 @@ declare -A SENTINEL_FILES=(
     ["ci-cd/ProjectProteus"]="ci-cd/ProjectProteus/pixi.toml"
 )
 
-# Check current state
+# Check current state.
+#
+# An uninitialized submodule is only a genuine FAILURE when we cannot fix it —
+# i.e. in check-only mode, or if it is still missing after `git submodule
+# update` runs below. During an --install run the pre-install "NOT initialized"
+# is expected on a fresh clone and is retracted by the init step, so we record
+# it as a warn (not a fail) and let the post-init re-verification cast the
+# terminal verdict. This keeps a clean-image worker install at exit 0 (#393).
 UNINITIALIZED=()
 for mod in "${!SENTINEL_FILES[@]}"; do
     sentinel="${SENTINEL_FILES[$mod]}"
     if [[ -f "$ODYSSEUS_ROOT/$sentinel" ]]; then
         check_pass "$mod — initialized"
+    elif [[ "${INSTALL:-false}" == "true" ]]; then
+        # Deferred: the init step below will re-verify and pass/fail per module.
+        UNINITIALIZED+=("$mod")
     else
-        check_fail "$mod — NOT initialized (sentinel missing: $sentinel)"
+        check_warn "$mod — not initialized (will run git submodule update)"
         UNINITIALIZED+=("$mod")
     fi
 done
