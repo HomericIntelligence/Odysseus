@@ -475,7 +475,14 @@ python3 provisioning/Myrmidons/hello-world/main.py > /tmp/myrmidon-crosshost.log
 
 ## Phase 6: Justfile Delegation Tests
 
-### Step 6.1: AchaeanFleet (`test-justfile-achaean-fleet.sh`)
+> **Note (#374):** The per-submodule `test-justfile-*.sh` scripts referenced in
+> this section were later found to be corrupted failed-agent-output artifacts
+> (each contained only `ERROR: Claude returned empty output`) and were removed.
+> The tables below are the historical walkthrough record only — they are not
+> backed by runnable scripts. For real justfile-recipe integrity coverage use
+> `just test-justfile-recipes` (`tests/test-justfile-recipes.sh`).
+
+### Step 6.1: AchaeanFleet (AchaeanFleet fleet-* recipes)
 
 | Check | Result | Notes |
 |-------|--------|-------|
@@ -487,7 +494,7 @@ python3 provisioning/Myrmidons/hello-world/main.py > /tmp/myrmidon-crosshost.log
 **Feedback / Issues found:** All 27 checks passed. The `fleet-build-vessel NAME` parameter delegation works correctly. Submodule justfile is clean (no uncommitted modifications).
 
 
-### Step 6.2: ProjectProteus (`test-justfile-proteus.sh`)
+### Step 6.2: ProjectProteus (proteus-* recipes)
 
 | Check | Result | Notes |
 |-------|--------|-------|
@@ -500,7 +507,7 @@ python3 provisioning/Myrmidons/hello-world/main.py > /tmp/myrmidon-crosshost.log
 **Feedback / Issues found:** All 30 checks passed. Parameterized recipes (`proteus-build NAME`, `proteus-pipeline NAME`, `proteus-dispatch HOST`) delegate correctly. Section header verified.
 
 
-### Step 6.3: ProjectMnemosyne (`test-justfile-mnemosyne.sh`)
+### Step 6.3: ProjectMnemosyne (mnemosyne-* recipes)
 
 | Check | Result | Notes |
 |-------|--------|-------|
@@ -512,7 +519,7 @@ python3 provisioning/Myrmidons/hello-world/main.py > /tmp/myrmidon-crosshost.log
 **Feedback / Issues found:** All 19 checks passed. Skills Marketplace section header verified in Odysseus justfile.
 
 
-### Step 6.4: ProjectHephaestus (`test-justfile-hephaestus.sh`)
+### Step 6.4: ProjectHephaestus (hephaestus-* recipes)
 
 | Check | Result | Notes |
 |-------|--------|-------|
@@ -612,7 +619,7 @@ Run on epimetheus (100.92.173.32) via SSH — conan 2.27.0 with initialized defa
 
 3. **Surface stub test suites explicitly** — Either implement the missing gtest cases in Nestor and Charybdis, or add a `ctest --no-tests=error` flag to `_test-nestor` and `_test-charybdis` so empty test suites fail loudly rather than silently passing. Silent success when no tests run violates KISS and readability.
 
-4. **Add `just e2e-test-justfiles` top-level recipe** — The four `test-justfile-*.sh` scripts are not wired to any `just` recipe. Running `bash e2e/test-justfile-achaean-fleet.sh` manually is discoverable only if you know the file exists. Adding a `just e2e-test-justfiles` recipe that runs all four scripts would make Phase 6 runnable from the standard `just` interface, consistent with how every other phase is invoked.
+4. ~~**Add `just e2e-test-justfiles` top-level recipe**~~ — **Obsolete (#374).** The per-submodule justfile-delegation scripts this recommendation was about turned out to be corrupted failed-agent-output artifacts and were removed. The `e2e-test-justfiles` recipe now just points users at `just test-justfile-recipes` (`tests/test-justfile-recipes.sh`), which is the real, CI-enforced justfile integrity test.
 
 5. **WSL2 podman setup documented in runbook** — The steps to enable WSL2 systemd, linger, and the podman socket are currently scattered across `doctor.sh` comments and the skills marketplace. Adding a `docs/runbooks/wsl2-podman-setup.md` with explicit numbered steps would make this self-service for new contributors.
 
