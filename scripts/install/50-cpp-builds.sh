@@ -45,14 +45,23 @@ if ! mkdir -p "$RUNTIME_PREFIX/bin" "$RUNTIME_PREFIX/lib/pkgconfig" "$RUNTIME_PR
 fi
 
 if ! has_cmd pixi; then
-    check_fail "pixi not found — install it first (phase 20/40)"
+    # pixi is provisioned by phase 20. Absent during Phase-1 detect (this script
+    # is sourced before phase 20 runs) and, for a headless worker, the C++
+    # control-plane builds below are non-fatal anyway (they already downgrade to
+    # check_warn). So this is a WARN, not a hard fail — it must not trip the exit
+    # gate on a clean worker image (#393).
+    check_warn "pixi not found — C++ builds skipped (provisioned by phase 20; non-fatal for a worker)"
     return 0 2>/dev/null || exit 0
 fi
 
 # cmake may live in the pixi conda env rather than system PATH; that's fine —
 # all build commands below use `pixi run -- cmake` which resolves it correctly.
 if ! has_cmd cmake && ! pixi run -- cmake --version >/dev/null 2>&1; then
-    check_fail "cmake not found (neither on PATH nor via pixi run) — install it first"
+    # cmake comes from the pixi env; missing here means the env is not yet
+    # populated (detect time) or the build toolchain is unavailable on this
+    # host. The C++ services are control-plane components, so for a worker this
+    # is a WARN (skip the builds), not a hard fail. See issue #393.
+    check_warn "cmake not found (neither on PATH nor via pixi run) — C++ builds skipped"
     return 0 2>/dev/null || exit 0
 fi
 

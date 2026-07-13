@@ -106,3 +106,12 @@ else
     # shellcheck source=60-claude-tooling.sh
     source "$(dirname "${BASH_SOURCE[0]}")/60-claude-tooling.sh"
 fi
+
+# ─── Propagate failure to the parent installer ───────────────────────────────
+# The phase scripts are *sourced*, so a check_fail only increments _FAIL — it
+# does not set this subprocess's exit status. Without an explicit gate the
+# script exits with the last command's status (0), and install.sh's
+# `if bash user-install.sh; then` wrapper reports success on a failed phase
+# (issue #372). Exit non-zero when any check failed.
+[[ ${_FAIL:-0} -gt 0 ]] && exit 1
+exit 0

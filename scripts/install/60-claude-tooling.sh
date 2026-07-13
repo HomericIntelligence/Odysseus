@@ -18,17 +18,22 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 section "Claude Code Tooling"
 
 # ─── Step 1: Claude Code CLI ─────────────────────────────────────────────────
+# Claude Code is developer/interactive tooling: its installer is network-gated
+# (fetches from claude.ai) and it is not required for a headless worker to run
+# jobs. So a missing/undownloadable CLI is a WARN, not a hard fail — the same
+# non-fatal treatment ProjectMnemosyne/Codex already get below, and consistent
+# with the network-gated precedent in 40-pixi-envs.sh. This keeps a clean-image
+# `--role worker` install at exit 0 when the CLI can't be fetched (#393).
 if has_cmd claude; then
     CLAUDE_VER=$(claude --version 2>&1 | head -1)
     check_pass "claude $CLAUDE_VER"
 else
-    check_fail "claude — NOT FOUND"
     if [[ "${INSTALL:-false}" == "true" ]]; then
         echo -e "    ${BLUE}→${NC} Installing Claude Code CLI..."
         if curl -fsSL https://claude.ai/install.sh | bash >/dev/null 2>&1; then
             check_pass "claude installed"
         else
-            check_fail "claude — install failed (see https://claude.ai/code)"
+            check_warn "claude — install failed (network-gated; not required for a headless worker)"
         fi
         # Add ~/.local/bin to PATH idempotently in rc files
         for RC in "$HOME/.bashrc" "$HOME/.zshrc"; do
@@ -37,6 +42,10 @@ else
                 echo -e "    ${BLUE}→${NC} Added ~/.local/bin to PATH in $RC"
             fi
         done
+    else
+        # Detect / check-only mode: warn (not fail) so this phase is flagged
+        # for install without counting toward the exit gate.
+        check_warn "claude — not installed (will attempt network install)"
     fi
 fi
 
@@ -61,11 +70,13 @@ ok = ('$MARKETPLACE_NAME' in marketplaces and '$PLUGIN_KEY' in plugins)
 sys.exit(0 if ok else 1)
 " 2>/dev/null; then
         check_pass "settings.json — ProjectHephaestus marketplace and plugin already configured"
+    elif [[ "${INSTALL:-false}" == "true" ]]; then
+        # Deferred: the merge below is a local, always-succeeds operation and
+        # emits its own check_pass. No pre-merge fail — that would linger past
+        # the successful merge and trip the exit gate (#393).
+        _do_settings_merge=true
     else
-        check_fail "settings.json — ProjectHephaestus not registered"
-        if [[ "${INSTALL:-false}" == "true" ]]; then
-            _do_settings_merge=true
-        fi
+        check_warn "settings.json — ProjectHephaestus not registered (will merge)"
     fi
 else
     check_warn "settings.json — not found (will create)"

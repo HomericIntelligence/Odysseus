@@ -112,3 +112,12 @@ if [[ -n "$_real_user" ]]; then
     unset _chown_failed _parent
 fi
 unset _real_user _cache_dir
+
+# ─── Propagate failure to the parent installer ───────────────────────────────
+# The phase scripts are *sourced*, so a check_fail only increments _FAIL — it
+# does not set this subprocess's exit status. Without an explicit gate the
+# script exits with the last command's status (0), and install.sh's
+# `if sudo -E ... bash root-install.sh; then` wrapper reports success on a
+# failed phase (issue #372). Exit non-zero when any check failed.
+[[ ${_FAIL:-0} -gt 0 ]] && exit 1
+exit 0

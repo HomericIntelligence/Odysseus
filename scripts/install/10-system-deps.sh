@@ -37,7 +37,18 @@ if ! has_cmd apt-get; then
     return 0 2>/dev/null || exit 0
 fi
 
-# Collect missing packages
+# Collect missing packages.
+#
+# A missing package is only a genuine FAILURE when we cannot fix it: in
+# check-only mode (`--check`) or on a host without apt. During an actual
+# `--install` run the correct terminal signal is the *post-install* outcome —
+# not the pre-install "NOT FOUND", which every clean image trivially trips and
+# which (once counted) is never retracted even after the package installs
+# cleanly. So during --install we record missing packages WITHOUT calling
+# check_fail, then judge by whether the batch apt-get install actually
+# succeeds. This is the same "judge on outcome, not on initial absence"
+# discipline the exit-gate (#372/#389) requires for a clean-image worker
+# install to legitimately reach exit 0.
 MISSING_PKGS=()
 for pkg in "${APT_PKGS[@]}"; do
     # Use dpkg -l for installed check; fall back to has_cmd for binaries
@@ -45,8 +56,15 @@ for pkg in "${APT_PKGS[@]}"; do
         check_pass "$pkg (installed)"
     elif has_cmd "$pkg"; then
         check_pass "$pkg (on PATH)"
+    elif [[ "${INSTALL:-false}" == "true" ]]; then
+        # Will be installed below; defer the pass/fail verdict to the outcome.
+        MISSING_PKGS+=("$pkg")
     else
-        check_fail "$pkg — NOT FOUND"
+        # Check-only / detect mode: the package is installable via apt, so a
+        # warn (not a fail) is the honest signal — it flags the phase as
+        # needing install (picked up by _detect_phase's warn-delta) without
+        # counting toward the exit gate, which must reflect post-install state.
+        check_warn "$pkg — not installed (will install)"
         MISSING_PKGS+=("$pkg")
     fi
 done

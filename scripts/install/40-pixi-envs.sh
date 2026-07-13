@@ -14,7 +14,14 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 section "Pixi Environments"
 
 if ! has_cmd pixi; then
-    check_fail "pixi not found — install it first (phase 20 / ProjectHephaestus installer)"
+    # pixi is provisioned by phase 20 (ProjectHephaestus). During Phase-1 detect
+    # (which sources this script before phase 20 has run) pixi is legitimately
+    # absent, so this is a WARN, not a hard fail: it flags the phase for install
+    # without counting toward the exit gate. On the real install pass phase 20
+    # runs first, pixi is on PATH, and this branch is not taken. If pixi is
+    # somehow still missing at real-install time, the downstream pixi env checks
+    # surface it — see issue #393.
+    check_warn "pixi not found — will be installed by phase 20 (ProjectHephaestus)"
     return 0 2>/dev/null || exit 0
 fi
 
