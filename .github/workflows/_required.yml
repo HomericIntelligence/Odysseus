@@ -339,17 +339,28 @@ jobs:
           find .github/workflows -name "*.yml" | xargs check-jsonschema \
             --schemafile https://json.schemastore.org/github-workflow
 
-      - name: Validate ruleset JSON and require >=1 approving review
+      - name: Validate ruleset JSON and review-count policy
         run: |
-          for f in configs/github/org-ruleset.json \
-                   configs/github/org-ruleset-active.json \
-                   configs/github/repo-ruleset.json \
-                   configs/github/repo-ruleset-active.json; do
+          # Policy (#394): merges gate on REQUIRED STATUS CHECKS, not on required
+          # reviewers. The repo-scoped rulesets require 0 approvals (matching the
+          # live `homeric-main-baseline` ruleset — the only ruleset enforced on
+          # this repo). Org-scoped rulesets still assert >=1 (org policy is out of
+          # scope here). We validate every file is well-formed JSON and carries a
+          # numeric required_approving_review_count, and hold the intended count
+          # per scope so drift is still caught in both directions.
+          declare -A expected_min_reviews=(
+            [configs/github/org-ruleset.json]=1
+            [configs/github/org-ruleset-active.json]=1
+            [configs/github/repo-ruleset.json]=0
+            [configs/github/repo-ruleset-active.json]=0
+          )
+          for f in "${!expected_min_reviews[@]}"; do
             jq . "$f" > /dev/null
             count=$(jq 'first(.rules[] | select(.type=="pull_request")
                        | .parameters.required_approving_review_count)' "$f")
-            if [ -z "$count" ] || [ "$count" -lt 1 ]; then
-              echo "ERROR: $f has required_approving_review_count=$count (must be >=1)" >&2
+            want=${expected_min_reviews[$f]}
+            if [ -z "$count" ] || [ "$count" != "$want" ]; then
+              echo "ERROR: $f has required_approving_review_count=$count (expected $want)" >&2
               exit 1
             fi
             echo "$f OK (required_approving_review_count=$count)"
