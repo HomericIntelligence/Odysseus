@@ -207,6 +207,17 @@ jobs:
           # Run from the tools dir since e2e/tools is not an importable package.
           cd e2e/tools && python3 -m unittest test_gen_test_matrix -v
 
+      - name: Run claude-myrmidon-multi harness unit tests
+        run: |
+          set -euo pipefail
+          # Salvaged from #369 and ported pytest -> stdlib unittest (the runner
+          # has no pytest; see #375). The test loads the hyphenated harness file
+          # via importlib relative to its own __file__, so cwd only affects
+          # module discovery. Run from the test dir like the tools suite above.
+          # DRY_RUN/NO_GITHUB keep the module import side-effect-free.
+          cd e2e/tests/unit && DRY_RUN=1 NO_GITHUB=1 ISSUE_NUMBER=0 \
+            python3 -m unittest test_claude_myrmidon_multi -v
+
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
 
