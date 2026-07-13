@@ -175,7 +175,12 @@ while IFS= read -r sm_path; do
         report_lines+=("[copy]   $sm_path -> $dst_rel  (mode=$mode, sha256 matches)")
         copied=$((copied + 1))
     else
-        rm -f "$tmp_dst" 2>/dev/null || true
+        # Best-effort cleanup of the temp file on the failure path. Guard with
+        # a test so `rm` only runs on a file that exists (where it cannot fail)
+        # — an `if` keeps this `set -e`-safe without the forbidden `|| true`.
+        if [ -e "$tmp_dst" ]; then
+            rm -f "$tmp_dst" 2>/dev/null
+        fi
         err=$(cat /tmp/propagate-cp.err 2>/dev/null || echo "(no error captured)")
         report_lines+=("[FAIL]   $sm_path  (cp/chmod/mv/diff failed; $err)")
         # Don't increment `copied`; will exit non-zero at end if needed

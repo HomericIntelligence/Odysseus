@@ -54,7 +54,13 @@ fi
 
 # Detect conflict: either we have unmerged paths, or git's output mentions
 # CONFLICT / Automatic merge failed.
-unmerged=$(git diff --name-only --diff-filter=U 2>/dev/null || true)
+# Capturing the unmerged-path list: a nonzero exit here just means "could not
+# enumerate" (e.g. not in a git dir); an empty result is the normal no-conflict
+# case. Drop out of `set -e` for the single capture so an expected-nonzero exit
+# does not abort — this is control flow, not a masked command failure.
+set +e
+unmerged=$(git diff --name-only --diff-filter=U 2>/dev/null)
+set -e
 if [ -n "$unmerged" ] \
    || printf '%s' "$merge_out" | grep -qE 'CONFLICT \(|Automatic merge failed|fix conflicts'; then
     echo "safe-merge: conflict detected in merge with '$BRANCH'." >&2
@@ -62,8 +68,14 @@ if [ -n "$unmerged" ] \
     echo "----- git merge output -----" >&2
     printf '%s\n' "$merge_out" >&2
     echo "----------------------------" >&2
-    # Best-effort abort (no-op if we're not actually in a merge state).
-    git merge --abort >/dev/null 2>&1 || true
+    # Best-effort abort (no-op if we're not actually in a merge state). A
+    # nonzero rc here just means "there was nothing to abort" — we are already
+    # on the error path exiting 4, so deliberately ignore the rc via an `if`
+    # (which `set -e` does not treat as a failure) rather than masking a real
+    # command failure with the forbidden `|| true` idiom.
+    if git merge --abort >/dev/null 2>&1; then
+        :  # aborted cleanly
+    fi
     exit 4
 fi
 
