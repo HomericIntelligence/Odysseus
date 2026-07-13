@@ -113,7 +113,7 @@ class TestSuiteContract(unittest.TestCase):
     def test_known_totals(self) -> None:
         rows = g.all_rows()
         all_ids = sorted({i for r in rows for i in r["ids"]})
-        self.assertEqual(len(rows), 37)
+        self.assertEqual(len(rows), 38)
         self.assertEqual(len(all_ids), 65)
         self.assertEqual(sum(1 for r in rows if r["topology"] == "T4"), 7)
 
@@ -157,7 +157,7 @@ class TestCheckMode(unittest.TestCase):
             rc = g.main(["--print"])
         self.assertEqual(rc, 0)
         self.assertIn("E2E Test Coverage Matrix", buf.getvalue())
-        self.assertIn("37 tests", buf.getvalue())
+        self.assertIn("38 tests", buf.getvalue())
 
 
 if __name__ == "__main__":
