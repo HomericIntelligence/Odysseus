@@ -21,10 +21,10 @@ section "C++ Release Builds"
 
 # All four C++ repos have CMakePresets.json with a "release" configurePreset
 CPP_REPOS=(
-    "control/Agamemnon"
-    "control/Nestor"
-    "provisioning/Keystone"
-    "testing/Charybdis"
+    "control/ProjectAgamemnon"
+    "control/ProjectNestor"
+    "provisioning/ProjectKeystone"
+    "testing/ProjectCharybdis"
 )
 
 RUNTIME_PREFIX="${ODYSSEUS_RUNTIME_PREFIX:-$HOME/.local}"
