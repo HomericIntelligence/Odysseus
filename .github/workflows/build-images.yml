@@ -108,5 +108,11 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+          # Cache scope is salted with -r2 to invalidate the pre-openssl-fix
+          # layer cache. The old agamemnon scope snapshotted a `conan install`
+          # layer whose generated CMakeDeps referenced a stale openssl package
+          # libdir, so restoring it made `cmake` configure abort with
+          # "Library 'ssl' not found" even after conanfile.py added openssl/3.6.2
+          # (verified: a from-scratch build with no conan cache links cleanly).
+          cache-from: type=gha,scope=${{ matrix.component }}-r2
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}-r2
