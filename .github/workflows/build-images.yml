@@ -8,6 +8,8 @@ name: Build Images
 # Promotion:  pull_request -> BUILD ONLY (no push; validates images build)
 #             push to main -> build + push :sha-<short> and :latest
 #             push tag v*  -> build + push :<semver> tags
+#             matrix entries with publish: false are always BUILD ONLY
+#             (their canonical image is published by the component's own repo)
 #
 # The component build contexts live in git submodules, so checkout uses
 # submodules: recursive. hello-myrmidon is intentionally OMITTED: its context
@@ -48,24 +50,36 @@ jobs:
           - component: agamemnon
             context: control/ProjectAgamemnon
             file: control/ProjectAgamemnon/Dockerfile
+            publish: true
           # nestor: research / ideation / handoff to Agamemnon
           - component: nestor
             context: control/ProjectNestor
             file: control/ProjectNestor/Dockerfile
+            publish: true
           # hermes: NATS event bridge (compose uses ${HERMES_DIR} ->
           # infrastructure/ProjectHermes)
           - component: hermes
             context: infrastructure/ProjectHermes
             file: infrastructure/ProjectHermes/Dockerfile
+            publish: true
           # argus-exporter: Prometheus exporter. Its Dockerfile (COPY exporter.py .)
           # needs the exporter/ dir as build context, while the Dockerfile itself
           # lives at repo root under e2e/ (compose references it as
           # dockerfile: ../../../e2e/Dockerfile.argus-exporter, relative to the
           # context). In Actions, `context` and `file` are both repo-root-relative,
           # so file: e2e/Dockerfile.argus-exporter resolves correctly.
+          #
+          # publish: false — BUILD-VALIDATE ONLY. The canonical
+          # ghcr.io/homericintelligence/argus-exporter package is created and
+          # published by ProjectArgus's own publish-exporter-image.yml, so it
+          # is access-scoped to that repo: a repo-scoped GITHUB_TOKEN from
+          # Odysseus gets "403 Forbidden" on blob push (this broke every main
+          # push of this workflow). Pushing the same :latest from two repos
+          # would also race; ProjectArgus stays the single publisher.
           - component: argus-exporter
             context: infrastructure/ProjectArgus/exporter
             file: e2e/Dockerfile.argus-exporter
+            publish: false
     steps:
       - name: Checkout (with submodule contexts)
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -105,7 +119,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ github.event_name != 'pull_request' && matrix.publish }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Cache scope is salted with -r2 to invalidate the pre-openssl-fix

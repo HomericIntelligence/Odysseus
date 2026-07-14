@@ -101,11 +101,14 @@ _build-agamemnon:
     pixi run cmake --build "{{BUILD_ROOT}}/Agamemnon"
 
 # Build Nestor (C++/CMake + Conan, debug preset)
+# Nestor renamed its profiles debug/release -> nestor-debug/nestor-release in
+# ProjectNestor#96 (portable-profiles fix); the other C++ submodules still
+# ship conan/profiles/debug.
 _build-nestor:
     @echo "--- Conan deps for control/ProjectNestor ---"
     cd control/ProjectNestor && pixi run conan install . \
         --output-folder="{{BUILD_ROOT}}/Nestor" \
-        --profile=conan/profiles/debug \
+        --profile=conan/profiles/nestor-debug \
         --build=missing
     @echo "--- Building control/ProjectNestor ---"
     @if [ -d "{{BUILD_ROOT}}/Nestor" ]; then rm -rf "{{BUILD_ROOT}}/Nestor/CMakeCache.txt" "{{BUILD_ROOT}}/Nestor/CMakeFiles" "{{BUILD_ROOT}}/Nestor/_deps"; fi

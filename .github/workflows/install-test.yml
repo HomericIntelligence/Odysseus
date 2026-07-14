@@ -84,14 +84,27 @@ jobs:
 
       - name: Determine branch ref for container clone
         id: ref
+        # Ref/branch values are passed via env (not inline ${{ }} in the
+        # script body) so a crafted branch name cannot inject into the shell.
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          REF_NAME: ${{ github.ref_name }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_SHA: ${{ github.sha }}
         run: |
-          # workflow_dispatch override → manual ref
-          if [[ -n "${{ inputs.ref }}" ]]; then
-            echo "odysseus_ref=${{ inputs.ref }}" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            echo "odysseus_ref=${{ github.head_ref }}" >> "$GITHUB_OUTPUT"
+          # workflow_dispatch override → manual ref (tip commit unknown → no
+          # pin; the container clones the ref's tip at image-build time)
+          if [[ -n "$INPUT_REF" ]]; then
+            echo "odysseus_ref=$INPUT_REF" >> "$GITHUB_OUTPUT"
+            echo "odysseus_commit=" >> "$GITHUB_OUTPUT"
+          elif [[ "$EVENT_NAME" == "pull_request" ]]; then
+            echo "odysseus_ref=$HEAD_REF" >> "$GITHUB_OUTPUT"
+            echo "odysseus_commit=$PR_HEAD_SHA" >> "$GITHUB_OUTPUT"
           else
-            echo "odysseus_ref=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "odysseus_ref=$REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "odysseus_commit=$PUSH_SHA" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build install test image (cached)
@@ -99,7 +112,12 @@ jobs:
         with:
           context: tests/install
           file: tests/install/Dockerfile.${{ matrix.os }}
-          build-args: ODYSSEUS_REF=${{ steps.ref.outputs.odysseus_ref }}
+          # ODYSSEUS_COMMIT salts the baked-clone layer's cache key so a moved
+          # branch tip always rebuilds that layer — a branch-name-keyed cache
+          # previously served stale clones, testing pre-fix installer code.
+          build-args: |
+            ODYSSEUS_REF=${{ steps.ref.outputs.odysseus_ref }}
+            ODYSSEUS_COMMIT=${{ steps.ref.outputs.odysseus_commit }}
           load: true
           tags: odysseus-install-test-${{ matrix.os }}:ci
           # Cache keyed on OS + branch so PRs get warm cache from prior runs
