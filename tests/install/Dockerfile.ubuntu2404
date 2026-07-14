@@ -12,9 +12,23 @@ USER tester
 WORKDIR /home/tester
 
 ARG ODYSSEUS_REF=main
+# ODYSSEUS_COMMIT pins the exact commit baked into this layer AND salts the
+# layer-cache key: without it, a cached clone layer keyed only on the branch
+# NAME is reused after the branch moves, so the container silently tests a
+# stale tree (this made Install (ubuntu*) fail PR branches on long-fixed
+# installer bugs while a fresh debian12 rebuild of the same head passed).
+# Empty (e.g. local builds) = branch tip at build time, no cache-bust.
+ARG ODYSSEUS_COMMIT=""
 RUN git clone --depth 1 --branch "${ODYSSEUS_REF}" \
     --recurse-submodules --shallow-submodules \
     https://github.com/HomericIntelligence/Odysseus.git \
-    /home/tester/Projects/Odysseus
+    /home/tester/Projects/Odysseus \
+    && if [ -n "${ODYSSEUS_COMMIT}" ] \
+       && [ "$(git -C /home/tester/Projects/Odysseus rev-parse HEAD)" != "${ODYSSEUS_COMMIT}" ]; then \
+         git -C /home/tester/Projects/Odysseus fetch --depth 1 origin "${ODYSSEUS_COMMIT}" \
+         && git -C /home/tester/Projects/Odysseus checkout --detach "${ODYSSEUS_COMMIT}" \
+         && git -C /home/tester/Projects/Odysseus submodule update --init --recursive \
+              --depth 1 --recommend-shallow; \
+       fi
 
 WORKDIR /home/tester/Projects/Odysseus
