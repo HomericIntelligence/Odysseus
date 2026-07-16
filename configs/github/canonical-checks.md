@@ -35,6 +35,15 @@ commits. Pull-request, push, schedule, and manual behavior remains independent.
 Run `just test-merge-queue-readiness` after changing a required workflow or a
 repo ruleset.
 
+These repository ruleset files describe Odysseus policy and supply the approved
+merge-queue parameters. They are not a fleet-wide replacement or creation
+payload. Existing repositories own their complete live rules and context lists;
+`tools/github/apply-repo-rulesets.sh` derives updates from that live state and
+patches only enforcement plus `merge_queue`. Argus has a separate 14-context,
+two-ruleset contract and a dedicated activation path in
+[Argus #550](https://github.com/HomericIntelligence/Argus/issues/550) and
+[PR #551](https://github.com/HomericIntelligence/Argus/pull/551).
+
 ## Informational checks (report but do not block merge)
 
 | Context name | Category | Validator |

@@ -8,6 +8,22 @@ squash, `ALLGREEN`, maximum 10 queue builds, maximum 5 merged entries per
 group, minimum 1 entry, a 5-minute minimum wait, and a 60-minute check timeout.
 Queue activation is deliberately separate from landing workflow support.
 
+The live rulesets in each target repository are authoritative. For an existing
+`homeric-main-baseline`, the apply script reads the live object and changes only
+its enforcement mode and single `merge_queue` rule. It refuses an update if its
+preservation check finds any change to required contexts, conditions, bypass
+actors, or unrelated rules. The JSON files in `configs/github/` supply only the
+approved queue rule and requested enforcement mode for this update path; their
+complete fixed payload never replaces repository-specific live policy or
+bootstraps a missing ruleset.
+
+Argus is independently authoritative and uses a dedicated
+`homeric-main-merge-queue` ruleset. Follow
+[Argus issue #550](https://github.com/HomericIntelligence/Argus/issues/550) and
+its [replacement implementation PR #551](https://github.com/HomericIntelligence/Argus/pull/551).
+The generic script permits an Argus dry-run for preservation evidence, but
+refuses live Argus activation.
+
 ## Prerequisites
 
 - `gh` CLI authenticated with org-admin scope
@@ -26,18 +42,25 @@ Queue activation is deliberately separate from landing workflow support.
 2. Open a PR, verify all 8 required contexts appear in the PR checks UI once CI
    runs, then merge.
 
-3. Apply the ruleset to the new repo in shadow (evaluate) mode first:
+3. Bootstrap `homeric-main-baseline` from a ruleset definition owned and tested
+   by the new repository. The central apply script intentionally refuses to
+   create a missing ruleset from Odysseus's fixed context list.
+
+4. After the repository-owned baseline exists, generate the scoped evaluate
+   payload without mutation:
+
+   ```bash
+   ./tools/github/apply-repo-rulesets.sh \
+     --evaluate --repos <NewRepo> --dry-run
+   ```
+
+   A target scope is mandatory. Use `--repos` for staged rollout; `--all` is an
+   explicit fleet-wide acknowledgement and still refuses Argus.
+
+5. Apply evaluate mode, observe it for one PR cycle, then flip to active:
 
    ```bash
    ./tools/github/apply-repo-rulesets.sh --evaluate --repos <NewRepo>
-   ```
-
-   (The bare invocation now applies the canonical `repo-ruleset.json`, which is
-   `active`; pass `--evaluate` for the shadow pass.)
-
-4. Observe evaluate mode for one PR cycle, then flip to active:
-
-   ```bash
    ./tools/github/apply-repo-rulesets.sh --active --repos <NewRepo>
    ```
 
@@ -52,33 +75,42 @@ Do not apply the queue while the readiness PR is open. After that PR merges:
    just test-merge-queue-readiness
    ```
 
-3. Activate only the Odysseus repository ruleset:
+3. Generate the exact Odysseus update payload without mutating GitHub. Confirm
+   it contains all live required contexts and differs only in enforcement and
+   the approved queue rule:
+
+   ```bash
+   ./tools/github/apply-repo-rulesets.sh \
+     --active --repos Odysseus --dry-run
+   ```
+
+4. Activate only the Odysseus repository ruleset:
 
    ```bash
    ./tools/github/apply-repo-rulesets.sh --active --repos Odysseus
    ```
 
-4. Queue one low-risk pull request with `gh pr merge --auto --squash`. Confirm
+5. Queue one low-risk pull request with `gh pr merge --auto --squash`. Confirm
    GitHub creates a merge group, all 11 required contexts report on that group,
    and the pull request squash-merges through the queue.
 
 This runbook records the activation requirement; the issue #386 implementation
-PR must not run step 3 or otherwise mutate the live ruleset.
+PR must not run step 4 or otherwise mutate the live ruleset.
 
 ## Re-applying the ruleset to all repos
 
 ```bash
 # Evaluate mode first (shadow enforcement — reports but doesn't block).
-# NOTE: the bare invocation applies the canonical repo-ruleset.json, which is
-# now "active"; use --evaluate explicitly for the shadow pass.
-./tools/github/apply-repo-rulesets.sh --evaluate
+# Name only repositories whose own rollout has approved the generic path.
+# Argus is rejected here because its issue #550 path owns a dedicated ruleset.
+./tools/github/apply-repo-rulesets.sh --evaluate --repos <RepoA,RepoB>
 
 # Check evaluate results
 gh api "repos/HomericIntelligence/<repo>/rulesets/rule-suites?ref=refs/heads/main" \
   --jq '.[] | {result, evaluation_result, pushed_at}' | head -20
 
 # Flip to active when evaluate shows all-pass
-./tools/github/apply-repo-rulesets.sh --active
+./tools/github/apply-repo-rulesets.sh --active --repos <RepoA,RepoB>
 ```
 
 ## Verify a repo's ruleset state
@@ -102,11 +134,15 @@ by the old context list during a ruleset migration. Use sparingly.
 
 ## Rollback
 
-Re-applying evaluate mode is instant and safe:
+Re-applying evaluate mode is the scoped rollback for a repository whose queue
+uses `homeric-main-baseline`:
 
 ```bash
-./tools/github/apply-repo-rulesets.sh --evaluate   # or: --repos <repo>
+./tools/github/apply-repo-rulesets.sh --evaluate --repos <repo>
 ```
+
+For Argus, disable only its dedicated `homeric-main-merge-queue` ruleset as
+documented in Argus #550/#551. Do not edit either required-check ruleset.
 
 > Note: `org-ruleset.json` is not applied on the current GitHub plan —
 > `gh api orgs/HomericIntelligence/rulesets` returns 404 / requires `admin:org`.

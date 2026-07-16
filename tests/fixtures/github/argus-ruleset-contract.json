@@ -1,0 +1,94 @@
+{
+  "repository": "HomericIntelligence/Argus",
+  "source": {
+    "issue": "https://github.com/HomericIntelligence/Argus/issues/550",
+    "implementation_pr": "https://github.com/HomericIntelligence/Argus/pull/551"
+  },
+  "rulesets": [
+    {
+      "id": 15556501,
+      "name": "homeric-main-baseline",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Argus",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "include": ["refs/heads/main"],
+          "exclude": []
+        }
+      },
+      "bypass_actors": [
+        {
+          "actor_id": 5,
+          "actor_type": "RepositoryRole",
+          "bypass_mode": "pull_request"
+        }
+      ],
+      "rules": [
+        { "type": "deletion" },
+        { "type": "required_signatures" },
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": false,
+            "require_code_owner_review": false,
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": true,
+            "allowed_merge_methods": ["squash"]
+          }
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "required_status_checks": [
+              { "context": "lint", "integration_id": 15368 },
+              { "context": "unit-tests", "integration_id": 15368 },
+              { "context": "integration-tests", "integration_id": 15368 },
+              { "context": "security/dependency-scan", "integration_id": 15368 },
+              { "context": "security/secrets-scan", "integration_id": 15368 },
+              { "context": "config-validate", "integration_id": 15368 },
+              { "context": "schema-validation", "integration_id": 15368 },
+              { "context": "deps/version-sync", "integration_id": 15368 },
+              { "context": "test", "integration_id": 15368 },
+              { "context": "package", "integration_id": 15368 },
+              { "context": "install", "integration_id": 15368 },
+              { "context": "release", "integration_id": 15368 },
+              { "context": "build", "integration_id": 15368 }
+            ]
+          }
+        },
+        { "type": "required_linear_history" },
+        { "type": "non_fast_forward" }
+      ]
+    },
+    {
+      "id": 15556502,
+      "name": "homeric-main-extras",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Argus",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "include": ["refs/heads/main"],
+          "exclude": []
+        }
+      },
+      "bypass_actors": [],
+      "rules": [
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "required_status_checks": [
+              { "context": "Validate configs", "integration_id": 15368 }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

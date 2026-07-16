@@ -319,6 +319,7 @@ lint-test-scripts:
 # Validate required-check workflows and repo rulesets are merge-queue ready (#386)
 test-merge-queue-readiness:
     bash tests/github/merge-queue-readiness.test.sh
+    bash tests/github/apply-repo-rulesets.test.sh
 
 # Render Nomad config placeholders to a deploy-local dir (default /etc/nomad.d).
 # Nomad agent HCL does NOT expand OS env vars, so render before `nomad agent -config`.
@@ -761,13 +762,13 @@ protection-snapshot:
 ruleset-apply FILE="configs/github/org-ruleset.json":
     ./tools/github/apply-org-ruleset.sh "{{FILE}}"
 
-# Create or update the per-repo branch ruleset on all 16 repos (evaluate mode)
-repo-rulesets-apply:
-    ./tools/github/apply-repo-rulesets.sh
+# Patch approved repositories' live rulesets in evaluate mode (comma-separated names)
+repo-rulesets-apply REPOS:
+    ./tools/github/apply-repo-rulesets.sh --evaluate --repos "{{REPOS}}"
 
-# Create or update the per-repo branch ruleset on all 16 repos (active/enforcing mode)
-repo-rulesets-activate:
-    ./tools/github/apply-repo-rulesets.sh --active
+# Patch approved repositories' live rulesets in active mode (comma-separated names)
+repo-rulesets-activate REPOS:
+    ./tools/github/apply-repo-rulesets.sh --active --repos "{{REPOS}}"
 
 # Validate the live org ruleset against the canonical JSON and print current enforcement + checks
 ruleset-validate:
