@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  merge_group:
+    types: [checks_requested]
   schedule:
     - cron: "0 6 * * 1"  # Every Monday at 06:00 UTC
   workflow_dispatch:
@@ -17,9 +19,10 @@ on:
 jobs:
   # Canonical `install` check for the 8-category CI naming scheme
   # (docs/ci-naming-convention.md). The full multi-OS Docker matrix below is
-  # heavy (45 min × 3 images) and stays gated to schedule / workflow_dispatch.
-  # This lightweight smoke job runs on every main push/PR so the Ecosystem CI
-  # Status board's **install** column lights up quickly: it exercises the
+  # heavy (45 min × 3 images) and retains its existing push/PR/schedule/manual
+  # behavior, but is skipped for merge groups because it is not a required
+  # context. This lightweight smoke job runs on every main push/PR/merge group
+  # so the Ecosystem CI Status board's **install** column lights up quickly: it
   # installer's check-only detection path (no sudo, no apt, no Docker) and
   # asserts the installer is structurally sound and produces its detection
   # summary. Check-only mode exits 1 when components are missing on a bare
@@ -69,6 +72,7 @@ jobs:
 
   install-test:
     name: Install (${{ matrix.os }})
+    if: github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:

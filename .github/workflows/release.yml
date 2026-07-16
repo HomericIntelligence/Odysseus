@@ -7,6 +7,8 @@ on:
       - 'v[0-9]+.[0-9]+.[0-9]+'
   pull_request:
     branches: [main]
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 permissions:
@@ -16,7 +18,7 @@ jobs:
   # Canonical `release` check for the 8-category CI naming scheme
   # (docs/ci-naming-convention.md). Actual publishing is tag-gated (the
   # validate/publish jobs below run only on a vX.Y.Z tag push). This
-  # lightweight dry-run runs on every main push/PR so the Ecosystem CI Status
+  # lightweight dry-run runs on every main push/PR/merge group so the Ecosystem CI Status
   # board's **release** column lights up: it exercises the same release-gating
   # logic (CHANGELOG shape + release-contract regression tests + release-notes
   # extraction) WITHOUT creating a GitHub Release, so release regressions are

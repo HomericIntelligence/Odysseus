@@ -263,11 +263,12 @@ The `main` branch is protected by a GitHub **repository ruleset** (not classic b
 ### Protection Rules
 
 - **Direct pushes blocked** - All changes to `main` must go through pull requests (`deletion` and non-PR pushes are rejected).
-- **PR approval required** - At least 1 approving review is required before merging (`required_approving_review_count: 1`).
+- **Checks-only merge gate** - No approving review is required (`required_approving_review_count: 0`); required checks and resolved review threads remain mandatory.
 - **Review threads must be resolved** - All PR review conversations must be resolved before merge (`required_review_thread_resolution`).
 - **Signed commits required** - Commits on `main` must be signed (`required_signatures`).
-- **CI status checks must pass** - The required checks must be green before merge: `lint`, `unit-tests`, `integration-tests`, `security/dependency-scan`, `security/secrets-scan`, `build`, `schema-validation`, `deps/version-sync`.
+- **CI status checks must pass** - All 11 required checks must be green before merge: `lint`, `unit-tests`, `integration-tests`, `security/dependency-scan`, `security/secrets-scan`, `build`, `schema-validation`, `deps/version-sync`, `test`, `install`, and `release`.
 - **Linear history enforced** - Only squash merges are allowed (repo setting: `allow_squash_merge` only; merge-commit and rebase-merge are disabled). Squashing collapses each PR into a single commit on `main`, keeping the history clean and linear.
+- **Merge queue required** - Pull requests enter the `main` merge queue after their checks pass. The queue retests the merge group against the current tip using squash, `ALLGREEN`, at most 10 concurrent builds, at most 5 entries per merge group, a minimum group size of 1, a 5-minute minimum wait, and a 60-minute check timeout.
 
 ### Merge Convention
 
@@ -278,24 +279,17 @@ gh pr merge --auto --squash
 ```
 
 This will:
-1. Enable auto-merge on your PR (merge happens as soon as all conditions are met)
-2. Use squash strategy (the only strategy this repo permits), collapsing the PR into one linear-history commit
+1. Enable auto-merge on your PR (after activation, GitHub enqueues it as soon as all conditions are met)
+2. Use the repository's squash-only merge strategy, collapsing the PR into one linear-history commit
 3. Keep your branch name clean and commit history readable
 
 ### For Repo Admins
 
-If you are setting up a fresh fork or new repository and need to enable these rules:
-
-1. Go to **Settings** → **Branches**
-2. Click **Add rule** under "Branch protection rules"
-3. Enter `main` as the branch name pattern
-4. Enable:
-   - Require a pull request before merging (1 approval minimum)
-   - Require status checks to pass before merging
-   - Require branches to be up to date before merging
-   - Require a linear history (dismiss stale pull request approvals when new commits are pushed)
-5. Optionally require dismissal of stale reviews when new commits are pushed
-6. Save the rule
+Use the repository-owned ruleset files and follow
+`docs/runbooks/branch-protection-rollout.md`. For Odysseus issue #386, merge
+the workflow/configuration PR and verify its required checks before running the
+documented `--active --repos Odysseus` activation command. Do not enable the
+queue from the web UI ahead of that smoke check.
 
 ## Key References
 

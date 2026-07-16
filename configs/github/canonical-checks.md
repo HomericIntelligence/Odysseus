@@ -1,6 +1,6 @@
 # HomericIntelligence — Canonical Required CI Check Names
 
-All 15 repos must emit these exact GitHub Actions status check names.
+All 16 first-party repos must emit these exact GitHub Actions status check names.
 Each check must run a **real validator** — no echo-true placeholders.
 
 ## Required checks (block merge if failing)
@@ -15,6 +15,25 @@ Each check must run a **real validator** — no echo-true placeholders.
 | `build` | Build | pixi run build, cmake --build, docker build |
 | `schema-validation` | Validation | check-jsonschema against workflow YAMLs / pixi.toml / NATS schemas |
 | `deps/version-sync` | Validation | verify VERSION/pyproject.toml/pixi.toml/Conanfile parity |
+
+## Additional Odysseus required checks
+
+Odysseus's live repository ruleset also requires these three contexts. They are
+preserved in every repo-ruleset variant alongside the eight fleet contexts.
+
+| Context name | Workflow | Purpose |
+|---|---|---|
+| `test` | `Required Checks` | Aggregate `unit-tests` and `integration-tests` gate |
+| `install` | `Install test` | Lightweight installer smoke test |
+| `release` | `Release` | Non-publishing release-contract dry run |
+
+The `build` context is also emitted by `Build Images`. Every workflow that can
+emit one of the 11 required contexts handles `merge_group` with the
+`checks_requested` activity so the same gate is reported for queue-generated
+commits. Pull-request, push, schedule, and manual behavior remains independent.
+
+Run `just test-merge-queue-readiness` after changing a required workflow or a
+repo ruleset.
 
 ## Informational checks (report but do not block merge)
 

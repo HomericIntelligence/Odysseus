@@ -3,6 +3,11 @@
 How to add a new repo to the `homeric-main-baseline` ruleset, or re-apply the
 ruleset after a change.
 
+The repository-owned ruleset variants include the approved `main` merge queue:
+squash, `ALLGREEN`, maximum 10 queue builds, maximum 5 merged entries per
+group, minimum 1 entry, a 5-minute minimum wait, and a 60-minute check timeout.
+Queue activation is deliberately separate from landing workflow support.
+
 ## Prerequisites
 
 - `gh` CLI authenticated with org-admin scope
@@ -22,16 +27,43 @@ ruleset after a change.
    runs, then merge.
 
 3. Apply the ruleset to the new repo in shadow (evaluate) mode first:
+
    ```bash
    ./tools/github/apply-repo-rulesets.sh --evaluate --repos <NewRepo>
    ```
+
    (The bare invocation now applies the canonical `repo-ruleset.json`, which is
    `active`; pass `--evaluate` for the shadow pass.)
 
 4. Observe evaluate mode for one PR cycle, then flip to active:
+
    ```bash
    ./tools/github/apply-repo-rulesets.sh --active --repos <NewRepo>
    ```
+
+## Activating the Odysseus merge queue after issue #386
+
+Do not apply the queue while the readiness PR is open. After that PR merges:
+
+1. Confirm all 11 required contexts completed successfully on the merge commit.
+2. Run the offline contract again:
+
+   ```bash
+   just test-merge-queue-readiness
+   ```
+
+3. Activate only the Odysseus repository ruleset:
+
+   ```bash
+   ./tools/github/apply-repo-rulesets.sh --active --repos Odysseus
+   ```
+
+4. Queue one low-risk pull request with `gh pr merge --auto --squash`. Confirm
+   GitHub creates a merge group, all 11 required contexts report on that group,
+   and the pull request squash-merges through the queue.
+
+This runbook records the activation requirement; the issue #386 implementation
+PR must not run step 3 or otherwise mutate the live ruleset.
 
 ## Re-applying the ruleset to all repos
 
@@ -71,6 +103,7 @@ by the old context list during a ruleset migration. Use sparingly.
 ## Rollback
 
 Re-applying evaluate mode is instant and safe:
+
 ```bash
 ./tools/github/apply-repo-rulesets.sh --evaluate   # or: --repos <repo>
 ```
@@ -80,6 +113,7 @@ Re-applying evaluate mode is instant and safe:
 > Per-repo rulesets (`repos/<org>/<repo>/rulesets`) are the enforcing path.
 
 To remove the ruleset entirely from a single repo:
+
 ```bash
 ID=$(gh api repos/HomericIntelligence/<repo>/rulesets \
   --jq '.[] | select(.name=="homeric-main-baseline") | .id')
