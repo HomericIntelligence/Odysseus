@@ -85,68 +85,68 @@ install PREFIX="/usr/local":
 
 # Build Agamemnon (C++/CMake + Conan, debug preset)
 _build-agamemnon:
-    @echo "--- Conan deps for control/ProjectAgamemnon ---"
-    cd control/ProjectAgamemnon && pixi run conan install . \
+    @echo "--- Conan deps for control/Agamemnon ---"
+    cd control/Agamemnon && pixi run conan install . \
         --output-folder="{{BUILD_ROOT}}/Agamemnon" \
         --profile=conan/profiles/debug \
         --build=missing
-    @echo "--- Building control/ProjectAgamemnon ---"
+    @echo "--- Building control/Agamemnon ---"
     @if [ -d "{{BUILD_ROOT}}/Agamemnon" ]; then rm -rf "{{BUILD_ROOT}}/Agamemnon/CMakeCache.txt" "{{BUILD_ROOT}}/Agamemnon/CMakeFiles" "{{BUILD_ROOT}}/Agamemnon/_deps"; fi
-    pixi run cmake -S control/ProjectAgamemnon -B "{{BUILD_ROOT}}/Agamemnon" \
+    pixi run cmake -S control/Agamemnon -B "{{BUILD_ROOT}}/Agamemnon" \
         -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/Agamemnon/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
         -G Ninja \
-        -DProjectAgamemnon_BUILD_TESTING=ON \
+        -DAgamemnon_BUILD_TESTING=ON \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
     pixi run cmake --build "{{BUILD_ROOT}}/Agamemnon"
 
 # Build Nestor (C++/CMake + Conan, debug preset)
 # Nestor renamed its profiles debug/release -> nestor-debug/nestor-release in
-# ProjectNestor#96 (portable-profiles fix); the other C++ submodules still
+# Nestor#96 (portable-profiles fix); the other C++ submodules still
 # ship conan/profiles/debug.
 _build-nestor:
-    @echo "--- Conan deps for control/ProjectNestor ---"
-    cd control/ProjectNestor && pixi run conan install . \
+    @echo "--- Conan deps for control/Nestor ---"
+    cd control/Nestor && pixi run conan install . \
         --output-folder="{{BUILD_ROOT}}/Nestor" \
         --profile=conan/profiles/nestor-debug \
         --build=missing
-    @echo "--- Building control/ProjectNestor ---"
+    @echo "--- Building control/Nestor ---"
     @if [ -d "{{BUILD_ROOT}}/Nestor" ]; then rm -rf "{{BUILD_ROOT}}/Nestor/CMakeCache.txt" "{{BUILD_ROOT}}/Nestor/CMakeFiles" "{{BUILD_ROOT}}/Nestor/_deps"; fi
-    pixi run cmake -S control/ProjectNestor -B "{{BUILD_ROOT}}/Nestor" \
+    pixi run cmake -S control/Nestor -B "{{BUILD_ROOT}}/Nestor" \
         -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/Nestor/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
         -G Ninja \
-        -DProjectNestor_BUILD_TESTING=ON \
+        -DNestor_BUILD_TESTING=ON \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
     pixi run cmake --build "{{BUILD_ROOT}}/Nestor"
 
 # Build Charybdis (C++/CMake + Conan, debug preset)
 _build-charybdis:
-    @echo "--- Conan deps for testing/ProjectCharybdis ---"
-    cd testing/ProjectCharybdis && pixi run conan install . \
+    @echo "--- Conan deps for testing/Charybdis ---"
+    cd testing/Charybdis && pixi run conan install . \
         --output-folder="{{BUILD_ROOT}}/Charybdis" \
         --profile=conan/profiles/debug \
         --build=missing
-    @echo "--- Building testing/ProjectCharybdis ---"
+    @echo "--- Building testing/Charybdis ---"
     @if [ -d "{{BUILD_ROOT}}/Charybdis" ]; then rm -rf "{{BUILD_ROOT}}/Charybdis/CMakeCache.txt" "{{BUILD_ROOT}}/Charybdis/CMakeFiles" "{{BUILD_ROOT}}/Charybdis/_deps"; fi
-    pixi run cmake -S testing/ProjectCharybdis -B "{{BUILD_ROOT}}/Charybdis" \
+    pixi run cmake -S testing/Charybdis -B "{{BUILD_ROOT}}/Charybdis" \
         -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/Charybdis/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
         -G Ninja \
-        -DProjectCharybdis_BUILD_TESTING=ON \
+        -DCharybdis_BUILD_TESTING=ON \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
     pixi run cmake --build "{{BUILD_ROOT}}/Charybdis"
 
 # Build Keystone (C++/CMake + Conan, debug preset)
 _build-keystone:
-    @echo "--- Conan deps for provisioning/ProjectKeystone ---"
-    cd provisioning/ProjectKeystone && pixi run conan install . \
+    @echo "--- Conan deps for provisioning/Keystone ---"
+    cd provisioning/Keystone && pixi run conan install . \
         --output-folder="{{BUILD_ROOT}}/Keystone" \
         --profile=conan/profiles/debug \
         --build=missing
-    @echo "--- Building provisioning/ProjectKeystone ---"
+    @echo "--- Building provisioning/Keystone ---"
     @if [ -d "{{BUILD_ROOT}}/Keystone" ]; then rm -rf "{{BUILD_ROOT}}/Keystone/CMakeCache.txt" "{{BUILD_ROOT}}/Keystone/CMakeFiles" "{{BUILD_ROOT}}/Keystone/_deps"; fi
-    pixi run cmake -S provisioning/ProjectKeystone -B "{{BUILD_ROOT}}/Keystone" \
+    pixi run cmake -S provisioning/Keystone -B "{{BUILD_ROOT}}/Keystone" \
         -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/Keystone/conan_toolchain.cmake" \
         -DCMAKE_BUILD_TYPE=Debug \
         -G Ninja \
@@ -166,7 +166,7 @@ _build-odyssey:
         echo "  SKIP: podman not available in this environment"
         exit 0
     fi
-    cd research/ProjectOdyssey
+    cd research/Odyssey
     BUILD_ROOT="{{BUILD_ROOT}}/Odyssey" just build
 
 # ===========================================================================
@@ -367,11 +367,11 @@ apply-all:
 
 # Start Hermes NATS event bridge
 hermes-start:
-    cd infrastructure/ProjectHermes && just start
+    cd infrastructure/Hermes && just start
 
 # Start Argus observability stack
 argus-start:
-    cd infrastructure/ProjectArgus && just start
+    cd infrastructure/Argus && just start
 
 # ===========================================================================
 # Provisioning Services
@@ -379,11 +379,11 @@ argus-start:
 
 # Start Keystone DAG executor daemon
 keystone-start:
-    cd provisioning/ProjectKeystone && just start
+    cd provisioning/Keystone && just start
 
 # Print Keystone DAG status across all teams
 keystone-status:
-    cd provisioning/ProjectKeystone && just status
+    cd provisioning/Keystone && just status
 
 # ===========================================================================
 # Workflows
@@ -391,7 +391,7 @@ keystone-status:
 
 # Run a named workflow via Telemachy
 telemachy-run WORKFLOW:
-    cd provisioning/ProjectTelemachy && just run WORKFLOW={{ WORKFLOW }}
+    cd provisioning/Telemachy && just run WORKFLOW={{ WORKFLOW }}
 
 # ===========================================================================
 # Research / Testing
@@ -399,7 +399,7 @@ telemachy-run WORKFLOW:
 
 # Run Scylla ablation benchmarks
 scylla-test:
-    cd research/ProjectScylla && just test
+    cd research/Scylla && just test
 
 # ===========================================================================
 # One-Command Install (per host role)
@@ -449,7 +449,7 @@ start-nestor-native NATS_URL="nats://localhost:4222":
 
 # Start Hermes webhook-to-NATS bridge (Python/FastAPI)
 start-hermes NATS_URL="nats://localhost:4222":
-    cd infrastructure/ProjectHermes && NATS_URL={{ NATS_URL }} just start
+    cd infrastructure/Hermes && NATS_URL={{ NATS_URL }} just start
 
 # Start hello-myrmidon worker (Python, pulls from hi.myrmidon.hello.>)
 start-myrmidon NATS_URL="nats://localhost:4222" AGAMEMNON_URL="http://localhost:8080":
@@ -458,7 +458,7 @@ start-myrmidon NATS_URL="nats://localhost:4222" AGAMEMNON_URL="http://localhost:
 
 # Start Argus observability stack (Prometheus + Loki + Grafana)
 start-argus:
-    cd infrastructure/ProjectArgus && just start
+    cd infrastructure/Argus && just start
 
 # Start Odysseus console — real-time NATS event viewer
 start-console NATS_URL="nats://localhost:4222":
@@ -498,31 +498,31 @@ fleet-clean:
 
 # Build an OCI image via Dagger pipeline (e.g. just proteus-build myapp)
 proteus-build NAME:
-    cd ci-cd/ProjectProteus && just build {{ NAME }}
+    cd ci-cd/Proteus && just build {{ NAME }}
 
 # Run tests for a repo via Dagger
 proteus-test NAME:
-    cd ci-cd/ProjectProteus && just test {{ NAME }}
+    cd ci-cd/Proteus && just test {{ NAME }}
 
 # Full pipeline: build → test → promote → dispatch
 proteus-pipeline NAME:
-    cd ci-cd/ProjectProteus && just pipeline {{ NAME }}
+    cd ci-cd/Proteus && just pipeline {{ NAME }}
 
 # Lint via Dagger
 proteus-lint:
-    cd ci-cd/ProjectProteus && just lint
+    cd ci-cd/Proteus && just lint
 
 # Validate all pipeline configs
 proteus-validate:
-    cd ci-cd/ProjectProteus && just validate
+    cd ci-cd/Proteus && just validate
 
 # Dispatch a pipeline to a host via Dagger
 proteus-dispatch HOST:
-    cd ci-cd/ProjectProteus && just dispatch-apply {{ HOST }}
+    cd ci-cd/Proteus && just dispatch-apply {{ HOST }}
 
 # Run lint + validate quality check
 proteus-check:
-    cd ci-cd/ProjectProteus && just check
+    cd ci-cd/Proteus && just check
 
 # ===========================================================================
 # Skills Marketplace (Mnemosyne)
@@ -530,19 +530,19 @@ proteus-check:
 
 # Validate all skill files in Mnemosyne
 mnemosyne-validate:
-    cd shared/ProjectMnemosyne && just validate
+    cd shared/Mnemosyne && just validate
 
 # Regenerate marketplace.json index from skill files
 mnemosyne-generate-marketplace:
-    cd shared/ProjectMnemosyne && just generate-marketplace
+    cd shared/Mnemosyne && just generate-marketplace
 
 # Run Mnemosyne tests
 mnemosyne-test:
-    cd shared/ProjectMnemosyne && just test
+    cd shared/Mnemosyne && just test
 
 # Run validate + test quality check
 mnemosyne-check:
-    cd shared/ProjectMnemosyne && just check
+    cd shared/Mnemosyne && just check
 
 # ===========================================================================
 # Shared Utilities (Hephaestus)
@@ -669,8 +669,8 @@ odysseus-console NATS_URL="nats://localhost:4222":
 # Install all Python packages in editable mode
 install-python:
     pip install -e shared/Hephaestus
-    pip install -e infrastructure/ProjectHermes
-    pip install -e provisioning/ProjectTelemachy
+    pip install -e infrastructure/Hermes
+    pip install -e provisioning/Telemachy
 
 # ===========================================================================
 # IPC E2E Tests (75 test cases × 4 topologies)

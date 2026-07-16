@@ -10,8 +10,8 @@ This document governs the following AI agent runtimes operating in Odysseus:
 
 - **Claude Code myrmidons** — Claude CLI instances launched by `e2e/claude-myrmidon.py`
   inside the `achaean-claude` container
-- **Agamemnon planner** — the HMAS planning/orchestration agent (`control/ProjectAgamemnon`)
-- **Nestor researcher** — the research and ideation agent (`control/ProjectNestor`)
+- **Agamemnon planner** — the HMAS planning/orchestration agent (`control/Agamemnon`)
+- **Nestor researcher** — the research and ideation agent (`control/Nestor`)
 
 Human contributors: see [CLAUDE.md](CLAUDE.md) for development guidelines.
 
@@ -95,7 +95,7 @@ The following actions are unconditionally prohibited:
 - **Bump submodule pins** — do not modify `.gitmodules` or run
   `git submodule update --remote` without explicit cross-repo integration approval.
 - **Reference or re-introduce ai-maestro** — fully removed per ADR-006;
-  ProjectAgamemnon is the replacement.
+  Agamemnon is the replacement.
 - **Commit secrets** — never commit `.env`, API keys, `AGAMEMNON_API_KEY`,
   `GITHUB_TOKEN`, or any credential.
 - **Force-push** — `git push --force` and `git push --force-with-lease` are prohibited
@@ -183,9 +183,9 @@ Nestor (research/ideation)
         └─► Myrmidon (Claude Code, one issue at a time)
 ```
 
-- **Nestor** (`control/ProjectNestor`) performs research and ideation, then hands off to
+- **Nestor** (`control/Nestor`) performs research and ideation, then hands off to
   Agamemnon with a structured brief.
-- **Agamemnon** (`control/ProjectAgamemnon`) holds the planning and task coordination
+- **Agamemnon** (`control/Agamemnon`) holds the planning and task coordination
   role formerly held by ai-maestro (removed per ADR-006). It dispatches myrmidons for
   implementation work.
 - **Myrmidons** operate one-issue-at-a-time on isolated feature branches. Concurrent

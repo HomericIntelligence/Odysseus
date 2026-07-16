@@ -17,7 +17,7 @@ On the new host, install the Agamemnon agent. It registers itself as a peer and 
 
 ```bash
 # Follow the Agamemnon installation guide
-# Refer to ~/ProjectAgamemnon/ for current instructions
+# Refer to ~/Agamemnon/ for current instructions
 ```
 
 Configure the agent to use the primary host as the sync target by setting the `AGAMEMNON_URL` environment variable to the primary host's Agamemnon API URL.
@@ -54,9 +54,9 @@ Tailscale ACL or routing issue.
 
 Skip this step if firewalld is not active (`systemctl is-active firewalld` returns inactive).
 
-### 4. Register the new host with ProjectHermes host-sync
+### 4. Register the new host with Hermes host-sync
 
-ProjectHermes maintains a synchronized host list. After Tailscale is up and the firewall is configured, trigger a host-sync from the primary host:
+Hermes maintains a synchronized host list. After Tailscale is up and the firewall is configured, trigger a host-sync from the primary host:
 
 ```bash
 # On the primary host, from the Odysseus repo root
@@ -140,13 +140,13 @@ nomad node status
 # New host should appear with status "ready"
 ```
 
-### 7. Verify ProjectArgus receives metrics
+### 7. Verify Argus receives metrics
 
-ProjectArgus scrapes all known hosts. After the new host is registered, check that Argus has picked it up:
+Argus scrapes all known hosts. After the new host is registered, check that Argus has picked it up:
 
 ```bash
 # From the primary host
-cd infrastructure/ProjectArgus && just status
+cd infrastructure/Argus && just status
 # Or check the Grafana dashboard for the new host's node_exporter metrics
 ```
 
@@ -161,4 +161,4 @@ If the host does not appear within 5 minutes, check the Argus service discovery 
 - [ ] New host appears in Tailscale admin console
 - [ ] NATS leaf node is running and connected to primary cluster
 - [ ] Nomad node status shows new host as "ready"
-- [ ] ProjectArgus Grafana dashboard shows new host metrics
+- [ ] Argus Grafana dashboard shows new host metrics

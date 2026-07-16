@@ -11,6 +11,12 @@
 #
 # Idempotent: cmake configure + build are safe to repeat.
 #
+# ADR-015 forward-compatibility: CPP_REPOS below is the canonical pre-rename
+# list. `resolve_submodule_path` (from lib.sh) may flip an entry from
+# `Project<X>` to `<X>` on disk after the upstream `gh repo rename` lands;
+# when this happens we surface `↻ ADR-015 dual-path: …` in the install log
+# so operators can see both the list name and the actual on-disk path used.
+#
 # shellcheck disable=SC2015
 set -uo pipefail
 
@@ -21,10 +27,10 @@ section "C++ Release Builds"
 
 # All four C++ repos have CMakePresets.json with a "release" configurePreset
 CPP_REPOS=(
-    "control/ProjectAgamemnon"
-    "control/ProjectNestor"
-    "provisioning/ProjectKeystone"
-    "testing/ProjectCharybdis"
+    "control/Agamemnon"
+    "control/Nestor"
+    "provisioning/Keystone"
+    "testing/Charybdis"
 )
 
 RUNTIME_PREFIX="${ODYSSEUS_RUNTIME_PREFIX:-$HOME/.local}"
@@ -172,8 +178,19 @@ build_cpp_repo() {
       || check_warn "$repo — build failed (non-fatal; requires C++ toolchain + conan deps)"
 }
 
+# Per ADR-015: CPP_REPOS may mix prefixed (`Project<X>`) entries with bare
+# (`<X>`) entries, depending on whether each repo's upstream `gh repo rename`
+# has happened. `resolve_submodule_path` (from lib.sh) prefers the input form
+# and falls back to the bare name when the prefixed form is absent on disk.
+# When the resolver swaps the form (forward-compatible behaviour), surface it
+# in the install log so operators can see both the original list name and the
+# actual on-disk path used for the build.
 for repo in "${CPP_REPOS[@]}"; do
-    build_cpp_repo "$repo"
+    resolved=$(resolve_submodule_path "$repo")
+    if [[ "$resolved" != "$repo" ]]; then
+        echo -e "    ${DIM}↻ ADR-015 dual-path: $repo → $resolved${NC}"
+    fi
+    build_cpp_repo "$resolved"
 done
 
 # Remind about PATH if binaries landed in ~/.local/bin

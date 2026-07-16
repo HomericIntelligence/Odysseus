@@ -1,7 +1,7 @@
 # Runbook: SLO Alerting Rules
 
 Deploy and maintain the SLO alert rules for the HomericIntelligence agent mesh
-in ProjectArgus. This runbook covers the Tier 1 (measurable today) alert rules
+in Argus. This runbook covers the Tier 1 (measurable today) alert rules
 only — Tier 2 rules are blocked until instrumentation lands per ADR-012.
 
 See [ADR-012](../adr/012-slo-sla-definitions.md) for the full SLO definitions,
@@ -11,14 +11,14 @@ the measurable-vs-instrumentation-required split, and the review cadence.
 
 ## Alert rule file
 
-**File:** `infrastructure/ProjectArgus/rules/slo_alerts.yml`
+**File:** `infrastructure/Argus/rules/slo_alerts.yml`
 
 **Auto-load:** Prometheus loads all files matching `/etc/prometheus/rules/*.yml`
 at startup (configured via `docker-compose.yml` volume mount and
 `configs/prometheus.yml` rule-file glob). No Prometheus config change is
 required — creating `slo_alerts.yml` in the `rules/` directory is sufficient.
 
-**Style reference:** `infrastructure/ProjectArgus/rules/agent-alerts.yml`
+**Style reference:** `infrastructure/Argus/rules/agent-alerts.yml`
 
 ---
 
@@ -30,8 +30,8 @@ Odysseus repo root:
 
 ```bash
 grep -rhoE "hi_[a-z_]+|homeric_[a-z_]+" \
-  infrastructure/ProjectArgus/rules/ \
-  infrastructure/ProjectArgus/exporter/ \
+  infrastructure/Argus/rules/ \
+  infrastructure/Argus/exporter/ \
   | sort -u
 ```
 
@@ -43,7 +43,7 @@ match nothing and never fire — move the rule to the BLOCKED section.
 
 ## Step 2 — Create `slo_alerts.yml`
 
-Create `infrastructure/ProjectArgus/rules/slo_alerts.yml` with the following
+Create `infrastructure/Argus/rules/slo_alerts.yml` with the following
 content. **Do not uncomment the BLOCKED section** until the corresponding
 histogram metric is confirmed emitted by the Argus exporter.
 
@@ -132,12 +132,12 @@ groups:
 
       # ---------------------------------------------------------------
       # Tier 2: BLOCKED — requires instrumentation that does not yet
-      # exist in ProjectArgus. DO NOT uncomment until the named metric
+      # exist in Argus. DO NOT uncomment until the named metric
       # is confirmed emitted by the exporter (see ADR-012, Tier 2 table).
       # ---------------------------------------------------------------
 
       # BLOCKED: requires hi_nats_event_duration_seconds histogram
-      # (ProjectHermes or ProjectKeystone must emit it; ADR-012).
+      # (Hermes or Keystone must emit it; ADR-012).
       # Target: P95 < 25 ms, P99 < 50 ms.
       #
       # - alert: SLONatsEventLatencyP95
@@ -198,7 +198,7 @@ groups:
 Before reloading Prometheus, check the rule file syntax with `promtool`:
 
 ```bash
-cd infrastructure/ProjectArgus
+cd infrastructure/Argus
 promtool check rules rules/slo_alerts.yml
 ```
 
@@ -223,12 +223,12 @@ curl -X POST http://localhost:9090/-/reload
 ```
 
 The `POST /-/reload` endpoint only works if Prometheus was started with the
-`--web.enable-lifecycle` flag (set in ProjectArgus's `docker-compose.yml`). If
+`--web.enable-lifecycle` flag (set in Argus's `docker-compose.yml`). If
 that flag is not enabled, the endpoint returns HTTP 405 — in that case, restart
 the Argus stack instead. Alternatively, restart the Argus stack:
 
 ```bash
-podman compose -f infrastructure/ProjectArgus/docker-compose.yml restart prometheus
+podman compose -f infrastructure/Argus/docker-compose.yml restart prometheus
 ```
 
 Verify the rules loaded:
@@ -300,9 +300,9 @@ curl -s http://localhost:9090/api/v1/rules | python3 -c \
 
 - [ADR-012](../adr/012-slo-sla-definitions.md) — SLO/SLA definitions,
   metric reconciliation, and review cadence
-- `infrastructure/ProjectArgus/rules/agent-alerts.yml` — existing alert style
+- `infrastructure/Argus/rules/agent-alerts.yml` — existing alert style
   reference
-- `infrastructure/ProjectArgus/rules/recording-rules.yml` — recording rules
+- `infrastructure/Argus/rules/recording-rules.yml` — recording rules
   including `hi:tasks_failure_rate:avg`
 - [runbooks/disaster-recovery.md](disaster-recovery.md) — incident response
   when availability SLO alerts fire

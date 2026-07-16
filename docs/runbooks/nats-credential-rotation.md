@@ -73,7 +73,7 @@ conditions above is met. Plan every procedure below around this reality; do not 
 | Primary (epimetheus) | NATS hub, Hermes | `hermes-cert.pem`, `hermes-key.pem` |
 | Control host | Agamemnon, Telemachy | `telemachy-cert.pem`, `telemachy-key.pem` |
 | Worker hosts | Myrmidon agents | `agent-cert.pem`, `agent-key.pem` |
-| Keystone hosts | ProjectKeystone | `keystone-cert.pem`, `keystone-key.pem` |
+| Keystone hosts | Keystone | `keystone-cert.pem`, `keystone-key.pem` |
 
 ---
 

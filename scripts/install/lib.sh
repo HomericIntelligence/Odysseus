@@ -69,5 +69,86 @@ else
     }
 fi
 
+# ─── ADR-015 dual-path submodule resolver ─────────────────────────────────────
+# resolve_submodule_path <relative-path>
+#
+# Resolves a submodule path to whichever form currently exists on disk under
+# $ODYSSEUS_ROOT. Prefers the input form; falls back to the bare post-rename
+# name (drops the "Project" prefix from the basename) when the input form is
+# absent. Bidirectional: works whether the on-disk rename has happened yet
+# (input still prefixed, disk bare) OR not (input already bare, disk still
+# prefixed).
+#
+# This keeps the install pipeline forward-compatible with ADR-015/016: each
+# upstream `gh repo rename` is picked up automatically without an
+# install-script edit, so contributors do not have to synchronize script
+# updates with the per-repo renames. The 9 not-yet-renamed-upstream repos
+# (Argus, Mnemosyne, Telemachy, Keystone, Proteus, Odyssey, Scylla,
+# Agamemnon, Nestor, Charybdis) continue to resolve through their original
+# `Project<X>` paths; the moment each `gh repo rename` lands, that repo's
+# install-script references resolve through the bare-name fallback instead.
+#
+# Outputs the resolved relative path. Returns 0 when at least one form exists
+# on disk (input preferred, bare fallback otherwise); returns 1 when neither
+# form is present. Callers SHOULD compare the printed path against the input
+# (`[[ $resolved != $mod ]]`) rather than rely on the exit code, because bash
+# command substitution (`resolved=$(fn ...)`) overwrites $? before the caller's
+# check; tests on exit code after command substitution are unreliable.
+#
+# Edge cases handled:
+#   - No "/" in input → treated as a bare basename (parent empty).
+#   - Input lacks the "Project" prefix → no transformation, plain existence
+#     check (still resolves correctly post-rename).
+#   - Bare fallback resolves to a basename with empty remainder (e.g.
+#     `Project` alone strips to "") → guarded, returns original.
+resolve_submodule_path() {
+    # Defensive against empty input under `set -u` (none of today's call
+    # sites pass empty values, but the helper is sourced from scripts that
+    # do enable nounset, so we self-defend cheaply).
+    local rel="${1:-}"
+    if [[ -z "$rel" ]]; then
+        printf '\n' >&2
+        return 1
+    fi
+    local abs="$ODYSSEUS_ROOT/$rel"
+
+    if [[ -d "$abs" ]]; then
+        printf '%s\n' "$rel"
+        return 0
+    fi
+
+    # Decompose into parent + basename. `${rel%/*}` returns the input
+    # unchanged when there is no slash, so guard the parent-empty case.
+    local parent="${rel%/*}"
+    local base="${rel##*/}"
+    [[ "$parent" == "$rel" ]] && parent=""
+
+    # Drop the "Project" prefix from the basename to produce the bare form.
+    # Require a non-empty bare result so `Project` alone does not silently
+    # collapse to a directory that does not exist (or worse, is `/` itself).
+    if [[ "$base" == Project* ]]; then
+        local bare="${base#Project}"
+        if [[ -n "$bare" ]]; then
+            local bare_rel
+            if [[ -n "$parent" ]]; then
+                bare_rel="$parent/$bare"
+            else
+                bare_rel="$bare"
+            fi
+            if [[ -d "$ODYSSEUS_ROOT/$bare_rel" ]]; then
+                printf '%s\n' "$bare_rel"
+                return 0
+            fi
+        fi
+    fi
+
+    # Neither form is present on disk — caller decides how to handle the
+    # miss (install scripts downgrade this to a WARN rather than a FAIL, per
+    # the Phase-1 detect policy in 30-submodules.sh and the per-repo
+    # WARN-on-miss policy in 50-cpp-builds.sh).
+    printf '%s\n' "$rel"
+    return 1
+}
+
 # Re-export for child scripts
 export INSTALL ROLE

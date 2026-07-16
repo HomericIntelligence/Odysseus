@@ -12,8 +12,8 @@
 
 HomericIntelligence is a distributed agent mesh built from purpose-built,
 loosely-coupled components. There is no central platform dependency:
-coordination is owned by ProjectAgamemnon, transport is owned by
-ProjectKeystone (BlazingMQ + NATS JetStream), and every other component
+coordination is owned by Agamemnon, transport is owned by
+Keystone (BlazingMQ + NATS JetStream), and every other component
 integrates through well-defined subjects rather than direct service calls.
 
 Odysseus is the meta-repo and user-facing hub. It holds Architecture Decision
@@ -27,21 +27,21 @@ a git submodule. Odysseus itself contains no application code.
 | Component | Category | Role |
 |-----------|----------|------|
 | **Odysseus** | meta | User interface, observability hub, and meta-repo. Bidirectional with user. Consumes Argus dashboards. |
-| **ProjectAgamemnon** | control | Planning, coordination, and HMAS orchestration (L0–L3). GitHub Issues/Projects is the backing store. Does not perform research or expose a user UI. |
-| **ProjectNestor** | control | Thin C++ intake/status/dispatch service for research. Accepts ideas (`POST /v1/research`), dispatches them to the research myrmidon pool, tracks status. Research, interviewing, and ideation run in research-pool myrmidons — never inside Nestor itself (LLM work never runs inside C++ services; see [ADR-013](adr/013-hmas-mesh-wire-contracts.md)). |
-| **ProjectKeystone** | transport | Invisible transport layer. BlazingMQ for intra-host (<500 ns, >2 M msg/sec); NATS JetStream (nats.c v3.12.0) for cross-host over Tailscale. Components talk *through* Keystone, never *to* it. |
-| **ProjectHermes** | infrastructure | External message delivery bridge. Routes external-service events into NATS and delivers outbound messages to external services. |
+| **Agamemnon** | control | Planning, coordination, and HMAS orchestration (L0–L3). GitHub Issues/Projects is the backing store. Does not perform research or expose a user UI. |
+| **Nestor** | control | Thin C++ intake/status/dispatch service for research. Accepts ideas (`POST /v1/research`), dispatches them to the research myrmidon pool, tracks status. Research, interviewing, and ideation run in research-pool myrmidons — never inside Nestor itself (LLM work never runs inside C++ services; see [ADR-013](adr/013-hmas-mesh-wire-contracts.md)). |
+| **Keystone** | transport | Invisible transport layer. BlazingMQ for intra-host (<500 ns, >2 M msg/sec); NATS JetStream (nats.c v3.12.0) for cross-host over Tailscale. Components talk *through* Keystone, never *to* it. |
+| **Hermes** | infrastructure | External message delivery bridge. Routes external-service events into NATS and delivers outbound messages to external services. |
 | **Argus** | infrastructure | Observability: Prometheus metrics, Loki log aggregation, Grafana dashboards, Promtail scraping. Feeds Odysseus dashboards. |
 | **AchaeanFleet** | infrastructure | Container image library. All agent and service images. Built by Proteus; run on the `homeric-mesh` Podman network. |
 | **Myrmidons repo** | provisioning | GitOps source of truth. YAML manifests describe desired agent state; Agamemnon API reconciliation applies them. Also holds all agent templates and container specs. Multi-host scheduling via Nomad is deferred to a future phase (see [ADR-009](adr/009-defer-multi-host-nomad-scheduling.md)); currently supports `local` and `docker` deployment types only. |
-| **ProjectTelemachy** | provisioning | Declarative workflow engine + work description and epic registration. Turns workflow YAML into GitHub epics with child issues and publishes `hi.pipeline.epic.*.registered` ([ADR-013](adr/013-hmas-mesh-wire-contracts.md)). Used programmatically by Agamemnon, Nestor, and research myrmidons. Not a user-facing service. |
-| **ProjectProteus** | ci-cd | CI/CD. Dagger TypeScript pipelines. Builds AchaeanFleet images; dispatches `agamemnon-apply` on merge. |
+| **Telemachy** | provisioning | Declarative workflow engine + work description and epic registration. Turns workflow YAML into GitHub epics with child issues and publishes `hi.pipeline.epic.*.registered` ([ADR-013](adr/013-hmas-mesh-wire-contracts.md)). Used programmatically by Agamemnon, Nestor, and research myrmidons. Not a user-facing service. |
+| **Proteus** | ci-cd | CI/CD. Dagger TypeScript pipelines. Builds AchaeanFleet images; dispatches `agamemnon-apply` on merge. |
 | **Myrmidons (workers)** | workers | The worker pool: all nodes that can run myrmidon agents. Pull-based from role-addressed queues `hi.myrmidon.{domain}.{role}.task.>` ([ADR-013](adr/013-hmas-mesh-wire-contracts.md)); myrmidon roles ARE the HMAS agentic roles at every level, crossed with domain (e.g. `research.chief-architect` vs `pipeline.chief-architect`). Multi-host clustering via Nomad is deferred to a future phase (see [ADR-009](adr/009-defer-multi-host-nomad-scheduling.md)). |
-| **ProjectScylla** | testing | AI agent ablation benchmarking; evaluates agent architectures across tiered configurations (T0–T6). |
-| **ProjectCharybdis** | testing | Chaos and resilience testing. Injects faults via Agamemnon `/v1/chaos/*` endpoints. |
+| **Scylla** | testing | AI agent ablation benchmarking; evaluates agent architectures across tiered configurations (T0–T6). |
+| **Charybdis** | testing | Chaos and resilience testing. Injects faults via Agamemnon `/v1/chaos/*` endpoints. |
 | **Mnemosyne** | shared | Skills marketplace / team-knowledge memory store for the `advise` and `learn` plugins only. Not an agent-template registry. |
 | **Hephaestus** | shared | Shared utilities, Claude Code plugins, and skills registry. Used across all repos. |
-| **ProjectOdyssey** | research | Standalone Mojo ML training framework. Reproduces classic AI/ML research papers; provides reusable tensor ops, autograd, and training infrastructure. Not integrated with the agent mesh; implementations live entirely in-repo as Mojo libraries and executables. |
+| **Odyssey** | research | Standalone Mojo ML training framework. Reproduces classic AI/ML research papers; provides reusable tensor ops, autograd, and training infrastructure. Not integrated with the agent mesh; implementations live entirely in-repo as Mojo libraries and executables. |
 | ~~ai-maestro~~ | removed | Removed per [ADR-006](adr/006-decouple-from-ai-maestro.md). No submodule entry and no `infrastructure/ai-maestro/` directory. Do not reintroduce. |
 
 ---
@@ -53,7 +53,7 @@ mesh name is `tail8906b5.ts.net`. No inter-host port is exposed to the public
 internet; every service assumes Tailscale reachability for cross-node
 communication.
 
-Intra-host communication uses BlazingMQ (via ProjectKeystone) and does not
+Intra-host communication uses BlazingMQ (via Keystone) and does not
 traverse the network.
 
 ---
@@ -74,21 +74,21 @@ traverse the network.
                    │ research requests             │ dashboards / alerts
                    ▼                               ▼
   ┌────────────────────────────┐    ┌──────────────────────────────────┐
-  │       ProjectNestor        │    │          Argus            │
+  │       Nestor        │    │          Argus            │
   │  research · ideation       │    │  Prometheus · Loki · Grafana     │
   │  Telemachy workflows       │    │  Promtail                        │
   └────────────────┬───────────┘    └──────────────────────────────────┘
                    │ handoff
                    ▼
   ┌─────────────────────────────────────────────────────────────────────┐
-  │                      ProjectAgamemnon                               │
+  │                      Agamemnon                               │
   │   HMAS L0–L3 · GitHub Issues/Projects backing store                │
   │   /v1/tasks  /v1/agents  /v1/chaos/*  /v1/workflows                │
   └─────────────────┬──────────────────────────────────────────────────┘
                     │ dispatch (via Keystone NATS subjects)
                     ▼
   ┌─────────────────────────────────────────────────────────────────────┐
-  │                     ProjectKeystone                                 │
+  │                     Keystone                                 │
   │   BlazingMQ (intra-host) · NATS JetStream (cross-host/Tailscale)   │
   └──────┬──────────────────────┬──────────────────────────────────────┘
          │ hi.myrmidon.pipeline.{role}.task.>   │ hi.myrmidon.research.{role}.task.>
@@ -106,19 +106,19 @@ traverse the network.
   └──────────────────────────────────────────────────────────────────┘
            ▲ builds & pushes
   ┌──────────────────────────────────────────────────────────────────┐
-  │                       ProjectProteus                             │
+  │                       Proteus                             │
   │   Dagger TypeScript · builds images · dispatches agamemnon-apply │
   └──────────────────────────────────────────────────────────────────┘
 
-  External services ──► ProjectHermes ──► NATS (hi.pipeline.>) ──► internal consumers
+  External services ──► Hermes ──► NATS (hi.pipeline.>) ──► internal consumers
 
   Myrmidons repo (GitOps YAML manifests) ──► Agamemnon API reconciliation
-  ProjectTelemachy  ◄── used by Agamemnon + Nestor programmatically
-  ProjectCharybdis  ──► Agamemnon /v1/chaos/* (fault injection)
-  ProjectScylla     ──► ablation benchmarking (T0–T6 tiers)
+  Telemachy  ◄── used by Agamemnon + Nestor programmatically
+  Charybdis  ──► Agamemnon /v1/chaos/* (fault injection)
+  Scylla     ──► ablation benchmarking (T0–T6 tiers)
   Mnemosyne  ──► advise/learn plugins only
   Hephaestus ──► shared utilities, skills registry (all repos)
-  ProjectOdyssey    ──► standalone Mojo ML framework (paper reproductions, in-repo only)
+  Odyssey    ──► standalone Mojo ML framework (paper reproductions, in-repo only)
 ```
 
 ---
@@ -140,7 +140,7 @@ The full HMAS pipeline, end to end (wire contracts in
     extensions, and produces a researched brief
        │  hi.pipeline.interview.{intake_id}.question/.answer.{q_id}
        ▼
- 4. The work is described via ProjectTelemachy and registered in GitHub
+ 4. The work is described via Telemachy and registered in GitHub
     as an epic with child issues (task-list body, state:needs-plan)
        │  hi.pipeline.epic.{epic_key}.registered
        ▼
@@ -197,9 +197,9 @@ and completes its task as the first slice. Leases (5-min heartbeats,
 
 ---
 
-## Transport Layer (ProjectKeystone)
+## Transport Layer (Keystone)
 
-ProjectKeystone provides two transport backends, selected by deployment scope:
+Keystone provides two transport backends, selected by deployment scope:
 
 | Backend | Scope | Latency | Throughput | Protocol |
 |---------|-------|---------|------------|----------|
@@ -274,7 +274,7 @@ All container images are defined and versioned in AchaeanFleet. Images run on
 the `homeric-mesh` Podman network. New agent types require a new Dockerfile
 (vessel) in AchaeanFleet before they can be scheduled.
 
-### ProjectProteus
+### Proteus
 CI/CD pipelines written in Dagger TypeScript. On merge to main in any submodule
 repo, Proteus builds the relevant AchaeanFleet images and dispatches
 `agamemnon-apply` to apply any updated Myrmidons manifests.
@@ -282,7 +282,7 @@ repo, Proteus builds the relevant AchaeanFleet images and dispatches
 ### Canonical Workflow Field Names
 
 Workflow and task schemas across the ecosystem derive their field names from the
-**ProjectAgamemnon REST API contract**; the ProjectTelemachy Pydantic models
+**Agamemnon REST API contract**; the Telemachy Pydantic models
 (`src/telemachy/models.py`, `TaskSpec`) are the authoritative source. Two layers
 exist: the YAML/Pydantic field name authors write, and the JSON key sent to the
 Agamemnon REST API (`agamemnon_client.py`). All ecosystem documentation must use
@@ -302,12 +302,12 @@ of `just ci`). Submodule repos own their own equivalent guards.
 
 ## Testing
 
-### ProjectScylla — Ablation Benchmarking
+### Scylla — Ablation Benchmarking
 AI agent ablation benchmarking framework. Evaluates agent architectures across
 tiered configurations (T0–T6). Scylla reports results back to Agamemnon task
 subjects.
 
-### ProjectCharybdis — Chaos Testing
+### Charybdis — Chaos Testing
 Injects faults and adverse conditions into the mesh via Agamemnon's
 `/v1/chaos/*` endpoints. Does not bypass Agamemnon to reach components
 directly.
@@ -326,12 +326,12 @@ Shared utilities, Claude Code plugins, and the skills registry. Consumed by all
 HomericIntelligence repos. Includes changelog tooling, system-info helpers, and
 markdown utilities.
 
-### ProjectOdyssey
+### Odyssey
 Standalone Mojo ML training framework for reproducing classic AI/ML research
 papers. Provides a reusable shared library of SIMD-optimised tensor operations,
 an autograd engine, and full training infrastructure — all implemented in Mojo.
 Paper implementations live entirely in-repo as Mojo libraries and executables.
-ProjectOdyssey is not integrated with the agent mesh (no NATS, no Agamemnon
+Odyssey is not integrated with the agent mesh (no NATS, no Agamemnon
 REST API, no promotion path to AchaeanFleet); the only "agents" it uses are
 Claude Code automation in `.claude/agents/` for development workflow.
 

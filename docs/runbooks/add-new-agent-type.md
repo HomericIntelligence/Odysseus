@@ -2,7 +2,7 @@
 
 ## Important: Submodule Layout (Accepted: ADR-007)
 
-Per [ADR-007 — Replace Symlinks with Real Git Submodules](../adr/007-symlinks-over-submodules.md) (**Accepted**), every subdirectory referenced in this runbook (`infrastructure/AchaeanFleet`, `provisioning/Myrmidons`, `shared/ProjectMnemosyne`, etc.) is now a real git submodule (`git ls-files -s` reports mode `160000`). When making changes to these repos, the recommended workflow is:
+Per [ADR-007 — Replace Symlinks with Real Git Submodules](../adr/007-symlinks-over-submodules.md) (**Accepted**), every subdirectory referenced in this runbook (`infrastructure/AchaeanFleet`, `provisioning/Myrmidons`, `shared/Mnemosyne`, etc.) is now a real git submodule (`git ls-files -s` reports mode `160000`). When making changes to these repos, the recommended workflow is:
 
 1. `cd` into the submodule path inside the Odysseus checkout (e.g. `cd infrastructure/AchaeanFleet`) — it has its own `.git` link and acts as a normal repo clone of the submodule's branch.
 2. Make commits and push to the submodule's GitHub remote.
@@ -17,8 +17,8 @@ Per [ADR-007 — Replace Symlinks with Real Git Submodules](../adr/007-symlinks-
 ## Prerequisites
 
 - You have cloned the Odysseus repo with submodules (`just bootstrap`).
-- You have standalone clones of AchaeanFleet, Myrmidons, and ProjectMnemosyne repositories (see Step 6).
-- You have write access to AchaeanFleet, Myrmidons, and ProjectMnemosyne repos.
+- You have standalone clones of AchaeanFleet, Myrmidons, and Mnemosyne repositories (see Step 6).
+- You have write access to AchaeanFleet, Myrmidons, and Mnemosyne repos.
 - Podman is installed and the Podman socket is running (ADR 001).
 - Agamemnon is running and accessible at `$AGAMEMNON_URL`.
 
@@ -96,12 +96,12 @@ Create `<agent-name>.yaml` following the format of existing templates. At minimu
 - `env`: required environment variables as template variables
 - `tags`: include `agent-type: <agent-name>` for filtering
 
-### 5. Register in ProjectMnemosyne marketplace.json
+### 5. Register in Mnemosyne marketplace.json
 
-Navigate to ProjectMnemosyne and add the new agent type to the marketplace catalog:
+Navigate to Mnemosyne and add the new agent type to the marketplace catalog:
 
 ```bash
-cd shared/ProjectMnemosyne
+cd shared/Mnemosyne
 ```
 
 Edit `marketplace.json` to add an entry for the new agent type. Include:
@@ -139,12 +139,12 @@ git commit -m "feat: add <agent-name> template"
 git push origin main
 ```
 
-#### 6c. Commit in ProjectMnemosyne standalone clone
+#### 6c. Commit in Mnemosyne standalone clone
 
-Navigate to your ProjectMnemosyne repository clone:
+Navigate to your Mnemosyne repository clone:
 
 ```bash
-cd /path/to/ProjectMnemosyne
+cd /path/to/Mnemosyne
 git add marketplace.json
 git commit -m "feat: register <agent-name> in marketplace"
 git push origin main
@@ -171,6 +171,6 @@ Otherwise, the symlinks in Odysseus will point to the latest main branch of each
 - [ ] `just build-vessel <agent-name>` succeeds
 - [ ] Agamemnon `/v1/agents` can launch a container from the image
 - [ ] Template added to `provisioning/Myrmidons/_templates/<agent-name>.yaml`
-- [ ] Entry added to `shared/ProjectMnemosyne/marketplace.json`
+- [ ] Entry added to `shared/Mnemosyne/marketplace.json`
 - [ ] Submodule pins updated in Odysseus root
-- [ ] ProjectProteus CI pipeline passes for all modified repos
+- [ ] Proteus CI pipeline passes for all modified repos

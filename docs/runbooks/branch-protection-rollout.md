@@ -11,7 +11,7 @@ ruleset after a change.
 ## Adding a new repo
 
 1. In the new repo, create `.github/workflows/_required.yml` using
-   `research/ProjectScylla/.github/workflows/_required.yml` as the reference.
+   `research/Scylla/.github/workflows/_required.yml` as the reference.
    The workflow must be named `Required Checks` and have `name:` fields that
    match the contexts in `configs/github/canonical-checks.md`. There are
    **8 required contexts**; `_required.yml` also defines a 9th job

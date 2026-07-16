@@ -10,7 +10,7 @@
 # The meta-repo's pre-commit hook (banlist patterns + 512 KiB large-file
 # guard + remediation hints) is canonical for the meta-repo itself. But
 # when a developer commits from INSIDE a submodule directory — e.g. to
-# fix a bug in HomericIntelligence/ProjectArgus — git consults that
+# fix a bug in HomericIntelligence/Argus — git consults that
 # submodule's OWN `core.hooksPath`. If the submodule repo doesn't set
 # `core.hooksPath`, the default is the meta-repo-controlled directory
 # `.git/modules/<submodule>/hooks/pre-commit`. This script copies the
