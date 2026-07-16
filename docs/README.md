@@ -8,7 +8,7 @@ Welcome to the HomericIntelligence documentation hub. This page serves as a tabl
 
 Start here to understand the HomericIntelligence system as a whole:
 
-- **[System Architecture](architecture.md)** — Complete overview of all components, their roles, and how they interact. Post-ADR-006 architecture with ProjectAgamemnon as the coordination hub.
+- **[System Architecture](architecture.md)** — Complete overview of all components, their roles, and how they interact. Post-ADR-006 architecture with Agamemnon as the coordination hub.
 
 ---
 
@@ -67,4 +67,4 @@ Step-by-step guides for common operational tasks. Execute each runbook top-to-bo
 2. **ADRs are append-only.** Once accepted, never edited. Superseding decisions get a new ADR.
 3. **Configs are canonical.** The Nomad and NATS configs in `../configs/` are authoritative.
 4. **Submodule pins matter.** Submodule SHAs represent the last known-good cross-repo integration point.
-5. **ai-maestro has been fully removed per ADR-006.** ProjectAgamemnon replaces its task coordination role.
+5. **ai-maestro has been fully removed per ADR-006.** Agamemnon replaces its task coordination role.

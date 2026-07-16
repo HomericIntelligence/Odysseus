@@ -102,7 +102,7 @@ jobs:
         run: pip install nats-py
 
       - name: Build mesh binaries (Agamemnon + myrmidon) from source
-        # `just build` produces build/ProjectAgamemnon/ProjectAgamemnon_server —
+        # `just build` produces build/Agamemnon/Agamemnon_server —
         # the first path start_agamemnon_bg (e2e/lib/process.sh) searches.
         run: just build
 

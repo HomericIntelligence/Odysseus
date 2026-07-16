@@ -80,11 +80,11 @@ To unblock podman compose and podman socket, WSL2 rootless requires `sudo loginc
 
 | Check | Result | Notes |
 |-------|--------|-------|
-| Agamemnon built | [x] PASS / [ ] FAIL | Pre-built; binary and libs present in build/ProjectAgamemnon/ |
+| Agamemnon built | [x] PASS / [ ] FAIL | Pre-built; binary and libs present in build/Agamemnon/ |
 | Nestor built | [x] PASS / [ ] FAIL | Pre-built; binary present — but `just build` re-run fails at cmake configure (httplib CMake config missing from prefix path; conan toolchain must be sourced first) |
-| Charybdis built | [x] PASS / [ ] FAIL | Pre-built in testing/ProjectCharybdis/build/debug/ (submodule-local, not BUILD_ROOT) |
-| Keystone built | [ ] PASS / [x] FAIL | Never built — no CMakeCache.txt under provisioning/ProjectKeystone/ |
-| Odyssey (Mojo) built | [x] PASS / [ ] FAIL | build/ProjectOdyssey/debug/verify_installation runs; 6/6 verification checks pass (placeholder output pending Issue #49) |
+| Charybdis built | [x] PASS / [ ] FAIL | Pre-built in testing/Charybdis/build/debug/ (submodule-local, not BUILD_ROOT) |
+| Keystone built | [ ] PASS / [x] FAIL | Never built — no CMakeCache.txt under provisioning/Keystone/ |
+| Odyssey (Mojo) built | [x] PASS / [ ] FAIL | build/Odyssey/debug/verify_installation runs; 6/6 verification checks pass (placeholder output pending Issue #49) |
 
 **Build time:** N/A — using pre-built artifacts; fresh `just build` aborts ~45s in at Nestor cmake configure
 
@@ -98,9 +98,9 @@ CMake Error at CMakeLists.txt:39 (find_package):
 ```
 
 **Feedback / Issues found:**
-~~`just build` is not idempotent on this host. Agamemnon's conan install succeeds (packages cached), but Nestor's cmake `-S control/ProjectNestor -B build/ProjectNestor` does not pass `--preset conan-debug`, so `find_package(httplib)` cannot locate the conan-generated `httplib-config.cmake`. The recipe needs `-DCMAKE_TOOLCHAIN_FILE=build/ProjectNestor/conan_toolchain.cmake` to be passed explicitly. This is a POLA violation: `just build` succeeds from scratch but silently breaks on re-runs against an existing but incomplete build directory.~~
+~~`just build` is not idempotent on this host. Agamemnon's conan install succeeds (packages cached), but Nestor's cmake `-S control/Nestor -B build/Nestor` does not pass `--preset conan-debug`, so `find_package(httplib)` cannot locate the conan-generated `httplib-config.cmake`. The recipe needs `-DCMAKE_TOOLCHAIN_FILE=build/Nestor/conan_toolchain.cmake` to be passed explicitly. This is a POLA violation: `just build` succeeds from scratch but silently breaks on re-runs against an existing but incomplete build directory.~~
 
-**Resolved in PR #135 (justfile:87–93):** `_build-nestor` now passes `-DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/ProjectNestor/conan_toolchain.cmake"` explicitly, matching the pattern used by `_build-agamemnon`. Re-runs against an existing build directory now locate `httplib-config.cmake` correctly. The idempotency issue is fixed.
+**Resolved in PR #135 (justfile:87–93):** `_build-nestor` now passes `-DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/Nestor/conan_toolchain.cmake"` explicitly, matching the pattern used by `_build-agamemnon`. Re-runs against an existing build directory now locate `httplib-config.cmake` correctly. The idempotency issue is fixed.
 
 
 ### Step 2.2: `just test`
@@ -137,16 +137,16 @@ Three issues required remediation on epimetheus: (1) conan profile not initializ
 
 | Check | Result | Notes |
 |-------|--------|-------|
-| Container started | [x] PASS / [ ] FAIL | `podman run nats:alpine` succeeded via pasta port-forwarding; stale ProjectOdyssey conmon process (running since Mar 20) held libpod lock — killed first, then NATS started cleanly |
+| Container started | [x] PASS / [ ] FAIL | `podman run nats:alpine` succeeded via pasta port-forwarding; stale Odyssey conmon process (running since Mar 20) held libpod lock — killed first, then NATS started cleanly |
 | `/healthz` returns 200 | [x] PASS / [ ] FAIL | `{"status":"ok"}` |
 | `/varz` shows server_id | [x] PASS / [ ] FAIL | `server_id: NAS3MMHJWDDG3MR6EFWXEL6AC3NL3LPUGLDZ24GTBY3SLKVVV4GXVPD7` |
 
-**Feedback / Issues found:** NATS started successfully but required two workarounds: (1) a stale conmon process from a ProjectOdyssey container (running since March 20) held the netavark/libpod lock causing `podman ps` and subsequent commands to hang — killed with SIGKILL to release the lock; (2) `rootlessport` binary absent so bridge-network port-binding fails — pasta networking used instead. Both are pre-existing infrastructure issues on epimetheus, not Odysseus bugs.
+**Feedback / Issues found:** NATS started successfully but required two workarounds: (1) a stale conmon process from a Odyssey container (running since March 20) held the netavark/libpod lock causing `podman ps` and subsequent commands to hang — killed with SIGKILL to release the lock; (2) `rootlessport` binary absent so bridge-network port-binding fails — pasta networking used instead. Both are pre-existing infrastructure issues on epimetheus, not Odysseus bugs.
 
 
 ### Step 3.2: Start Agamemnon (`just start-agamemnon`)
 
-Executed via: `nohup ~/Projects/Odysseus/control/ProjectAgamemnon/build/debug/ProjectAgamemnon_server > /tmp/agamemnon.log 2>&1 &`
+Executed via: `nohup ~/Projects/Odysseus/control/Agamemnon/build/debug/Agamemnon_server > /tmp/agamemnon.log 2>&1 &`
 
 | Check | Result | Notes |
 |-------|--------|-------|
@@ -157,19 +157,19 @@ Executed via: `nohup ~/Projects/Odysseus/control/ProjectAgamemnon/build/debug/Pr
 
 **Startup output (first 10 lines):**
 ```
-ProjectAgamemnon v0.1.0 starting...
+Agamemnon v0.1.0 starting...
 [nats] WARNING: could not connect to nats://localhost:4222 — No server available for connection (NATS events will be skipped)
 [agamemnon] WARNING: running without NATS — events will be skipped
 [agamemnon] routes registered
 [agamemnon] listening on 0.0.0.0:8080
 ```
 
-**Feedback / Issues found:** Binary runs correctly without pixi (libraries are either statically linked or available on epimetheus's system). NATS connection failure is handled gracefully with a warning rather than a crash, which is correct behavior. The `start-agamemnon` justfile recipe points to `BUILD_ROOT/ProjectAgamemnon/ProjectAgamemnon_server` (the Odysseus-level build), but the binary was built locally inside the submodule at `control/ProjectAgamemnon/build/debug/`. These are different paths — the justfile recipe would need `BUILD_ROOT` to be overridden to use the pixi-built binary.
+**Feedback / Issues found:** Binary runs correctly without pixi (libraries are either statically linked or available on epimetheus's system). NATS connection failure is handled gracefully with a warning rather than a crash, which is correct behavior. The `start-agamemnon` justfile recipe points to `BUILD_ROOT/Agamemnon/Agamemnon_server` (the Odysseus-level build), but the binary was built locally inside the submodule at `control/Agamemnon/build/debug/`. These are different paths — the justfile recipe would need `BUILD_ROOT` to be overridden to use the pixi-built binary.
 
 
 ### Step 3.3: Start Nestor (`just start-nestor`)
 
-Executed via: `nohup ~/Projects/Odysseus/control/ProjectNestor/build/debug/ProjectNestor_server > /tmp/nestor.log 2>&1 &`
+Executed via: `nohup ~/Projects/Odysseus/control/Nestor/build/debug/Nestor_server > /tmp/nestor.log 2>&1 &`
 
 | Check | Result | Notes |
 |-------|--------|-------|
@@ -179,7 +179,7 @@ Executed via: `nohup ~/Projects/Odysseus/control/ProjectNestor/build/debug/Proje
 
 **Startup output:**
 ```
-ProjectNestor v0.1.0
+Nestor v0.1.0
 Starting HTTP server on 0.0.0.0:8081
 [NatsClient] Failed to connect to nats://localhost:4222: No server available for connection
 ```
@@ -193,7 +193,7 @@ Starting HTTP server on 0.0.0.0:8081
 
 ### Step 3.4: Start Hermes (`just start-hermes`)
 
-Executed via: `pixi run python -m uvicorn hermes.main:app --host 0.0.0.0 --port 8085` inside `infrastructure/ProjectHermes/` on epimetheus (NATS running via pasta at localhost:4222).
+Executed via: `pixi run python -m uvicorn hermes.main:app --host 0.0.0.0 --port 8085` inside `infrastructure/Hermes/` on epimetheus (NATS running via pasta at localhost:4222).
 
 | Check | Result | Notes |
 |-------|--------|-------|
@@ -425,10 +425,10 @@ hi-nats                nats:alpine             Up (pre-existing — started 17h 
 ~/.local/bin/nats-server -js -p 4222 -m 8222 > /tmp/nats-crosshost.log &
 
 # Agamemnon
-NATS_URL=nats://localhost:4222 control/ProjectAgamemnon/build/debug/ProjectAgamemnon_server > /tmp/agamemnon-crosshost.log &
+NATS_URL=nats://localhost:4222 control/Agamemnon/build/debug/Agamemnon_server > /tmp/agamemnon-crosshost.log &
 
 # Hermes (pixi env, PYTHONPATH required)
-cd infrastructure/ProjectHermes && PYTHONPATH=src pixi run python -m uvicorn hermes.main:app --host 0.0.0.0 --port 8085 > /tmp/hermes-crosshost.log &
+cd infrastructure/Hermes && PYTHONPATH=src pixi run python -m uvicorn hermes.main:app --host 0.0.0.0 --port 8085 > /tmp/hermes-crosshost.log &
 
 # hello-myrmidon Python worker
 python3 provisioning/Myrmidons/hello-world/main.py > /tmp/myrmidon-crosshost.log &
@@ -444,11 +444,11 @@ python3 provisioning/Myrmidons/hello-world/main.py > /tmp/myrmidon-crosshost.log
 
 | Check | Result | Notes |
 |-------|--------|-------|
-| Nestor started | [x] PASS / [ ] FAIL | `build/ProjectNestor/ProjectNestor_server` started on hermes; PID 253779 |
+| Nestor started | [x] PASS / [ ] FAIL | `build/Nestor/Nestor_server` started on hermes; PID 253779 |
 | Nestor connected to worker NATS | [x] PASS / [ ] FAIL | `NATS_URL=nats://100.92.173.32:4222` — health endpoint confirms server running |
 | `just apply-all` | N/A | Not part of cross-host validation scope; verified via Agamemnon REST CRUD in Step 5.3 |
 
-**Feedback / Issues found:** Nestor binary at `build/ProjectNestor/ProjectNestor_server` (Odysseus-level build) started cleanly with worker NATS URL. Health endpoint at `localhost:8081/v1/health` → `{"status":"ok"}`.
+**Feedback / Issues found:** Nestor binary at `build/Nestor/Nestor_server` (Odysseus-level build) started cleanly with worker NATS URL. Health endpoint at `localhost:8081/v1/health` → `{"status":"ok"}`.
 
 
 ### Step 5.3: `just crosshost-test`
@@ -494,12 +494,12 @@ python3 provisioning/Myrmidons/hello-world/main.py > /tmp/myrmidon-crosshost.log
 **Feedback / Issues found:** All 27 checks passed. The `fleet-build-vessel NAME` parameter delegation works correctly. Submodule justfile is clean (no uncommitted modifications).
 
 
-### Step 6.2: ProjectProteus (proteus-* recipes)
+### Step 6.2: Proteus (proteus-* recipes)
 
 | Check | Result | Notes |
 |-------|--------|-------|
 | All 6 proteus-* recipes exist | [x] PASS / [ ] FAIL | proteus-build, proteus-test, proteus-pipeline, proteus-lint, proteus-validate, proteus-dispatch, proteus-check all present |
-| Delegation paths correct | [x] PASS / [ ] FAIL | All delegate to ci-cd/ProjectProteus |
+| Delegation paths correct | [x] PASS / [ ] FAIL | All delegate to ci-cd/Proteus |
 | proteus-dispatch has HOST param | [x] PASS / [ ] FAIL | Delegates to `just dispatch-apply HOST` |
 | Submodule has target recipes | [x] PASS / [ ] FAIL | pipeline, build, validate, dispatch-apply, lint present |
 | Total pass/fail | | 30 / 30 |
@@ -507,24 +507,24 @@ python3 provisioning/Myrmidons/hello-world/main.py > /tmp/myrmidon-crosshost.log
 **Feedback / Issues found:** All 30 checks passed. Parameterized recipes (`proteus-build NAME`, `proteus-pipeline NAME`, `proteus-dispatch HOST`) delegate correctly. Section header verified.
 
 
-### Step 6.3: ProjectMnemosyne (mnemosyne-* recipes)
+### Step 6.3: Mnemosyne (mnemosyne-* recipes)
 
 | Check | Result | Notes |
 |-------|--------|-------|
 | All 4 mnemosyne-* recipes exist | [x] PASS / [ ] FAIL | mnemosyne-validate, mnemosyne-generate-marketplace, mnemosyne-test, mnemosyne-check |
-| Delegation paths correct | [x] PASS / [ ] FAIL | All delegate to shared/ProjectMnemosyne |
+| Delegation paths correct | [x] PASS / [ ] FAIL | All delegate to shared/Mnemosyne |
 | Submodule has target recipes | [x] PASS / [ ] FAIL | validate, generate-marketplace, test, check all present |
 | Total pass/fail | | 19 / 19 |
 
 **Feedback / Issues found:** All 19 checks passed. Skills Marketplace section header verified in Odysseus justfile.
 
 
-### Step 6.4: ProjectHephaestus (hephaestus-* recipes)
+### Step 6.4: Hephaestus (hephaestus-* recipes)
 
 | Check | Result | Notes |
 |-------|--------|-------|
 | All 6 hephaestus-* recipes exist | [x] PASS / [ ] FAIL | hephaestus-test, hephaestus-lint, hephaestus-format, hephaestus-typecheck, hephaestus-check, hephaestus-audit |
-| Delegation paths correct | [x] PASS / [ ] FAIL | All delegate to shared/ProjectHephaestus |
+| Delegation paths correct | [x] PASS / [ ] FAIL | All delegate to shared/Hephaestus |
 | Submodule has target recipes | [x] PASS / [ ] FAIL | test, lint, format, typecheck, check, audit all present |
 | Total pass/fail | | 27 / 27 |
 
@@ -543,7 +543,7 @@ Run on epimetheus (100.92.173.32) via SSH — conan 2.27.0 with initialized defa
 
 | Check | Result | Notes |
 |-------|--------|-------|
-| Packages exported | [x] PASS / [ ] FAIL | All 4 packages exported: ProjectAgamemnon (b1c9f2b7), ProjectNestor (09532531), ProjectCharybdis (7ddfa888), ProjectKeystone (60626244) |
+| Packages exported | [x] PASS / [ ] FAIL | All 4 packages exported: Agamemnon (b1c9f2b7), Nestor (09532531), Charybdis (7ddfa888), Keystone (60626244) |
 | Consumer installed | [x] PASS / [ ] FAIL | All dependencies resolved from conan cache; CMakeDeps + CMakeToolchain generators created |
 | Consumer built | [ ] PASS / [x] FAIL | CMake configure fails: `CMake 3.20 or higher required, found 3.18.4` — epimetheus has Debian 11 system CMake |
 
@@ -557,12 +557,12 @@ Run on epimetheus (100.92.173.32) via SSH — conan 2.27.0 with initialized defa
 
 | Package | Result | Notes |
 |---------|--------|-------|
-| ProjectHephaestus | [x] PASS / [ ] FAIL | pip install, import, CLI entry points (hephaestus-changelog, hephaestus-system-info) |
-| ProjectHermes | [x] PASS / [ ] FAIL | pip install, import hermes |
-| ProjectTelemachy | [x] PASS / [ ] FAIL | pip install, import telemachy |
-| ProjectScylla | [x] PASS / [ ] FAIL | pip install, import scylla |
+| Hephaestus | [x] PASS / [ ] FAIL | pip install, import, CLI entry points (hephaestus-changelog, hephaestus-system-info) |
+| Hermes | [x] PASS / [ ] FAIL | pip install, import hermes |
+| Telemachy | [x] PASS / [ ] FAIL | pip install, import telemachy |
+| Scylla | [x] PASS / [ ] FAIL | pip install, import scylla |
 
-**Feedback / Issues found:** All 4 Python packages install cleanly into isolated venvs and import successfully. CLI entry points for ProjectHephaestus verified. No issues.
+**Feedback / Issues found:** All 4 Python packages install cleanly into isolated venvs and import successfully. CLI entry points for Hephaestus verified. No issues.
 
 
 ---
@@ -591,7 +591,7 @@ Run on epimetheus (100.92.173.32) via SSH — conan 2.27.0 with initialized defa
 
 4. **MEDIUM: Nestor and Charybdis test suites are stubs** — Both `ctest` runs report "No tests were found!!!" because the generated `*_tests.cmake` files have empty `TESTS` lists. The test binaries exist and link but register zero gtest cases. The test step of `just test` silently exits 0 for Nestor and Charybdis rather than surfacing this. This violates POLA: a developer running `just test` would expect test output, not silence.
 
-5. **MEDIUM: Keystone never built** — No build artifacts exist under `provisioning/ProjectKeystone/`. `just build` always fails before reaching it (blocked by Nestor cmake step). Running `just _build-keystone` directly would require conan installed first.
+5. **MEDIUM: Keystone never built** — No build artifacts exist under `provisioning/Keystone/`. `just build` always fails before reaching it (blocked by Nestor cmake step). Running `just _build-keystone` directly would require conan installed first.
 
 6. **MEDIUM: `start-myrmidon` recipe references nonexistent `worker.py`** — The justfile recipe `start-myrmidon` runs `python3 provisioning/Myrmidons/hello-world/worker.py`, but that file does not exist. The hello-world myrmidon is a C++ binary (`main.cpp` + `CMakeLists.txt`). The recipe will fail immediately with "No such file or directory" at runtime. Fix: either add `worker.py` as a Python NATS subscriber, or update the recipe to run the built C++ binary.
 
@@ -599,7 +599,7 @@ Run on epimetheus (100.92.173.32) via SSH — conan 2.27.0 with initialized defa
 
 8. **LOW: `POST /v1/teams` does not store `agent_ids` from request body** — Creating a team with `{"name":"...","agent_ids":["<uuid>"]}` creates a team with `agentIds: []`. The team store ignores the agent list at creation time. Team membership must be managed via `PUT /v1/teams/:id`. The discrepancy between the request field name (`agent_ids`) and the response field name (`agentIds`) suggests the creation handler doesn't parse this field at all. Fix: either process `agent_ids` in the creation handler or document that team membership must be set via PUT.
 
-9. **LOW: Binary path mismatch between justfile `start-agamemnon` and pixi-built binaries** — The justfile `start-agamemnon` recipe uses `BUILD_ROOT/ProjectAgamemnon/ProjectAgamemnon_server` (Odysseus-level build at `~/Projects/Odysseus/build/`), but pixi builds into the submodule's own `build/debug/` directory (`~/Projects/Odysseus/control/ProjectAgamemnon/build/debug/`). Running `just start-agamemnon` from Odysseus root would fail unless `BUILD_ROOT` is overridden or `just build` was run from Odysseus (not from the submodule). Document this distinction or add a `start-agamemnon-local` recipe that uses the submodule-local path.
+9. **LOW: Binary path mismatch between justfile `start-agamemnon` and pixi-built binaries** — The justfile `start-agamemnon` recipe uses `BUILD_ROOT/Agamemnon/Agamemnon_server` (Odysseus-level build at `~/Projects/Odysseus/build/`), but pixi builds into the submodule's own `build/debug/` directory (`~/Projects/Odysseus/control/Agamemnon/build/debug/`). Running `just start-agamemnon` from Odysseus root would fail unless `BUILD_ROOT` is overridden or `just build` was run from Odysseus (not from the submodule). Document this distinction or add a `start-agamemnon-local` recipe that uses the submodule-local path.
 
 10. **MEDIUM: Grafana startup blocked by 15-minute SQLite migration + external analytics network call** — On epimetheus hardware, Grafana's initial DB migration runs 710 schema migrations (~15m52s) followed by a network call to grafana.net via `usagestats.collector`. This call times out and hangs the startup process indefinitely. Fix: add `GF_ANALYTICS_REPORTING_ENABLED=false`, `GF_ANALYTICS_CHECK_FOR_UPDATES=false`, `GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false` to `docker-compose.e2e.yml`. Also consider pre-seeding the Grafana SQLite DB or switching to Postgres for faster migrations.
 
@@ -615,7 +615,7 @@ Run on epimetheus (100.92.173.32) via SSH — conan 2.27.0 with initialized defa
 
 1. ~~**Add conan to pixi.toml as a dev dependency**~~ — **Done in PR #135.** `conan = ">=2.0,<3"` is now in `pixi.toml` under `[dependencies]`. `pixi run conan install` works without a system-installed conan.
 
-2. ~~**Fix `just build` idempotency for Nestor**~~ — **Done in PR #135 (justfile:87–93).** `_build-nestor` now passes `-DCMAKE_TOOLCHAIN_FILE={{BUILD_ROOT}}/ProjectNestor/conan_toolchain.cmake`, matching `_build-agamemnon`. Re-runs are reliable.
+2. ~~**Fix `just build` idempotency for Nestor**~~ — **Done in PR #135 (justfile:87–93).** `_build-nestor` now passes `-DCMAKE_TOOLCHAIN_FILE={{BUILD_ROOT}}/Nestor/conan_toolchain.cmake`, matching `_build-agamemnon`. Re-runs are reliable.
 
 3. **Surface stub test suites explicitly** — Either implement the missing gtest cases in Nestor and Charybdis, or add a `ctest --no-tests=error` flag to `_test-nestor` and `_test-charybdis` so empty test suites fail loudly rather than silently passing. Silent success when no tests run violates KISS and readability.
 
@@ -627,7 +627,7 @@ Run on epimetheus (100.92.173.32) via SSH — conan 2.27.0 with initialized defa
 
 7. **Fix `start-myrmidon` recipe** — The `start-myrmidon` justfile recipe references a nonexistent `worker.py`. A Python myrmidon was created at `provisioning/Myrmidons/hello-world/main.py` during this walkthrough (which enables T1 IPC testing). The `start-myrmidon` recipe should be updated to reference `main.py` instead of `worker.py`, or a symlink `worker.py → main.py` added. The `main.py` worker proved fully functional: it subscribes via JetStream push consumer to `hi.myrmidon.hello.>` and publishes completion via core NATS to `hi.tasks.{team_id}.{task_id}.completed`.
 
-8. **Document native binary startup path for epimetheus** — Add a recipe `start-agamemnon-native` that uses `control/ProjectAgamemnon/build/debug/ProjectAgamemnon_server` directly, and a runbook section explaining the two build paths (Odysseus-level `just build` vs submodule-level `pixi run cmake`).
+8. **Document native binary startup path for epimetheus** — Add a recipe `start-agamemnon-native` that uses `control/Agamemnon/build/debug/Agamemnon_server` directly, and a runbook section explaining the two build paths (Odysseus-level `just build` vs submodule-level `pixi run cmake`).
 
 9. **Add firewalld tailscale0 trust to worker provisioning runbook** — Add `sudo firewall-cmd --permanent --zone=trusted --add-interface=tailscale0 && sudo firewall-cmd --reload` to `docs/runbooks/add-new-host.md` and to `just doctor --role worker --install`. New worker nodes provisioned without this step will appear reachable via Tailscale but block all service ports.
 

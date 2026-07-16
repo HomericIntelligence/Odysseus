@@ -12,7 +12,7 @@ Odysseus itself contains no application code. Its value is coordination: it ensu
 ## Key Principles
 
 1. **Odysseus is read-mostly.** Most day-to-day changes happen in the individual submodule repos, not here.
-2. **ai-maestro has been removed per ADR-006.** ProjectAgamemnon (control/Agamemnon) replaces ai-maestro's task coordination role.
+2. **ai-maestro has been removed per ADR-006.** Agamemnon (control/Agamemnon) replaces ai-maestro's task coordination role.
 3. **ADRs are append-only.** Once an ADR is accepted it is never edited. Superseding decisions get a new ADR that references the old one.
 4. **Configs here are canonical.** The Nomad and NATS configs in `configs/` are the authoritative source. Individual hosts copy or symlink from here.
 5. **Submodule pins matter.** The submodule SHAs in this repo represent the last known-good cross-repo integration point.
@@ -55,22 +55,22 @@ Odysseus/
 │       └── leaf.conf
 ├── infrastructure/               # git submodules
 │   ├── AchaeanFleet
-│   ├── ProjectArgus
+│   ├── Argus
 │   └── Hermes
 ├── control/                      # git submodules
-│   ├── ProjectAgamemnon          # Planning + HMAS orchestration (replaces ai-maestro)
-│   └── ProjectNestor             # Research, ideation, handoff to Agamemnon
+│   ├── Agamemnon          # Planning + HMAS orchestration (replaces ai-maestro)
+│   └── Nestor             # Research, ideation, handoff to Agamemnon
 ├── provisioning/                 # git submodules
-│   ├── ProjectTelemachy
-│   ├── ProjectKeystone
+│   ├── Telemachy
+│   ├── Keystone
 │   └── Myrmidons
 ├── ci-cd/                        # git submodules
-│   └── ProjectProteus
+│   └── Proteus
 ├── research/                     # git submodules
-│   ├── ProjectOdyssey
-│   └── ProjectScylla
+│   ├── Odyssey
+│   └── Scylla
 ├── testing/                      # git submodules
-│   └── ProjectCharybdis          # Chaos/resilience testing via Agamemnon /v1/chaos/*
+│   └── Charybdis          # Chaos/resilience testing via Agamemnon /v1/chaos/*
 ├── shared/                       # git submodules
 │   ├── Mnemosyne
 │   └── Hephaestus
@@ -85,7 +85,7 @@ Odysseus/
 - When adding a new submodule: `git submodule add <url> <path>`, update `.gitmodules`, and document the repo in `docs/architecture.md`.
 - When writing a new ADR: use `docs/adr/template.md` as the template, use the next sequential number, and set Status to "Proposed" until merged.
 - Runbooks should be written as numbered steps that can be executed top-to-bottom without prior context.
-- **ai-maestro has been fully removed per ADR-006.** ProjectAgamemnon replaces its task coordination role.
+- **ai-maestro has been fully removed per ADR-006.** Agamemnon replaces its task coordination role.
 
 ## Resource limits & concurrency on the `hermes` host
 
@@ -128,10 +128,10 @@ just apply-all
 # Start the NATS event bridge (Hermes)
 just hermes-start
 
-# Start the observability stack (ProjectArgus)
+# Start the observability stack (Argus)
 just argus-start
 
-# Run a named workflow via ProjectTelemachy
+# Run a named workflow via Telemachy
 just telemachy-run WORKFLOW=my-workflow
 
 # Pull latest commits for all submodules

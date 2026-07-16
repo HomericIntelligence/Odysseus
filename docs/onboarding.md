@@ -67,18 +67,18 @@ HomericIntelligence is a distributed system built from a coordinated set of spec
 User
   ↓ (bidirectional interaction)
 Odysseus (meta-repo, orchestration hub)
-  ├─→ ProjectAgamemnon (control plane, task coordination)
-  ├─→ ProjectNestor (research & ideation)
-  ├─→ ProjectKeystone (transport/event bus)
-  ├─→ ProjectArgus (observability)
-  ├─→ ProjectHermes (external integrations)
+  ├─→ Agamemnon (control plane, task coordination)
+  ├─→ Nestor (research & ideation)
+  ├─→ Keystone (transport/event bus)
+  ├─→ Argus (observability)
+  ├─→ Hermes (external integrations)
   ├─→ AchaeanFleet (container images)
   ├─→ Myrmidons (agent fleet & GitOps)
-  ├─→ ProjectTelemachy (workflow engine)
-  ├─→ ProjectProteus (CI/CD pipelines)
-  ├─→ ProjectCharybdis (chaos testing)
-  ├─→ ProjectScylla (ablation benchmarks)
-  ├─→ ProjectMnemosyne (shared memory)
+  ├─→ Telemachy (workflow engine)
+  ├─→ Proteus (CI/CD pipelines)
+  ├─→ Charybdis (chaos testing)
+  ├─→ Scylla (ablation benchmarks)
+  ├─→ Mnemosyne (shared memory)
   ├─→ Athena (agentic plugins & skills)
   └─→ Hephaestus (shared utilities)
 ```
@@ -88,18 +88,18 @@ Odysseus (meta-repo, orchestration hub)
 | Repo | Category | Role | Language | Status |
 |------|----------|------|----------|--------|
 | **Odysseus** | meta | User interface, observability hub, meta-repo | Markdown, Bash | You are here |
-| **ProjectAgamemnon** | control | Task planning, HMAS orchestration, GitHub-backed | C++, Python | Core system |
-| **ProjectNestor** | control | Research, ideation, multi-step workflows | Python, C++ | Core system |
-| **ProjectKeystone** | transport | Event bus (BlazingMQ intra-host, NATS cross-host) | C++ | Core system |
-| **ProjectArgus** | infrastructure | Metrics (Prometheus), logs (Loki), dashboards (Grafana) | TypeScript, Python | Observability |
-| **ProjectHermes** | infrastructure | Slack, GitHub, email integrations | Python | Bridge |
+| **Agamemnon** | control | Task planning, HMAS orchestration, GitHub-backed | C++, Python | Core system |
+| **Nestor** | control | Research, ideation, multi-step workflows | Python, C++ | Core system |
+| **Keystone** | transport | Event bus (BlazingMQ intra-host, NATS cross-host) | C++ | Core system |
+| **Argus** | infrastructure | Metrics (Prometheus), logs (Loki), dashboards (Grafana) | TypeScript, Python | Observability |
+| **Hermes** | infrastructure | Slack, GitHub, email integrations | Python | Bridge |
 | **AchaeanFleet** | infrastructure | Container image registry and definitions | Dockerfile, OCI | Build artifacts |
 | **Myrmidons** | provisioning | Agent fleet YAML manifests (GitOps source of truth) | YAML | Config |
-| **ProjectTelemachy** | provisioning | Declarative workflow engine | Python, C++ | Internal tool |
-| **ProjectProteus** | ci-cd | Build pipelines (Dagger TypeScript) | TypeScript | Automation |
-| **ProjectCharybdis** | testing | Chaos and resilience testing | Python | Testing |
-| **ProjectScylla** | testing | AI agent ablation and benchmarking | Python, Mojo | Research |
-| **ProjectMnemosyne** | shared | Memory store for `advise` and `learn` plugins | Python | Utility |
+| **Telemachy** | provisioning | Declarative workflow engine | Python, C++ | Internal tool |
+| **Proteus** | ci-cd | Build pipelines (Dagger TypeScript) | TypeScript | Automation |
+| **Charybdis** | testing | Chaos and resilience testing | Python | Testing |
+| **Scylla** | testing | AI agent ablation and benchmarking | Python, Mojo | Research |
+| **Mnemosyne** | shared | Memory store for `advise` and `learn` plugins | Python | Utility |
 | **Hephaestus** | shared | Shared utilities (Python library + TS tooling) | Python, TypeScript | Utility |
 | **Athena** | agentic | Agentic plugins & skills (hosts `athena@Athena` marketplace entry per ADR-016) | Python | Utility |
 
@@ -165,7 +165,7 @@ Edit files in any submodule. Most day-to-day changes happen in the individual su
 
 Examples:
 
-- Fixing a bug in ProjectAgamemnon → edit `control/ProjectAgamemnon/src/...`
+- Fixing a bug in Agamemnon → edit `control/Agamemnon/src/...`
 - Adding a runbook → edit `docs/runbooks/...` in Odysseus
 - Adding an agent template → edit `provisioning/Myrmidons/templates/...`
 
@@ -231,11 +231,11 @@ just --list
 | `just build` | Build all C++/CMake/Mojo components |
 | `just setup` | One-command setup (bootstrap + build) |
 | `just update-submodules` | Pull latest from all upstream submodule remotes |
-| `just start-agamemnon` | Start ProjectAgamemnon (control plane) |
-| `just start-nestor` | Start ProjectNestor (research service) |
-| `just keystone-start` | Start ProjectKeystone (event bus) |
-| `just hermes-start` | Start ProjectHermes (external bridge) |
-| `just argus-start` | Start ProjectArgus (observability stack) |
+| `just start-agamemnon` | Start Agamemnon (control plane) |
+| `just start-nestor` | Start Nestor (research service) |
+| `just keystone-start` | Start Keystone (event bus) |
+| `just hermes-start` | Start Hermes (external bridge) |
+| `just argus-start` | Start Argus (observability stack) |
 | `just apply-all` | Deploy Myrmidons YAML manifests via Agamemnon |
 | `just telemachy-run WORKFLOW=<name>` | Execute a named workflow |
 | `just install PREFIX=/usr/local` | Install all binaries to a prefix |
@@ -262,7 +262,7 @@ just --list
 ### Development
 
 - **Project Structure** → `CLAUDE.md` (repo layout and development guidelines)
-- **CI/CD Pipelines** → `ci-cd/ProjectProteus/` (Dagger TypeScript)
+- **CI/CD Pipelines** → `ci-cd/Proteus/` (Dagger TypeScript)
 - **E2E Tests** → `e2e/` (integration and topology tests)
 - E2E scenario coverage is mapped in [`e2e/tests/README.md`](../e2e/tests/README.md)
   (generated from each test's header). After adding or editing a test, run
@@ -279,15 +279,15 @@ just --list
 
 Each submodule has its own `README.md`. Start there for specifics:
 
-- `control/ProjectAgamemnon/README.md`
-- `control/ProjectNestor/README.md`
+- `control/Agamemnon/README.md`
+- `control/Nestor/README.md`
 - etc.
 
 ---
 
 ## Typical Development Scenarios
 
-### Scenario 1: Fix a Bug in ProjectAgamemnon
+### Scenario 1: Fix a Bug in Agamemnon
 
 ```bash
 # Clone and setup
@@ -300,15 +300,15 @@ just build
 git checkout -b fix/agamemnon-bug
 
 # Edit the source (it's checked in as a submodule)
-cd control/ProjectAgamemnon
+cd control/Agamemnon
 # ... make changes ...
 cd ../..
 
-# Test it (see ProjectAgamemnon's README for test commands)
+# Test it (see Agamemnon's README for test commands)
 # ... run tests ...
 
 # Commit the submodule update
-git add control/ProjectAgamemnon
+git add control/Agamemnon
 git commit -m "fix(agamemnon): describe the bug fix"
 git push -u origin fix/agamemnon-bug
 
@@ -435,7 +435,7 @@ If you're stuck, open an issue on GitHub describing:
 ## Next Steps
 
 1. **Read `docs/architecture.md`** — Understand the full system.
-2. **Read a Submodule README** — Pick one that interests you (e.g., ProjectAgamemnon).
+2. **Read a Submodule README** — Pick one that interests you (e.g., Agamemnon).
 3. **Run `just bootstrap` and `just build`** — Get it running locally.
 4. **Pick a Small Issue** — Find a good-first-issue and fix it.
 5. **Join the Discussion** — Open a PR and engage with the team.
@@ -446,34 +446,34 @@ If you're stuck, open an issue on GitHub describing:
 
 ```
 control/
-├── ProjectAgamemnon          # Task planning, orchestration
-└── ProjectNestor             # Research, ideation
+├── Agamemnon          # Task planning, orchestration
+└── Nestor             # Research, ideation
 
 provisioning/
-├── ProjectTelemachy          # Workflow engine
-├── ProjectKeystone           # Transport layer
+├── Telemachy          # Workflow engine
+├── Keystone           # Transport layer
 └── Myrmidons                 # Agent fleet (GitOps)
 
 infrastructure/
 ├── AchaeanFleet              # Container images
-├── ProjectArgus              # Observability
-└── ProjectHermes             # External integrations
+├── Argus              # Observability
+└── Hermes             # External integrations
 
 ci-cd/
-└── ProjectProteus            # Build pipelines
+└── Proteus            # Build pipelines
 
 research/
-├── ProjectOdyssey            # ML sandbox
-└── ProjectScylla             # Ablation benchmarks
+├── Odyssey            # ML sandbox
+└── Scylla             # Ablation benchmarks
 
 testing/
-└── ProjectCharybdis          # Chaos testing
+└── Charybdis          # Chaos testing
 
 agentic/
 └── Athena                     # Agentic plugins & skills (CLAUDE Code marketplace)
 
 shared/
-├── ProjectMnemosyne          # Memory store
+├── Mnemosyne          # Memory store
 └── Hephaestus                # Shared utilities (Python library; `hephaestus` Python pkg + `hephaestus.automation` orchestrator)
 ```
 

@@ -5,6 +5,14 @@
 # a pixi.toml. Only installs default features (no --feature dev).
 # Idempotent: pixi install is safe to run repeatedly.
 #
+# ADR-015 forward-compatibility: PIXI_DIRS below is the canonical pre-rename
+# list (each entry reflects the repo name as it was when this script was
+# last touched). `resolve_submodule_path` (from lib.sh) may flip an entry
+# from `Project<X>` to `<X>` on disk after the upstream `gh repo rename`
+# lands; when this happens we surface `↻ ADR-015 dual-path: …` in the
+# install log so operators can see both the list name and the actual
+# on-disk path used.
+#
 # shellcheck disable=SC2015
 set -uo pipefail
 
@@ -30,20 +38,20 @@ check_pass "pixi $(pixi --version 2>&1 | grep -oP '\d+\.\d+[\.\d]*' | head -1)"
 # All directories (relative to ODYSSEUS_ROOT) that contain pixi.toml
 PIXI_DIRS=(
     "."
-    "ci-cd/ProjectProteus"
-    "control/ProjectAgamemnon"
-    "control/ProjectNestor"
+    "ci-cd/Proteus"
+    "control/Agamemnon"
+    "control/Nestor"
     "infrastructure/AchaeanFleet"
-    "infrastructure/ProjectArgus"
-    "infrastructure/ProjectHermes"
+    "infrastructure/Argus"
+    "infrastructure/Hermes"
     "provisioning/Myrmidons"
-    "provisioning/ProjectKeystone"
-    "provisioning/ProjectTelemachy"
-    "research/ProjectOdyssey"
-    "research/ProjectScylla"
+    "provisioning/Keystone"
+    "provisioning/Telemachy"
+    "research/Odyssey"
+    "research/Scylla"
     "shared/Hephaestus"
-    "shared/ProjectMnemosyne"
-    "testing/ProjectCharybdis"
+    "shared/Mnemosyne"
+    "testing/Charybdis"
 )
 
 pixi_install_dir() {
@@ -75,6 +83,17 @@ pixi_install_dir() {
     fi
 }
 
+# Per ADR-015: PIXI_DIRS may mix prefixed (`Project<X>`) entries with bare
+# (`<X>`) entries, depending on whether each repo's upstream `gh repo rename`
+# has happened. `resolve_submodule_path` (from lib.sh) prefers the input form
+# and falls back to the bare name when the prefixed form is absent on disk,
+# so each repo's path resolves correctly in either world. When the resolver
+# swaps the form, we surface it in the install log so operators can see the
+# forward-compatible behaviour kicking in.
 for dir in "${PIXI_DIRS[@]}"; do
-    pixi_install_dir "$dir"
+    resolved=$(resolve_submodule_path "$dir")
+    if [[ "$resolved" != "$dir" ]]; then
+        echo -e "    ${DIM}↻ ADR-015 dual-path: $dir → $resolved${NC}"
+    fi
+    pixi_install_dir "$resolved"
 done

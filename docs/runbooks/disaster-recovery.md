@@ -10,7 +10,7 @@ This runbook covers recovery scenarios for the HomericIntelligence ecosystem, in
 
 - Agent lifecycle API is unavailable.
 - New tasks cannot be queued.
-- ProjectHermes stops receiving webhooks (no new NATS events).
+- Hermes stops receiving webhooks (no new NATS events).
 - Existing agents running on other hosts continue running until they poll Agamemnon for instructions.
 - NATS JetStream continues operating on any surviving leaf nodes.
 
@@ -47,7 +47,7 @@ If the primary host is unrecoverable, provision a new host (see `add-new-host.md
 
 ```bash
 # On the new host: install and start Agamemnon
-# Follow ~/ProjectAgamemnon/ for installation instructions
+# Follow ~/Agamemnon/ for installation instructions
 
 # Update AGAMEMNON_URL in your environment to point to the new host
 export AGAMEMNON_URL=http://<new-host-tailscale-ip>:8080
@@ -73,7 +73,7 @@ curl $AGAMEMNON_URL/v1/agents | jq 'length'
 
 #### Step 5: Replay missed NATS events from JetStream
 
-If consumers (ProjectTelemachy, ProjectArgus, ProjectScylla) missed events during the outage, replay them from JetStream:
+If consumers (Telemachy, Argus, Scylla) missed events during the outage, replay them from JetStream:
 
 ```bash
 # List available streams
@@ -88,13 +88,13 @@ nats consumer next homeric-tasks <consumer-name> --count 1000
 
 Durable consumers will automatically catch up from their last acknowledged sequence on reconnect. Manual replay is only needed if you want to reprocess events for debugging.
 
-#### Step 6: Verify ProjectHermes webhook receiver
+#### Step 6: Verify Hermes webhook receiver
 
-Ensure ProjectHermes is configured with the new Agamemnon host's webhook URL:
+Ensure Hermes is configured with the new Agamemnon host's webhook URL:
 
 ```bash
-cd infrastructure/ProjectHermes
-# Update the AGAMEMNON_URL in the ProjectHermes config
+cd infrastructure/Hermes
+# Update the AGAMEMNON_URL in the Hermes config
 just restart
 ```
 
@@ -108,9 +108,9 @@ nats sub "hi.>" --count 5
 #### Step 7: Notify all submodule services
 
 Restart or reconfigure any services that had a hardcoded reference to the old host's IP:
-- ProjectArgus (scrape targets)
-- ProjectTelemachy (AGAMEMNON_URL)
-- ProjectKeystone (secret injection targets)
+- Argus (scrape targets)
+- Telemachy (AGAMEMNON_URL)
+- Keystone (secret injection targets)
 
 ---
 
@@ -157,7 +157,7 @@ pixi install
 # 3. Bootstrap submodules
 just bootstrap
 
-# 4. Install and start Agamemnon (follow ~/ProjectAgamemnon/)
+# 4. Install and start Agamemnon (follow ~/Agamemnon/)
 
 # 5. Install and start NATS with server config
 nats-server -c configs/nats/server.conf &
@@ -170,10 +170,10 @@ nomad agent -config /etc/nomad.d/server.hcl &
 # 7. Apply desired state from Myrmidons
 just apply-all
 
-# 8. Start ProjectHermes event bridge
+# 8. Start Hermes event bridge
 just hermes-start
 
-# 9. Start ProjectArgus observability
+# 9. Start Argus observability
 just argus-start
 
 # 10. Verify
@@ -190,6 +190,6 @@ curl $AGAMEMNON_URL/health
 - [ ] Agent count matches expected count in `provisioning/Myrmidons/`
 - [ ] NATS server is running and all leaf nodes have reconnected
 - [ ] JetStream stream report shows correct message counts
-- [ ] ProjectHermes is receiving webhooks and publishing to NATS
-- [ ] ProjectArgus Grafana dashboard shows all hosts
+- [ ] Hermes is receiving webhooks and publishing to NATS
+- [ ] Argus Grafana dashboard shows all hosts
 - [ ] Nomad `node status` shows all hosts as ready

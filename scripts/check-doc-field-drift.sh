@@ -3,7 +3,7 @@
 # check-doc-field-drift.sh — Guard Odysseus first-party docs against
 # deprecated workflow-schema field names (issue #25).
 #
-# Canonical field names come from the ProjectTelemachy Pydantic models
+# Canonical field names come from the Telemachy Pydantic models
 # (src/telemachy/models.py TaskSpec) and the Agamemnon REST payload
 # (agamemnon_client.py):
 #   YAML field   wire form          deprecated (do NOT use)

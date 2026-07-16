@@ -129,7 +129,7 @@ The `timestamp` field is ISO-8601 formatted UTC. The `data` object contains even
 
 | Consumer Name | Stream | Service | Purpose |
 |---|---|---|---|
-| `keystone-dag` | `homeric-tasks` | ProjectKeystone | DAG advancement on task completion |
+| `keystone-dag` | `homeric-tasks` | Keystone | DAG advancement on task completion |
 
 ## Subscription Examples
 
@@ -166,4 +166,4 @@ All tasks follow a canonical lifecycle with eight possible statuses:
 - Only `completed` and `failed` trigger dedicated NATS events; other transitions use `task.updated`
 
 **Canonical Source of Truth:**
-This lifecycle is the authoritative specification for the HomericIntelligence ecosystem. ProjectKeystone, ProjectTelemachy, ProjectAgamemnon, and ProjectHermes must conform to these statuses and transition rules. Keystone advances DAGs when tasks reach terminal states (`completed`, `failed`, `error`, `cancelled`).
+This lifecycle is the authoritative specification for the HomericIntelligence ecosystem. Keystone, Telemachy, Agamemnon, and Hermes must conform to these statuses and transition rules. Keystone advances DAGs when tasks reach terminal states (`completed`, `failed`, `error`, `cancelled`).

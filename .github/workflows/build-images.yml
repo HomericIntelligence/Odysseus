@@ -48,19 +48,19 @@ jobs:
         include:
           # agamemnon: control plane / HMAS orchestration
           - component: agamemnon
-            context: control/ProjectAgamemnon
-            file: control/ProjectAgamemnon/Dockerfile
+            context: control/Agamemnon
+            file: control/Agamemnon/Dockerfile
             publish: true
           # nestor: research / ideation / handoff to Agamemnon
           - component: nestor
-            context: control/ProjectNestor
-            file: control/ProjectNestor/Dockerfile
+            context: control/Nestor
+            file: control/Nestor/Dockerfile
             publish: true
           # hermes: NATS event bridge (compose uses ${HERMES_DIR} ->
-          # infrastructure/ProjectHermes)
+          # infrastructure/Hermes)
           - component: hermes
-            context: infrastructure/ProjectHermes
-            file: infrastructure/ProjectHermes/Dockerfile
+            context: infrastructure/Hermes
+            file: infrastructure/Hermes/Dockerfile
             publish: true
           # argus-exporter: Prometheus exporter. Its Dockerfile (COPY exporter.py .)
           # needs the exporter/ dir as build context, while the Dockerfile itself
@@ -71,13 +71,13 @@ jobs:
           #
           # publish: false — BUILD-VALIDATE ONLY. The canonical
           # ghcr.io/homericintelligence/argus-exporter package is created and
-          # published by ProjectArgus's own publish-exporter-image.yml, so it
+          # published by Argus's own publish-exporter-image.yml, so it
           # is access-scoped to that repo: a repo-scoped GITHUB_TOKEN from
           # Odysseus gets "403 Forbidden" on blob push (this broke every main
           # push of this workflow). Pushing the same :latest from two repos
-          # would also race; ProjectArgus stays the single publisher.
+          # would also race; Argus stays the single publisher.
           - component: argus-exporter
-            context: infrastructure/ProjectArgus/exporter
+            context: infrastructure/Argus/exporter
             file: e2e/Dockerfile.argus-exporter
             publish: false
     steps:

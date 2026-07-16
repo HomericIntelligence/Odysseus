@@ -1,6 +1,6 @@
 # ADR 016: Split `Hephaestus` — Library vs Agentic Plugins
 
-**Status:** Proposed
+**Status:** Accepted
 
 ---
 

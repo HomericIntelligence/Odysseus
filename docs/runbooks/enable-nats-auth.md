@@ -92,9 +92,9 @@ corresponding service:
 | Primary (epimetheus) | NATS hub, Hermes | `hermes-cert.pem`, `hermes-key.pem` |
 | Control host | Agamemnon, Telemachy | `telemachy-cert.pem`, `telemachy-key.pem` |
 | Worker hosts | Myrmidon agents | `agent-cert.pem`, `agent-key.pem` |
-| Keystone hosts | ProjectKeystone | `keystone-cert.pem`, `keystone-key.pem` |
+| Keystone hosts | Keystone | `keystone-cert.pem`, `keystone-key.pem` |
 
-Use `scp` over Tailscale or your secret-distribution tool (ProjectKeystone / Myrmidons):
+Use `scp` over Tailscale or your secret-distribution tool (Keystone / Myrmidons):
 
 ```bash
 # Example: distribute Hermes cert to the primary host
@@ -110,16 +110,16 @@ Configure each downstream service **before** restarting NATS. The table below ma
 service to the environment variables that enable mTLS. Set these in your deployment secrets,
 systemd unit `[Service]` block, or compose `.env` file.
 
-> **Note on ProjectTelemachy:** The `require_tls` gate in
-> `provisioning/ProjectTelemachy/src/telemachy/config.py` rejects plain `nats://` when
+> **Note on Telemachy:** The `require_tls` gate in
+> `provisioning/Telemachy/src/telemachy/config.py` rejects plain `nats://` when
 > `REQUIRE_TLS=true` but does not yet load a client cert. Client-cert wiring for Telemachy
-> is tracked as a follow-up issue ("ProjectTelemachy: add NATS client-cert (mTLS) wiring").
+> is tracked as a follow-up issue ("Telemachy: add NATS client-cert (mTLS) wiring").
 > Telemachy cannot connect to a `verify_and_map`-enforced NATS until that issue is resolved.
 
 | Service | Environment variables |
 |---------|----------------------|
-| **ProjectHermes** (`infrastructure/ProjectHermes/src/hermes/config.py:34`) | `NATS_URL=tls://<hub-tailscale-ip>:4222`<br>`TLS_CERT_FILE=/etc/nats/certs/clients/hermes-cert.pem`<br>`TLS_KEY_FILE=/etc/nats/certs/clients/hermes-key.pem`<br>`TLS_CA_BUNDLE=/etc/nats/certs/ca.pem` |
-| **ProjectTelemachy** (`provisioning/ProjectTelemachy/src/telemachy/config.py:21`) | `NATS_URL=tls://<hub-tailscale-ip>:4222`<br>`REQUIRE_TLS=true`<br>*(client-cert wiring pending — see note above)* |
+| **Hermes** (`infrastructure/Hermes/src/hermes/config.py:34`) | `NATS_URL=tls://<hub-tailscale-ip>:4222`<br>`TLS_CERT_FILE=/etc/nats/certs/clients/hermes-cert.pem`<br>`TLS_KEY_FILE=/etc/nats/certs/clients/hermes-key.pem`<br>`TLS_CA_BUNDLE=/etc/nats/certs/ca.pem` |
+| **Telemachy** (`provisioning/Telemachy/src/telemachy/config.py:21`) | `NATS_URL=tls://<hub-tailscale-ip>:4222`<br>`REQUIRE_TLS=true`<br>*(client-cert wiring pending — see note above)* |
 | **compose bridge** (`docker-compose.crosshost.yml:45`) | `NATS_URL=tls://nats:4222`<br>Mount `telemachy-cert.pem` / `telemachy-key.pem` into the container and set the corresponding `TLS_CERT_FILE` / `TLS_KEY_FILE` env vars. |
 
 Hermes is already mTLS-capable (`config.py:102-105` defines `tls_cert_file`, `tls_key_file`,
@@ -276,8 +276,8 @@ sudo systemctl restart nats
 > defined in ADR-010 and configured in the steps above.
 >
 > **Status:** The Telemachy client-cert (mTLS) wiring described below is **not yet
-> shipped** in `provisioning/ProjectTelemachy`. It is tracked as the follow-up issue
-> "ProjectTelemachy: add NATS client-cert (mTLS) wiring" (see the note in Step 3). The
+> shipped** in `provisioning/Telemachy`. It is tracked as the follow-up issue
+> "Telemachy: add NATS client-cert (mTLS) wiring" (see the note in Step 3). The
 > symbols referenced here (`telemachy.nats_client.connect_nats()`, the
 > `NatsConnectionError` gate, and the `test_client_cert_loaded_for_mtls` test) are the
 > **target design** for that issue and do not exist on a released submodule pin yet. This

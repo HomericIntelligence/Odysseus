@@ -131,11 +131,11 @@ just build
 
 Build artifacts are placed in `build/` subdirectories:
 
-- `build/ProjectAgamemnon/` — Planning and orchestration engine
-- `build/ProjectNestor/` — Research and ideation service
-- `build/ProjectCharybdis/` — Chaos and resilience testing
-- `build/ProjectKeystone/` — Transport layer (BlazingMQ + NATS)
-- `build/ProjectOdyssey/` — ML research sandbox
+- `build/Agamemnon/` — Planning and orchestration engine
+- `build/Nestor/` — Research and ideation service
+- `build/Charybdis/` — Chaos and resilience testing
+- `build/Keystone/` — Transport layer (BlazingMQ + NATS)
+- `build/Odyssey/` — ML research sandbox
 
 Verify all builds succeeded:
 
@@ -159,8 +159,8 @@ The following services default to plain `nats://` and must be reconfigured:
 
 | Service | Default | Required change |
 |---------|---------|-----------------|
-| `ProjectHermes` (`infrastructure/ProjectHermes/src/hermes/config.py:34`) | `nats://localhost:4222` | Set `NATS_URL=tls://…`, `TLS_CERT_FILE`, `TLS_KEY_FILE`, `TLS_CA_BUNDLE` |
-| `ProjectTelemachy` (`provisioning/ProjectTelemachy/src/telemachy/config.py:21`) | `nats://localhost:4222` | Set `NATS_URL=tls://…`, `REQUIRE_TLS=true` (client-cert wiring tracked separately) |
+| `Hermes` (`infrastructure/Hermes/src/hermes/config.py:34`) | `nats://localhost:4222` | Set `NATS_URL=tls://…`, `TLS_CERT_FILE`, `TLS_KEY_FILE`, `TLS_CA_BUNDLE` |
+| `Telemachy` (`provisioning/Telemachy/src/telemachy/config.py:21`) | `nats://localhost:4222` | Set `NATS_URL=tls://…`, `REQUIRE_TLS=true` (client-cert wiring tracked separately) |
 | `docker-compose.crosshost.yml:45` | `NATS_URL: nats://nats:4222` | Update to `tls://nats:4222` and mount client cert |
 
 Follow `docs/runbooks/enable-nats-auth.md` to issue role certs, distribute them, and
@@ -308,9 +308,9 @@ nomad status
 
 ---
 
-## Step 6: Start ProjectKeystone (Transport Layer)
+## Step 6: Start Keystone (Transport Layer)
 
-ProjectKeystone wraps BlazingMQ (intra-host) and NATS (cross-host) behind a unified event interface. Start it on all hosts:
+Keystone wraps BlazingMQ (intra-host) and NATS (cross-host) behind a unified event interface. Start it on all hosts:
 
 ```bash
 just keystone-start
@@ -318,7 +318,7 @@ just keystone-start
 
 This task:
 
-1. Builds ProjectKeystone (if not already built)
+1. Builds Keystone (if not already built)
 2. Starts the Keystone service in a Podman container
 3. Registers it as the event bus for all downstream services
 
@@ -330,9 +330,9 @@ podman logs keystone
 
 ---
 
-## Step 7: Start ProjectAgamemnon (Control Plane)
+## Step 7: Start Agamemnon (Control Plane)
 
-ProjectAgamemnon is the central orchestration engine. It coordinates planning, reconciliation, and HMAS (Hierarchical Multi-Agent System) orchestration.
+Agamemnon is the central orchestration engine. It coordinates planning, reconciliation, and HMAS (Hierarchical Multi-Agent System) orchestration.
 
 ```bash
 just start-agamemnon
@@ -340,7 +340,7 @@ just start-agamemnon
 
 This task:
 
-1. Builds ProjectAgamemnon (if not already built)
+1. Builds Agamemnon (if not already built)
 2. Starts the Agamemnon API service at `http://localhost:8080`
 3. Registers GitHub for backing storage
 
@@ -378,9 +378,9 @@ You should see agent jobs transitioning to the `running` state.
 
 ---
 
-## Step 9: Start ProjectHermes (External Bridge)
+## Step 9: Start Hermes (External Bridge)
 
-ProjectHermes bridges external service events (Slack, GitHub, email) into NATS and handles outbound message delivery:
+Hermes bridges external service events (Slack, GitHub, email) into NATS and handles outbound message delivery:
 
 ```bash
 just hermes-start
@@ -394,9 +394,9 @@ podman logs hermes
 
 ---
 
-## Step 10: Start ProjectArgus (Observability Stack)
+## Step 10: Start Argus (Observability Stack)
 
-ProjectArgus provides metrics, logging, and dashboards via Prometheus, Loki, and Grafana:
+Argus provides metrics, logging, and dashboards via Prometheus, Loki, and Grafana:
 
 ```bash
 just argus-start
@@ -418,7 +418,7 @@ http://localhost:3000
 Default credentials: `admin / admin`
 
 > **WARNING:** Rotate this password before any production or shared-network use.
-> Set `GF_SECURITY_ADMIN_PASSWORD` (see `infrastructure/ProjectArgus/docker-compose.yml`)
+> Set `GF_SECURITY_ADMIN_PASSWORD` (see `infrastructure/Argus/docker-compose.yml`)
 > and never expose port 3000 with the default credentials still active.
 > For e2e deployments, the admin password is overridable via `GF_E2E_ADMIN_PASSWORD` in `docker-compose.e2e.yml`.
 
@@ -460,7 +460,7 @@ podman exec nats-server nats stream ls
 
 You should see several streams (e.g., `research-requests`, `orchestration-commands`).
 
-### 11e. Test ProjectNestor (Research Service)
+### 11e. Test Nestor (Research Service)
 
 Submit a research request and verify it is processed:
 

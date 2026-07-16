@@ -1,6 +1,6 @@
 # ADR 015: Drop the `Project` Prefix Across the HomericIntelligence Ecosystem
 
-**Status:** Proposed
+**Status:** Accepted
 
 ---
 
