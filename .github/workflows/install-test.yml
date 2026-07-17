@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  merge_group:
+    types: [checks_requested]
   schedule:
     - cron: "0 6 * * 1"  # Every Monday at 06:00 UTC
   workflow_dispatch:
@@ -13,6 +15,9 @@ on:
         description: Branch/SHA to clone inside containers
         required: false
         default: ""
+
+permissions:
+  contents: read
 
 jobs:
   # Canonical `install` check for the 8-category CI naming scheme
@@ -30,6 +35,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Installer script is valid bash
         run: bash -n install.sh
@@ -69,6 +76,7 @@ jobs:
 
   install-test:
     name: Install (${{ matrix.os }})
+    if: github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -78,6 +86,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0

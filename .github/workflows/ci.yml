@@ -46,6 +46,9 @@ jobs:
       - name: Validate justfile (parse round-trip)
         run: just --summary
 
+      - name: Validate merge-queue readiness and ruleset mutation safety
+        run: just test-merge-queue-readiness
+
       - name: Symlink integrity audit
         run: |
           broken=0
