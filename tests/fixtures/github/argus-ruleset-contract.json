@@ -1,0 +1,115 @@
+{
+  "provenance": {
+    "captured_at": "2026-07-16T23:49:25Z",
+    "repository_api": "https://api.github.com/repos/HomericIntelligence/Argus",
+    "ruleset_api": [
+      "https://api.github.com/repos/HomericIntelligence/Argus/rulesets/15556485",
+      "https://api.github.com/repos/HomericIntelligence/Argus/rulesets/18221125"
+    ],
+    "rollout_issue": "https://github.com/HomericIntelligence/Argus/issues/550",
+    "replacement_pr": "https://github.com/HomericIntelligence/Argus/pull/552",
+    "replacement_pr_head": "b335eb95a49d8e89b580b52879cc7b0bcffa510a"
+  },
+  "repository": "HomericIntelligence/Argus",
+  "expected_context_union": [
+    "lint",
+    "unit-tests",
+    "integration-tests",
+    "security/dependency-scan",
+    "security/secrets-scan",
+    "config-validate",
+    "schema-validation",
+    "deps/version-sync",
+    "test",
+    "package",
+    "install",
+    "release",
+    "build",
+    "Validate configs"
+  ],
+  "rulesets": [
+    {
+      "id": 15556485,
+      "name": "homeric-main-baseline",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Argus",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": { "exclude": [], "include": ["refs/heads/main"] }
+      },
+      "bypass_actors": [
+        {
+          "actor_id": 5,
+          "actor_type": "RepositoryRole",
+          "bypass_mode": "pull_request"
+        }
+      ],
+      "rules": [
+        { "type": "deletion" },
+        { "type": "required_signatures" },
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": false,
+            "required_reviewers": [],
+            "require_code_owner_review": false,
+            "dismissal_restriction": { "enabled": false, "allowed_actors": [] },
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": true,
+            "allowed_merge_methods": ["merge", "squash", "rebase"]
+          }
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              { "context": "lint", "integration_id": 15368 },
+              { "context": "unit-tests", "integration_id": 15368 },
+              { "context": "integration-tests", "integration_id": 15368 },
+              { "context": "security/dependency-scan", "integration_id": 15368 },
+              { "context": "security/secrets-scan", "integration_id": 15368 },
+              { "context": "config-validate", "integration_id": 15368 },
+              { "context": "schema-validation", "integration_id": 15368 },
+              { "context": "deps/version-sync", "integration_id": 15368 },
+              { "context": "test", "integration_id": 15368 },
+              { "context": "package", "integration_id": 15368 },
+              { "context": "install", "integration_id": 15368 },
+              { "context": "release", "integration_id": 15368 },
+              { "context": "build", "integration_id": 15368 }
+            ]
+          }
+        },
+        { "type": "required_linear_history" },
+        { "type": "non_fast_forward" }
+      ]
+    },
+    {
+      "id": 18221125,
+      "name": "homeric-main-extras",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Argus",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": { "exclude": [], "include": ["refs/heads/main"] }
+      },
+      "bypass_actors": [],
+      "rules": [
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              { "context": "Validate configs", "integration_id": 15368 }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

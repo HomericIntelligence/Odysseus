@@ -258,16 +258,21 @@ Address review comments promptly:
 
 ## Branch Protection Policy
 
-The `main` branch is protected by a GitHub **repository ruleset** (not classic branch protection) to ensure code quality and prevent accidents. The active ruleset is committed at `configs/github/repo-ruleset-active.json` and is the source of truth for these rules; see the runbook `docs/runbooks/branch-protection-rollout.md` for how it is applied. These rules are enforced automatically by GitHub:
+The `main` branch is protected by a live GitHub repository ruleset. The complete
+live ruleset is authoritative. `configs/github/repo-ruleset*.json` records the
+reviewed Odysseus input parameters but is not a fleet-wide replacement payload;
+see `docs/runbooks/branch-protection-rollout.md` for read-back and staged
+activation.
 
 ### Protection Rules
 
 - **Direct pushes blocked** - All changes to `main` must go through pull requests (`deletion` and non-PR pushes are rejected).
-- **PR approval required** - At least 1 approving review is required before merging (`required_approving_review_count: 1`).
+- **Checks-only merge gate** - The live repository ruleset requires 0 approvals; required checks and resolved review threads remain mandatory.
 - **Review threads must be resolved** - All PR review conversations must be resolved before merge (`required_review_thread_resolution`).
 - **Signed commits required** - Commits on `main` must be signed (`required_signatures`).
-- **CI status checks must pass** - The required checks must be green before merge: `lint`, `unit-tests`, `integration-tests`, `security/dependency-scan`, `security/secrets-scan`, `build`, `schema-validation`, `deps/version-sync`.
-- **Linear history enforced** - Only squash merges are allowed (repo setting: `allow_squash_merge` only; merge-commit and rebase-merge are disabled). Squashing collapses each PR into a single commit on `main`, keeping the history clean and linear.
+- **CI status checks must pass** - The 11 live contexts are `lint`, `unit-tests`, `integration-tests`, `security/dependency-scan`, `security/secrets-scan`, `build`, `schema-validation`, `deps/version-sync`, `test`, `install`, and `release`.
+- **Current merge metadata** - GitHub currently reports `allow_merge_commit: true`, `allow_squash_merge: true`, and `allow_rebase_merge: false`. This rollout configures the merge queue itself to use `SQUASH`.
+- **Merge queue is staged** - Workflow readiness lands first. A human-reviewed, post-merge operator step dry-runs the live-derived payload, activates one pilot, and records a queued smoke result before any fleet rollout.
 
 ### Merge Convention
 
@@ -277,25 +282,16 @@ Always use the following command to merge your PR:
 gh pr merge --auto --squash
 ```
 
-This will:
-1. Enable auto-merge on your PR (merge happens as soon as all conditions are met)
-2. Use squash strategy (the only strategy this repo permits), collapsing the PR into one linear-history commit
-3. Keep your branch name clean and commit history readable
+This enables auto-merge using squash. After queue activation, GitHub enqueues the
+PR once its entry conditions are met and retests the synthetic merge group
+against the current `main` tip.
 
 ### For Repo Admins
 
-If you are setting up a fresh fork or new repository and need to enable these rules:
-
-1. Go to **Settings** → **Branches**
-2. Click **Add rule** under "Branch protection rules"
-3. Enter `main` as the branch name pattern
-4. Enable:
-   - Require a pull request before merging (1 approval minimum)
-   - Require status checks to pass before merging
-   - Require branches to be up to date before merging
-   - Require a linear history (dismiss stale pull request approvals when new commits are pushed)
-5. Optionally require dismissal of stale reviews when new commits are pushed
-6. Save the rule
+Use the repository-owned policy process and
+`docs/runbooks/branch-protection-rollout.md`. Do not create a live baseline from
+the generic Odysseus JSON, activate a queue before its workflows reach `main`,
+or skip independent human review of workflow changes.
 
 ## Key References
 

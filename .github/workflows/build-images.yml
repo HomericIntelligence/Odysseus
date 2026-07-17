@@ -5,7 +5,7 @@ name: Build Images
 # each a single pinnable, published artifact in GHCR.
 #
 # Registry:   ghcr.io/homericintelligence/<component> (lowercase)
-# Promotion:  pull_request -> BUILD ONLY (no push; validates images build)
+# Promotion:  pull_request / merge_group / manual -> BUILD ONLY (no push)
 #             push to main -> build + push :sha-<short> and :latest
 #             push tag v*  -> build + push :<semver> tags
 #             matrix entries with publish: false are always BUILD ONLY
@@ -20,6 +20,8 @@ name: Build Images
 on:
   pull_request:
     branches: [main]
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
     tags:
@@ -34,14 +36,18 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAMESPACE: ghcr.io/homericintelligence
 
+permissions:
+  contents: read
+
 jobs:
-  build:
+  validate:
     name: build
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'merge_group' ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -84,6 +90,69 @@ jobs:
       - name: Checkout (with submodule contexts)
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Verify build context exists
+        run: test -f "${MATRIX_FILE}" && test -d "${MATRIX_CONTEXT}"
+        env:
+          MATRIX_FILE: ${{ matrix.file }}
+          MATRIX_CONTEXT: ${{ matrix.context }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
+
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
+        with:
+          images: ${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}
+          tags: type=sha,prefix=sha-
+
+      - name: Build without publishing
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.component }}-r2
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}-r2
+
+  publish:
+    name: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write  # Push-only job publishes reviewed images to GHCR.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: agamemnon
+            context: control/Agamemnon
+            file: control/Agamemnon/Dockerfile
+            publish: true
+          - component: nestor
+            context: control/Nestor
+            file: control/Nestor/Dockerfile
+            publish: true
+          - component: hermes
+            context: infrastructure/Hermes
+            file: infrastructure/Hermes/Dockerfile
+            publish: true
+          - component: argus-exporter
+            context: infrastructure/Argus/exporter
+            file: e2e/Dockerfile.argus-exporter
+            publish: false
+    steps:
+      - name: Checkout (with submodule contexts)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Verify build context exists
@@ -96,7 +165,6 @@ jobs:
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
 
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0  # v4.4.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -119,7 +187,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
-          push: ${{ github.event_name != 'pull_request' && matrix.publish }}
+          push: ${{ matrix.publish }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Cache scope is salted with -r2 to invalidate the pre-openssl-fix

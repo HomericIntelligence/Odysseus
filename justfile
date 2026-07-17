@@ -316,6 +316,11 @@ test-justfile-recipes:
 lint-test-scripts:
     bash scripts/lint-test-scripts.sh
 
+# Validate required-check workflows and repository-owned ruleset preservation (#386)
+test-merge-queue-readiness:
+    bash tests/github/merge-queue-readiness.test.sh
+    bash tests/github/apply-repo-rulesets.test.sh
+
 # Render Nomad config placeholders to a deploy-local dir (default /etc/nomad.d).
 # Nomad agent HCL does NOT expand OS env vars, so render before `nomad agent -config`.
 # Requires NOMAD_SERVER_IP and NOMAD_ADVERTISE_ADDR (e.g. export NOMAD_SERVER_IP=$(tailscale ip -4)).
@@ -741,13 +746,13 @@ hermes-hub-logs SERVICE="":
 # GitHub Org Ruleset Management
 # ===========================================================================
 
-# Snapshot all 15 repos' current classic branch protection to a timestamped backup file
+# Snapshot all first-party repos' current classic branch protection
 ruleset-backup:
     mkdir -p configs/github/backups
     ./tools/github/snapshot-protection.sh > "configs/github/backups/rulesets-$(date +%Y%m%d-%H%M%S).json"
     @echo "Backup written."
 
-# Snapshot all 15 repos' classic branch protection to the canonical pre-ruleset backup file
+# Snapshot all first-party repos' classic protection to the canonical backup
 protection-snapshot:
     mkdir -p configs/github/backups
     ./tools/github/snapshot-protection.sh > configs/github/backups/branch-protection-pre-ruleset.json
@@ -757,13 +762,13 @@ protection-snapshot:
 ruleset-apply FILE="configs/github/org-ruleset.json":
     ./tools/github/apply-org-ruleset.sh "{{FILE}}"
 
-# Create or update the per-repo branch ruleset on all 15 repos (evaluate mode)
+# Explicit eligible-fleet evaluate update; Argus is audited and skipped
 repo-rulesets-apply:
-    ./tools/github/apply-repo-rulesets.sh
+    ./tools/github/apply-repo-rulesets.sh --evaluate --all
 
-# Create or update the per-repo branch ruleset on all 15 repos (active/enforcing mode)
+# Explicit eligible-fleet activation; Argus is audited and skipped
 repo-rulesets-activate:
-    ./tools/github/apply-repo-rulesets.sh --active
+    ./tools/github/apply-repo-rulesets.sh --active --all
 
 # Validate the live org ruleset against the canonical JSON and print current enforcement + checks
 ruleset-validate:
@@ -797,9 +802,10 @@ ruleset-enforcement-check:
     #!/usr/bin/env bash
     set -euo pipefail
     declare -A expected=(
-      [configs/github/repo-ruleset.json]=evaluate
+      [configs/github/repo-ruleset.json]=active
       [configs/github/repo-ruleset-active.json]=active
-      [configs/github/org-ruleset.json]=evaluate
+      [configs/github/repo-ruleset-evaluate.json]=evaluate
+      [configs/github/org-ruleset.json]=active
       [configs/github/org-ruleset-active.json]=active
     )
     fail=0
@@ -813,9 +819,9 @@ ruleset-enforcement-check:
       fi
     done
     [ "$fail" -eq 0 ] || { echo "FAILED: ruleset enforcement drift detected" >&2; exit 1; }
-    echo "PASSED: all 4 ruleset configs hold their intended enforcement"
+    echo "PASSED: all ruleset configs hold their intended enforcement"
 
-# Remove classic branch protection from ALL 15 repos (requires confirmation; run after ruleset is active)
+# Remove classic protection fleet-wide (requires confirmation and active rulesets)
 protection-remove-all:
     ./tools/github/remove-classic-protection.sh --all
 

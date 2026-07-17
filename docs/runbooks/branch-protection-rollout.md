@@ -1,87 +1,129 @@
-# Branch Protection Rollout Runbook
+# Branch Protection and Merge Queue Rollout
 
-How to add a new repo to the `homeric-main-baseline` ruleset, or re-apply the
-ruleset after a change.
+This runbook stages the `homeric-main-baseline` merge-queue rollout without
+replacing repository-specific protection.
+
+## Authority and artifacts
+
+Live complete repository rulesets are authoritative. Always read the exact
+repository-owned ruleset from GitHub before diagnosing or changing protection.
+The files under `configs/github/` are an input and review artifact for approved
+enforcement and merge-queue parameters; they are not a complete fleet-wide
+replacement payload and can drift from live rules.
+
+`tools/github/apply-repo-rulesets.sh` fails closed unless it finds exactly one
+repository-owned `homeric-main-baseline`. It derives the candidate from that
+complete live response and changes only:
+
+- the requested enforcement mode; and
+- one `merge_queue` rule, added or replaced with the reviewed parameters.
+
+The script preserves required contexts, bypass actors, target conditions, and
+all unrelated rules. It refuses incomplete required-status-check schemas,
+ambiguous baselines, and missing baselines. It never bootstraps a repository
+from a fixed generic context list.
+
+Argus is not activated through this generic path. Its 14 contexts span two
+rulesets and its dedicated rollout is tracked by
+[Argus #550](https://github.com/HomericIntelligence/Argus/issues/550) and
+[replacement PR #552](https://github.com/HomericIntelligence/Argus/pull/552).
 
 ## Prerequisites
 
-- `gh` CLI authenticated with org-admin scope
-- Run all commands from the Odysseus root directory
+- `gh` authenticated with repository-administration scope
+- `jq` and `just` available
+- commands run from the Odysseus repository root
+- workflow changes merged to each target repository's default branch
+- independent human review completed for changes under `.github/workflows/`
+- an operator assigned to inspect dry-run and read-back evidence
 
-## Adding a new repo
+## New repository baseline
 
-1. In the new repo, create `.github/workflows/_required.yml` using
-   `research/Scylla/.github/workflows/_required.yml` as the reference.
-   The workflow must be named `Required Checks` and have `name:` fields that
-   match the contexts in `configs/github/canonical-checks.md`. There are
-   **8 required contexts**; `_required.yml` also defines a 9th job
-   (`forbid-suppressions`) that is intentionally NOT a required context.
-   Each job must invoke a real validator for that repo's stack.
+Create a complete repository-owned baseline through that repository's reviewed
+policy process. Ensure its required contexts are already emitted on pull-request
+branches before making them required. This script intentionally refuses to
+create a missing baseline.
 
-2. Open a PR, verify all 8 required contexts appear in the PR checks UI once CI
-   runs, then merge.
+After the baseline exists, continue with the staged activation below.
 
-3. Apply the ruleset to the new repo in shadow (evaluate) mode first:
+## Staged activation
+
+Do not mutate live rulesets from the implementation PR. Activation starts only
+after the workflow/configuration PR is merged and its required checks have
+completed on `main`.
+
+1. Run the offline readiness and security gates:
+
    ```bash
-   ./tools/github/apply-repo-rulesets.sh --evaluate --repos <NewRepo>
+   just test-merge-queue-readiness
+   pixi run ci
    ```
-   (The bare invocation now applies the canonical `repo-ruleset.json`, which is
-   `active`; pass `--evaluate` for the shadow pass.)
 
-4. Observe evaluate mode for one PR cycle, then flip to active:
+2. Confirm every required workflow on `main` handles
+   `merge_group: checks_requested`. Confirm its validation jobs are read-only;
+   publishing permissions must remain limited to trusted push or tag jobs.
+
+3. Generate a no-write candidate for one pilot repository:
+
    ```bash
-   ./tools/github/apply-repo-rulesets.sh --active --repos <NewRepo>
+   ./tools/github/apply-repo-rulesets.sh \
+     --active --repos <PilotRepo> --dry-run
    ```
 
-## Re-applying the ruleset to all repos
+4. Compare the candidate with the complete live ruleset. Required contexts,
+   bypass actors, conditions, and non-queue rules must be identical. Stop on
+   any difference.
+
+5. With explicit operator approval, activate only the pilot:
+
+   ```bash
+   ./tools/github/apply-repo-rulesets.sh --active --repos <PilotRepo>
+   ```
+
+6. Read the ruleset back from GitHub and run one representative queued PR.
+   Record the merge-group SHA and exact required-check results. The queue is not
+   validated until the synthetic merge group reports every required context and
+   merges with `SQUASH`.
+
+7. Repeat the dry-run, review, activation, and read-back per repository. Use
+   `--all` only as an explicit, separately approved fleet operation after the
+   pilot succeeds. Fleet operations audit and skip Argus; complete its
+   separately reviewed #550/#552 rollout through the Argus-owned path.
+
+`--evaluate` changes the enforcement mode of the complete baseline. Use it only
+when that baseline is already intentionally in a staged evaluate state. Do not
+downgrade an active protection baseline merely to shadow-test the queue.
+
+## Read-only verification
+
+List repository-owned rulesets and fetch the complete baseline:
 
 ```bash
-# Evaluate mode first (shadow enforcement — reports but doesn't block).
-# NOTE: the bare invocation applies the canonical repo-ruleset.json, which is
-# now "active"; use --evaluate explicitly for the shadow pass.
-./tools/github/apply-repo-rulesets.sh --evaluate
+REPO=HomericIntelligence/<repo>
+gh api "repos/${REPO}/rulesets?includes_parents=false" \
+  --jq '.[] | {id, name, source, source_type, enforcement}'
 
-# Check evaluate results
-gh api "repos/HomericIntelligence/<repo>/rulesets/rule-suites?ref=refs/heads/main" \
-  --jq '.[] | {result, evaluation_result, pushed_at}' | head -20
-
-# Flip to active when evaluate shows all-pass
-./tools/github/apply-repo-rulesets.sh --active
+ID=$(gh api "repos/${REPO}/rulesets?includes_parents=false" \
+  --jq '.[] | select(.name=="homeric-main-baseline" and
+                     .source_type=="Repository") | .id')
+gh api "repos/${REPO}/rulesets/${ID}" \
+  --jq '{name, enforcement, conditions, bypass_actors, rules}'
 ```
 
-## Verify a repo's ruleset state
+Verify the required contexts and queue rule from that complete response:
 
 ```bash
-gh api repos/HomericIntelligence/<repo>/rulesets \
-  --jq '.[] | select(.name=="homeric-main-baseline") | {id, enforcement}'
-
-# Full detail (contexts list)
-ID=$(gh api repos/HomericIntelligence/<repo>/rulesets \
-  --jq '.[] | select(.name=="homeric-main-baseline") | .id')
-gh api repos/HomericIntelligence/<repo>/rulesets/$ID \
-  --jq '.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context'
+gh api "repos/${REPO}/rulesets/${ID}" \
+  --jq '.rules[] | select(.type=="required_status_checks") |
+        .parameters.required_status_checks[].context'
+gh api "repos/${REPO}/rulesets/${ID}" \
+  --jq '.rules[] | select(.type=="merge_queue")'
 ```
 
-## Bypass actor (admin merge)
+## Rollback boundary
 
-The ruleset has a `RepositoryRole` bypass actor (id 5 = admin) in `pull_request`
-mode. Admins can bypass the ruleset to merge a PR that would otherwise be blocked
-by the old context list during a ruleset migration. Use sparingly.
-
-## Rollback
-
-Re-applying evaluate mode is instant and safe:
-```bash
-./tools/github/apply-repo-rulesets.sh --evaluate   # or: --repos <repo>
-```
-
-> Note: `org-ruleset.json` is not applied on the current GitHub plan —
-> `gh api orgs/HomericIntelligence/rulesets` returns 404 / requires `admin:org`.
-> Per-repo rulesets (`repos/<org>/<repo>/rulesets`) are the enforcing path.
-
-To remove the ruleset entirely from a single repo:
-```bash
-ID=$(gh api repos/HomericIntelligence/<repo>/rulesets \
-  --jq '.[] | select(.name=="homeric-main-baseline") | .id')
-gh api -X DELETE repos/HomericIntelligence/<repo>/rulesets/$ID
-```
+Rollback is an operator action against the freshly read live ruleset. Preserve a
+complete pre-change response before activation, modify only the queue rule or
+enforcement field, and read the result back. Never disable, replace, or delete
+unrelated status, review, signature, or bypass rules to recover from a queue
+problem.

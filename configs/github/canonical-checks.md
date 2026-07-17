@@ -1,6 +1,7 @@
 # HomericIntelligence — Canonical Required CI Check Names
 
-All 15 repos must emit these exact GitHub Actions status check names.
+All 16 first-party repositories must emit these exact GitHub Actions status
+check names.
 Each check must run a **real validator** — no echo-true placeholders.
 
 ## Required checks (block merge if failing)
@@ -15,6 +16,25 @@ Each check must run a **real validator** — no echo-true placeholders.
 | `build` | Build | pixi run build, cmake --build, docker build |
 | `schema-validation` | Validation | check-jsonschema against workflow YAMLs / pixi.toml / NATS schemas |
 | `deps/version-sync` | Validation | verify VERSION/pyproject.toml/pixi.toml/Conanfile parity |
+
+## Additional Odysseus required checks
+
+Odysseus's live repository ruleset also requires `test`, `install`, and
+`release`, for 11 contexts total. The repository ruleset input artifacts retain
+those exact names, and each supplying workflow handles
+`merge_group: checks_requested` before queue activation.
+
+Repository context lists are not interchangeable. The current regression
+fixtures preserve these live unions:
+
+- Argus: 14 contexts across two rulesets; its dedicated rollout is
+  [replacement PR #552](https://github.com/HomericIntelligence/Argus/pull/552).
+- Proteus: 13 contexts across two rulesets.
+- Myrmidons: 7 contexts in its baseline ruleset.
+
+The generic updater derives its candidate from each complete live baseline and
+never replaces a repository's required contexts from this document or a fixed
+JSON payload.
 
 ## Informational checks (report but do not block merge)
 

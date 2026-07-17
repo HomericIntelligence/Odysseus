@@ -1,0 +1,77 @@
+{
+  "provenance": {
+    "captured_at": "2026-07-16T23:49:25Z",
+    "repository_api": "https://api.github.com/repos/HomericIntelligence/Myrmidons",
+    "ruleset_api": [
+      "https://api.github.com/repos/HomericIntelligence/Myrmidons/rulesets/15556489"
+    ],
+    "rollout_issue": "https://github.com/HomericIntelligence/Myrmidons/issues/765",
+    "replacement_pr": "https://github.com/HomericIntelligence/Myrmidons/pull/767",
+    "replacement_pr_head": "c940de8481fca516794519c3350aa8513f308943"
+  },
+  "repository": "HomericIntelligence/Myrmidons",
+  "expected_context_union": [
+    "lint",
+    "unit-tests",
+    "security/dependency-scan",
+    "security/secrets-scan",
+    "build",
+    "schema-validation",
+    "deps/version-sync"
+  ],
+  "rulesets": [
+    {
+      "id": 15556489,
+      "name": "homeric-main-baseline",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Myrmidons",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": { "exclude": [], "include": ["refs/heads/main"] }
+      },
+      "bypass_actors": [
+        {
+          "actor_id": 5,
+          "actor_type": "RepositoryRole",
+          "bypass_mode": "pull_request"
+        }
+      ],
+      "rules": [
+        { "type": "deletion" },
+        { "type": "required_signatures" },
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": false,
+            "required_reviewers": [],
+            "require_code_owner_review": false,
+            "dismissal_restriction": { "enabled": false, "allowed_actors": [] },
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": true,
+            "allowed_merge_methods": ["merge", "squash", "rebase"]
+          }
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              { "context": "lint", "integration_id": 15368 },
+              { "context": "unit-tests", "integration_id": 15368 },
+              { "context": "security/dependency-scan", "integration_id": 15368 },
+              { "context": "security/secrets-scan", "integration_id": 15368 },
+              { "context": "build", "integration_id": 15368 },
+              { "context": "schema-validation", "integration_id": 15368 },
+              { "context": "deps/version-sync", "integration_id": 15368 }
+            ]
+          }
+        },
+        { "type": "required_linear_history" },
+        { "type": "non_fast_forward" }
+      ]
+    }
+  ]
+}
