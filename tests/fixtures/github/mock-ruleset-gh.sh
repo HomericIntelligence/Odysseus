@@ -155,6 +155,11 @@ case "$endpoint" in
       echo "mock detail GET failure at call $detail_count" >&2
       exit 1
     fi
+    if count_selected "${GH_SIGNAL_HUP_DETAIL_GET_AT:-}" "$detail_count"; then
+      echo "mock sends HUP during detail GET at call $detail_count" >&2
+      kill -HUP "$PPID"
+      exit 1
+    fi
     if [[ -n "${GH_RULESET_STATE:-}" ]]; then
       jq --argjson id "$ruleset_id" 'select(.id == $id)' "$GH_RULESET_STATE"
     else

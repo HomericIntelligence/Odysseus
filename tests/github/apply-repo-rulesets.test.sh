@@ -20,12 +20,13 @@ run_dry_run() {
   local fixture=$1
   local repo=$2
   local output_file=$3
+  local mode=${4:---active}
   : >"$tmp_dir/gh-calls.log"
   PATH="$tmp_dir/bin:$PATH" \
     GH_RULESET_FIXTURE="$fixture" \
     GH_CALL_LOG="$tmp_dir/gh-calls.log" \
     tools/github/apply-repo-rulesets.sh \
-      --active --repos "$repo" --dry-run >"$output_file" 2>&1
+      "$mode" --repos "$repo" --dry-run >"$output_file" 2>&1
 }
 
 assert_fixture_contract() {
@@ -382,8 +383,9 @@ run_live_update() {
     GH_FAIL_PUT_BEFORE_WRITE_AT="${GH_FAIL_PUT_BEFORE_WRITE_AT:-}" \
     GH_FAIL_PUT_AFTER_WRITE_AT="${GH_FAIL_PUT_AFTER_WRITE_AT:-}" \
     GH_FAIL_DETAIL_GET_AT="${GH_FAIL_DETAIL_GET_AT:-}" \
+    GH_SIGNAL_HUP_DETAIL_GET_AT="${GH_SIGNAL_HUP_DETAIL_GET_AT:-}" \
     RULESET_SNAPSHOT_DIR="$snapshot_dir" \
-    tools/github/apply-repo-rulesets.sh --active --repos "$repos" \
+    tools/github/apply-repo-rulesets.sh "${RULESET_MODE:---active}" --repos "$repos" \
       >"$output_file" 2>&1
 }
 
@@ -400,6 +402,65 @@ assert_durable_snapshot() {
 }
 
 myrmidons_fixture=tests/fixtures/github/myrmidons-ruleset-contract.json
+
+evaluate_preview="$tmp_dir/evaluate-preview.log"
+run_dry_run "$myrmidons_fixture" Myrmidons "$evaluate_preview" --evaluate || {
+  cat "$evaluate_preview" >&2
+  fail "active baseline evaluate dry-run was rejected"
+}
+evaluate_payload=$(sed -n 's/^DRY-RUN Myrmidons payload: //p' "$evaluate_preview")
+jq -en --argjson payload "$evaluate_payload" \
+  '$payload.enforcement == "evaluate"' >/dev/null || \
+  fail "evaluate dry-run did not render the staged candidate"
+if grep -Eq -- '(^| )(-X|--method)(=| )(PUT|POST|PATCH|DELETE)( |$)' \
+    "$tmp_dir/gh-calls.log"; then
+  fail "evaluate dry-run attempted a live mutation"
+fi
+echo "PASS: active baseline permits an explicit no-write evaluate preview"
+
+evaluate_recipe=$(just --dry-run repo-rulesets-apply 2>&1)
+grep -qF 'apply-repo-rulesets.sh --evaluate --all --dry-run' \
+  <<<"$evaluate_recipe" || \
+  fail "fleet evaluate recipe is not a no-write preview"
+echo "PASS: fleet evaluate entry path is dry-run only"
+
+active_downgrade_state="$tmp_dir/active-downgrade-state.json"
+active_downgrade_pre="$tmp_dir/active-downgrade-pre.json"
+active_downgrade_snapshots="$tmp_dir/active-downgrade-snapshots"
+seed_ruleset_state "$myrmidons_fixture" "$active_downgrade_state"
+cp "$active_downgrade_state" "$active_downgrade_pre"
+if RULESET_MODE=--evaluate run_live_update \
+    "$myrmidons_fixture" Myrmidons "$active_downgrade_state" \
+    "$active_downgrade_snapshots" "$tmp_dir/active-downgrade.log" \
+    "$tmp_dir/active-downgrade-put-count" \
+    "$tmp_dir/active-downgrade-get-count"; then
+  fail "updater accepted an active-to-evaluate enforcement downgrade"
+fi
+jq -e --slurpfile expected "$active_downgrade_pre" '. == $expected[0]' \
+  "$active_downgrade_state" >/dev/null || \
+  fail "active-to-evaluate refusal changed live state"
+[[ ! -s "$tmp_dir/active-downgrade-put-count" ]] || \
+  fail "active-to-evaluate refusal issued a PUT"
+grep -qF 'refusing active-to-evaluate downgrade' \
+  "$tmp_dir/active-downgrade.log" || \
+  fail "active-to-evaluate refusal did not explain the safety boundary"
+echo "PASS: active enforcement cannot be downgraded to evaluate"
+
+staged_state="$tmp_dir/staged-state.json"
+staged_snapshots="$tmp_dir/staged-snapshots"
+seed_ruleset_state "$myrmidons_fixture" "$staged_state"
+jq '.enforcement = "evaluate"' "$staged_state" >"$staged_state.tmp"
+mv "$staged_state.tmp" "$staged_state"
+if ! RULESET_MODE=--evaluate run_live_update \
+    "$myrmidons_fixture" Myrmidons "$staged_state" "$staged_snapshots" \
+    "$tmp_dir/staged.log" "$tmp_dir/staged-put-count" \
+    "$tmp_dir/staged-get-count"; then
+  cat "$tmp_dir/staged.log" >&2
+  fail "explicit staged evaluate update was rejected"
+fi
+jq -e '.enforcement == "evaluate"' "$staged_state" >/dev/null || \
+  fail "staged evaluate update changed enforcement unexpectedly"
+echo "PASS: an already staged evaluate baseline remains explicitly updateable"
 
 success_state="$tmp_dir/success-state.json"
 success_pre="$tmp_dir/success-pre.json"
@@ -489,6 +550,37 @@ jq -e --slurpfile expected "$readback_pre" '. == $expected[0]' \
 [[ $(<"$tmp_dir/readback-get-count") -eq 3 ]] || \
   fail "readback-failure rollback must be verified by another GET"
 echo "PASS: failed post-PUT readback triggers verified rollback"
+
+hup_state="$tmp_dir/hup-state.json"
+hup_pre="$tmp_dir/hup-pre.json"
+hup_snapshots="$tmp_dir/hup-snapshots"
+seed_ruleset_state "$myrmidons_fixture" "$hup_state"
+cp "$hup_state" "$hup_pre"
+if GH_SIGNAL_HUP_DETAIL_GET_AT=2 run_live_update \
+    "$myrmidons_fixture" Myrmidons,Proteus "$hup_state" "$hup_snapshots" \
+    "$tmp_dir/hup.log" "$tmp_dir/hup-put-count" \
+    "$tmp_dir/hup-get-count"; then
+  fail "updater accepted HUP during ambiguous post-PUT readback"
+fi
+assert_durable_snapshot "$hup_snapshots" "$hup_pre" "HUP rollback"
+jq -e --slurpfile expected "$hup_pre" '. == $expected[0]' \
+  "$hup_state" >/dev/null || fail "HUP left live state unverified"
+[[ $(<"$tmp_dir/hup-put-count") -eq 2 ]] || \
+  fail "HUP must trigger exactly one rollback PUT"
+[[ $(<"$tmp_dir/hup-get-count") -eq 3 ]] || \
+  fail "HUP rollback must be verified by an exact readback"
+grep -qF 'UNCERTAIN MUTATION: received HUP during an armed mutation' \
+  "$tmp_dir/hup.log" || {
+  cat "$tmp_dir/hup.log" >&2
+  fail "HUP ambiguity did not report uncertain mutation"
+}
+grep -qF 'Rollback verified exactly' "$tmp_dir/hup.log" || \
+  fail "HUP rollback was not reported as verified"
+if grep -qF 'repos/HomericIntelligence/Proteus/rulesets' \
+    "$tmp_dir/gh-calls.log"; then
+  fail "fleet processing continued after HUP"
+fi
+echo "PASS: HUP ambiguity reports uncertainty and restores verified pre-state"
 
 uncertain_state="$tmp_dir/uncertain-state.json"
 uncertain_snapshots="$tmp_dir/uncertain-snapshots"

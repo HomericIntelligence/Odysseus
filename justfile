@@ -762,9 +762,9 @@ protection-snapshot:
 ruleset-apply FILE="configs/github/org-ruleset.json":
     ./tools/github/apply-org-ruleset.sh "{{FILE}}"
 
-# Explicit eligible-fleet evaluate update; Argus is audited and skipped
+# Read-only eligible-fleet evaluate preview; Argus is audited and skipped
 repo-rulesets-apply:
-    ./tools/github/apply-repo-rulesets.sh --evaluate --all
+    ./tools/github/apply-repo-rulesets.sh --evaluate --all --dry-run
 
 # Explicit eligible-fleet activation; Argus is audited and skipped
 repo-rulesets-activate:

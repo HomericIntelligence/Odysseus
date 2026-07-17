@@ -11,6 +11,25 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
+REQUIRED_CONTEXTS = {
+    "lint",
+    "unit-tests",
+    "integration-tests",
+    "security/dependency-scan",
+    "security/secrets-scan",
+    "build",
+    "schema-validation",
+    "deps/version-sync",
+    "test",
+    "install",
+    "release",
+}
+REQUIRED_WORKFLOWS = (
+    ".github/workflows/_required.yml",
+    ".github/workflows/build-images.yml",
+    ".github/workflows/install-test.yml",
+    ".github/workflows/release.yml",
+)
 
 
 def load_workflow(path: str) -> dict[str, Any]:
@@ -36,17 +55,79 @@ def permissions(mapping: dict[str, Any]) -> dict[str, str]:
 
 
 def assert_workflow_defaults() -> None:
-    for path in (
-        ".github/workflows/_required.yml",
-        ".github/workflows/build-images.yml",
-        ".github/workflows/install-test.yml",
-        ".github/workflows/release.yml",
-    ):
+    for path in REQUIRED_WORKFLOWS:
         actual = permissions(load_workflow(path))
         assert actual == {"contents": "read"}, (
             f"{path} workflow permissions must be exactly contents: read; "
             f"got {actual!r}"
         )
+
+
+def assert_workflow_structure() -> None:
+    suppliers: list[str] = []
+    supplied_contexts: set[str] = set()
+    for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+        relative_path = str(path.relative_to(ROOT))
+        workflow = load_workflow(relative_path)
+        jobs = workflow.get("jobs", {})
+        if not isinstance(jobs, dict):
+            raise AssertionError(f"{relative_path} jobs must be a mapping")
+        names = {
+            value.get("name")
+            for value in jobs.values()
+            if isinstance(value, dict) and isinstance(value.get("name"), str)
+        }
+        workflow_contexts = names & REQUIRED_CONTEXTS
+        if workflow_contexts:
+            suppliers.append(relative_path)
+            supplied_contexts.update(workflow_contexts)
+
+    assert tuple(suppliers) == REQUIRED_WORKFLOWS, (
+        f"required contexts must be supplied by {REQUIRED_WORKFLOWS!r}; "
+        f"got {tuple(suppliers)!r}"
+    )
+    assert supplied_contexts == REQUIRED_CONTEXTS, (
+        f"required workflow context union changed: got {supplied_contexts!r}"
+    )
+
+    for path in REQUIRED_WORKFLOWS:
+        workflow = load_workflow(path)
+        triggers = workflow.get("on")
+        if not isinstance(triggers, dict):
+            raise AssertionError(f"{path} on must be a mapping")
+        merge_group = triggers.get("merge_group")
+        assert merge_group == {"types": ["checks_requested"]}, (
+            f"{path} must handle only merge_group checks_requested; "
+            f"got {merge_group!r}"
+        )
+
+        jobs = workflow.get("jobs")
+        if not isinstance(jobs, dict):
+            raise AssertionError(f"{path} jobs must be a mapping")
+        checkout_steps = [
+            step
+            for value in jobs.values()
+            if isinstance(value, dict)
+            for step in value.get("steps", [])
+            if isinstance(step, dict)
+            and isinstance(step.get("uses"), str)
+            and step["uses"].startswith("actions/checkout@")
+        ]
+        assert checkout_steps, f"{path} must contain at least one checkout step"
+        for step in checkout_steps:
+            checkout_with = step.get("with")
+            assert isinstance(checkout_with, dict), (
+                f"{path} checkout step must configure with.persist-credentials"
+            )
+            assert checkout_with.get("persist-credentials") == "false", (
+                f"{path} checkout must set persist-credentials: false"
+            )
+
+    install_workflow = load_workflow(".github/workflows/install-test.yml")
+    install_matrix = job(install_workflow, "install-test")
+    assert install_matrix.get("if") == "github.event_name != 'merge_group'", (
+        "install-test matrix must be excluded from merge groups"
+    )
 
 
 def assert_build_validation() -> None:
@@ -111,6 +192,7 @@ def assert_release_validation() -> None:
 
 
 CHECKS = {
+    "workflow-structure": assert_workflow_structure,
     "workflow-defaults": assert_workflow_defaults,
     "build-validation": assert_build_validation,
     "build-publish": assert_build_publish,

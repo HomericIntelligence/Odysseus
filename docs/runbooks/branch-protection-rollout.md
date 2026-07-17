@@ -34,8 +34,10 @@ pre-state under `configs/github/backups/ruleset-mutations/` (or an explicit
 After PUT, the script fetches the ruleset again and requires an exact match for
 `name`, `target`, `enforcement`, `bypass_actors`, `conditions`, and every rule.
 Any failed or ambiguous PUT, failed readback, mismatched postcondition, or
-interrupt while the mutation is armed triggers rollback from the pre-state,
-followed by an exact rollback readback. The operation aborts before processing
+HUP/INT/TERM while the mutation is armed triggers rollback from the pre-state,
+followed by an exact rollback readback. HUP/INT/TERM are ignored while rollback
+and its readback run so recovery is protected from a second ordinary shell
+interrupt as far as the shell permits. The operation aborts before processing
 another repository. If rollback cannot be verified, it reports `UNCERTAIN
 MUTATION` and retains the durable snapshot for operator recovery.
 
@@ -110,9 +112,11 @@ completed on `main`.
    pilot succeeds. Fleet operations audit and skip Argus; complete its
    separately reviewed #550/#552 rollout through the Argus-owned path.
 
-`--evaluate` changes the enforcement mode of the complete baseline. Use it only
-when that baseline is already intentionally in a staged evaluate state. Do not
-downgrade an active protection baseline merely to shadow-test the queue.
+`--evaluate` changes the enforcement mode of the complete baseline. Updating an
+already staged evaluate baseline remains supported, but active-to-evaluate
+transitions fail before snapshot or PUT. Use `--evaluate --dry-run` (including
+`just repo-rulesets-apply`) for a no-write preview against an active baseline.
+Do not downgrade active protection merely to shadow-test the queue.
 
 ## Read-only verification
 

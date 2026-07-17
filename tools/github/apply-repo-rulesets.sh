@@ -7,7 +7,8 @@ set -euo pipefail
 # homeric-main-baseline ruleset. All other live rules remain repository-owned.
 # Usage:
 #   ./tools/github/apply-repo-rulesets.sh --active --all     # active mode, eligible fleet repos
-#   ./tools/github/apply-repo-rulesets.sh --evaluate --all   # evaluate mode, eligible fleet repos
+#   ./tools/github/apply-repo-rulesets.sh --evaluate --all --dry-run  # no-write fleet preview
+#   ./tools/github/apply-repo-rulesets.sh --evaluate --repos Staged  # already-evaluate only
 #   ./tools/github/apply-repo-rulesets.sh --repos Foo,Bar    # canonical mode, specific repos only
 #   ./tools/github/apply-repo-rulesets.sh --dry-run --repos Foo
 
@@ -138,8 +139,8 @@ rollback_and_abort() {
   local rollback_readback="$tmp_dir/$repo-$existing_id-rollback-readback.json"
   local rollback_put_rc=0
 
+  trap '' HUP INT TERM
   MUTATION_ARMED=false
-  trap '' INT TERM
   echo "  FAILED: $reason; attempting rollback from durable pre-state" >&2
   gh api -X PUT "repos/$ORG/$repo/rulesets/$existing_id" \
     --input "$rollback_payload" > /dev/null || rollback_put_rc=$?
@@ -167,8 +168,10 @@ MUTATION_SNAPSHOT=""
 
 handle_mutation_signal() {
   local signal_name=$1
-  trap - INT TERM
+  local exit_status=$2
+  trap '' HUP INT TERM
   if [[ "$MUTATION_ARMED" == true ]]; then
+    echo "  UNCERTAIN MUTATION: received $signal_name during an armed mutation; live state is ambiguous until rollback verification completes." >&2
     rollback_and_abort \
       "$MUTATION_REPO" \
       "$MUTATION_RULESET_ID" \
@@ -176,11 +179,12 @@ handle_mutation_signal() {
       "received $signal_name during an armed mutation" \
       "$MUTATION_SNAPSHOT"
   fi
-  exit 130
+  exit "$exit_status"
 }
 
-trap 'handle_mutation_signal INT' INT
-trap 'handle_mutation_signal TERM' TERM
+trap 'handle_mutation_signal HUP 129' HUP
+trap 'handle_mutation_signal INT 130' INT
+trap 'handle_mutation_signal TERM 143' TERM
 
 if [[ -n "$REPOS_OVERRIDE" && "$ALL_REPOS" == true ]]; then
   echo "ERROR: use either --repos or --all, not both" >&2
@@ -270,6 +274,22 @@ for repo in "${REPOS[@]}"; do
     # selectors fail closed.
     if ! validate_live_identity_scope "$live_ruleset" "$repo"; then
       echo "  FAILED: live ruleset identity or main-only branch scope is invalid" >&2
+      fail=$((fail + 1))
+      continue
+    fi
+
+    if ! live_enforcement=$(jq -er '
+        .enforcement
+        | select(. == "active" or . == "evaluate" or . == "disabled")
+      ' "$live_ruleset"); then
+      echo "  FAILED: live ruleset enforcement is missing or invalid" >&2
+      fail=$((fail + 1))
+      continue
+    fi
+    if [[ "$live_enforcement" == "active" &&
+          "$desired_enforcement" == "evaluate" &&
+          "$DRY_RUN" != true ]]; then
+      echo "  FAILED: refusing active-to-evaluate downgrade; use --dry-run for a no-write preview" >&2
       fail=$((fail + 1))
       continue
     fi
