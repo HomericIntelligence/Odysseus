@@ -12,8 +12,13 @@ enforcement and merge-queue parameters; they are not a complete fleet-wide
 replacement payload and can drift from live rules.
 
 `tools/github/apply-repo-rulesets.sh` fails closed unless it finds exactly one
-repository-owned `homeric-main-baseline`. It derives the candidate from that
-complete live response and changes only:
+repository-owned `homeric-main-baseline` whose fetched detail response has
+`target: branch` and the exact main-only scope
+`conditions.ref_name.include == ["refs/heads/main"]` and
+`conditions.ref_name.exclude == []`. Wildcards, renamed rulesets, alternate or
+missing branches, malformed scope, and inherited rulesets are rejected before
+the script derives a payload. It derives the candidate from the complete live
+response and changes only:
 
 - the requested enforcement mode; and
 - one `merge_queue` rule, added or replaced with the reviewed parameters.
@@ -23,6 +28,17 @@ all unrelated rules. It refuses incomplete required-status-check schemas,
 ambiguous baselines, and missing baselines. It never bootstraps a repository
 from a fixed generic context list.
 
+Before every non-dry-run PUT, the script atomically saves the complete fetched
+pre-state under `configs/github/backups/ruleset-mutations/` (or an explicit
+`--snapshot-dir`). That ignored operator-local snapshot survives process exit.
+After PUT, the script fetches the ruleset again and requires an exact match for
+`name`, `target`, `enforcement`, `bypass_actors`, `conditions`, and every rule.
+Any failed or ambiguous PUT, failed readback, mismatched postcondition, or
+interrupt while the mutation is armed triggers rollback from the pre-state,
+followed by an exact rollback readback. The operation aborts before processing
+another repository. If rollback cannot be verified, it reports `UNCERTAIN
+MUTATION` and retains the durable snapshot for operator recovery.
+
 Argus is not activated through this generic path. Its 14 contexts span two
 rulesets and its dedicated rollout is tracked by
 [Argus #550](https://github.com/HomericIntelligence/Argus/issues/550) and
@@ -31,7 +47,8 @@ rulesets and its dedicated rollout is tracked by
 ## Prerequisites
 
 - `gh` authenticated with repository-administration scope
-- `jq` and `just` available
+- `jq`, `just`, and Python with PyYAML available (the pixi environment provides
+  all three)
 - commands run from the Odysseus repository root
 - workflow changes merged to each target repository's default branch
 - independent human review completed for changes under `.github/workflows/`
@@ -77,13 +94,16 @@ completed on `main`.
 5. With explicit operator approval, activate only the pilot:
 
    ```bash
-   ./tools/github/apply-repo-rulesets.sh --active --repos <PilotRepo>
+   ./tools/github/apply-repo-rulesets.sh \
+     --active --repos <PilotRepo> \
+     --snapshot-dir <durable-operator-path>/<PilotRepo>
    ```
 
-6. Read the ruleset back from GitHub and run one representative queued PR.
-   Record the merge-group SHA and exact required-check results. The queue is not
-   validated until the synthetic merge group reports every required context and
-   merges with `SQUASH`.
+6. Preserve the script's snapshot path and exact-postcondition output. Then
+   independently read the ruleset back from GitHub and run one representative
+   queued PR. Record the merge-group SHA and exact required-check results. The
+   queue is not validated until the synthetic merge group reports every
+   required context and merges with `SQUASH`.
 
 7. Repeat the dry-run, review, activation, and read-back per repository. Use
    `--all` only as an explicit, separately approved fleet operation after the
@@ -122,8 +142,15 @@ gh api "repos/${REPO}/rulesets/${ID}" \
 
 ## Rollback boundary
 
-Rollback is an operator action against the freshly read live ruleset. Preserve a
-complete pre-change response before activation, modify only the queue rule or
-enforcement field, and read the result back. Never disable, replace, or delete
-unrelated status, review, signature, or bypass rules to recover from a queue
-problem.
+The apply script automatically arms rollback before PUT and verifies rollback
+after any ambiguous write or postcondition failure. A verified rollback still
+terminates the operation; rerun only after diagnosing the failed mutation. An
+`UNCERTAIN MUTATION` is a fleet-wide stop condition: do not run another apply,
+and do not hand-edit protection. Use the reported durable pre-state snapshot to
+construct the same writable projection (`name`, `target`, `enforcement`,
+`bypass_actors`, `conditions`, and `rules`), restore it with an explicitly
+reviewed PUT, and verify an exact readback.
+
+Never disable, replace, or delete unrelated status, review, signature, or
+bypass rules to recover from a queue problem. Retain the snapshot and the exact
+API output as incident evidence until independent review confirms recovery.

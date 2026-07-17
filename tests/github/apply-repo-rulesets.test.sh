@@ -121,12 +121,12 @@ assert_fixture_provenance() {
       . as $fixture |
       $fixture.repository == ("HomericIntelligence/" + $repo) and
       ($fixture.provenance.captured_at
-        | test("^2026-07-16T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
+        | test("^2026-07-17T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
       $fixture.provenance.repository_api ==
         ("https://api.github.com/repos/HomericIntelligence/" + $repo) and
       $fixture.provenance.rollout_issue == $expected_issue and
       $fixture.provenance.replacement_pr == $expected_pr and
-      $fixture.provenance.replacement_pr_head == $expected_head and
+      $fixture.provenance.replacement_pr_head_at_capture == $expected_head and
       ($fixture.rulesets | length) == $expected_rulesets and
       ($fixture.provenance.ruleset_api | length) == $expected_rulesets and
       all(
@@ -139,7 +139,7 @@ assert_fixture_provenance() {
       )
     ' "$fixture" >/dev/null || fail "$repo fixture provenance is incomplete or stale"
 
-  echo "PASS: $repo fixture records current API and replacement provenance"
+  echo "PASS: $repo fixture records capture-time API and replacement provenance"
 }
 
 contracts=(
@@ -162,12 +162,12 @@ assert_fixture_provenance \
   tests/fixtures/github/proteus-ruleset-contract.json Proteus 2 \
   https://github.com/HomericIntelligence/Proteus/issues/214 \
   https://github.com/HomericIntelligence/Proteus/pull/216 \
-  94da0478907c01551a6bae29f3d4645e8e886f30
+  3ed68db6e77e6c2ffac9baa334807c2fcddb3664
 assert_fixture_provenance \
   tests/fixtures/github/myrmidons-ruleset-contract.json Myrmidons 1 \
   https://github.com/HomericIntelligence/Myrmidons/issues/765 \
   https://github.com/HomericIntelligence/Myrmidons/pull/767 \
-  c940de8481fca516794519c3350aa8513f308943
+  0b50f16334c3bf9be66c957c97d338968a38cb83
 
 argus_fixture=tests/fixtures/github/argus-ruleset-contract.json
 
@@ -268,6 +268,69 @@ assert_incomplete_authority_rejected \
   '(.rulesets[0].rules[] | select(.type == "required_status_checks").parameters.required_status_checks) += [(.rulesets[0].rules[] | select(.type == "required_status_checks").parameters.required_status_checks[0])]' \
   "$authority_error"
 
+assert_identity_scope_rejected() {
+  local name=$1
+  local jq_filter=$2
+  local list_name_override=${3:-}
+  local broken_fixture="$tmp_dir/$name.json"
+  local output_file="$tmp_dir/$name.log"
+
+  jq "$jq_filter" "$argus_fixture" >"$broken_fixture"
+  : >"$tmp_dir/gh-calls.log"
+  if PATH="$tmp_dir/bin:$PATH" \
+      GH_RULESET_FIXTURE="$broken_fixture" \
+      GH_CALL_LOG="$tmp_dir/gh-calls.log" \
+      GH_RULESET_LIST_NAME_OVERRIDE="$list_name_override" \
+      tools/github/apply-repo-rulesets.sh \
+        --active --repos Argus --dry-run >"$output_file" 2>&1; then
+    fail "updater accepted invalid baseline identity/scope: $name"
+  fi
+  grep -qF "live ruleset identity or main-only branch scope is invalid" \
+    "$output_file" || {
+      cat "$output_file" >&2
+      fail "$name refusal did not identify invalid identity/scope"
+    }
+  if grep -qF 'DRY-RUN Argus payload:' "$output_file"; then
+    cat "$output_file" >&2
+    fail "$name derived a payload before rejecting identity/scope"
+  fi
+  if grep -Eq -- '(^| )(-X|--method)(=| )(PUT|POST|PATCH|DELETE)( |$)' \
+      "$tmp_dir/gh-calls.log"; then
+    cat "$tmp_dir/gh-calls.log" >&2
+    fail "$name invalid-identity path attempted a mutation"
+  fi
+  echo "PASS: updater rejects $name before payload derivation"
+}
+
+assert_identity_scope_rejected \
+  wildcard-main-scope \
+  '(.rulesets[0].conditions.ref_name.include) = ["refs/heads/*"]'
+assert_identity_scope_rejected \
+  missing-main-branch \
+  'del(.rulesets[0].conditions.ref_name.include)'
+assert_identity_scope_rejected \
+  alternate-main-branch \
+  '(.rulesets[0].conditions.ref_name.include) = ["refs/heads/develop"]'
+assert_identity_scope_rejected \
+  nonempty-branch-exclusions \
+  '(.rulesets[0].conditions.ref_name.exclude) = ["refs/heads/release"]'
+assert_identity_scope_rejected \
+  malformed-ref-scope \
+  '(.rulesets[0].conditions.ref_name) = []'
+assert_identity_scope_rejected \
+  non-branch-target \
+  '(.rulesets[0].target) = "tag"'
+assert_identity_scope_rejected \
+  renamed-fetched-ruleset \
+  '(.rulesets[0].name) = "renamed-main-baseline"' \
+  homeric-main-baseline
+assert_identity_scope_rejected \
+  wrong-repository-owner \
+  '(.rulesets[0].source) = "HomericIntelligence/AnotherRepo"'
+assert_identity_scope_rejected \
+  inherited-organization-ruleset \
+  '(.rulesets[0].source_type) = "Organization"'
+
 jq 'del(.rulesets[] | select(.name == "homeric-main-baseline"))' \
   "$argus_fixture" >"$tmp_dir/no-baseline.json"
 if run_dry_run "$tmp_dir/no-baseline.json" Argus "$tmp_dir/no-baseline.log"; then
@@ -288,12 +351,179 @@ grep -qF "Argus owns a dedicated merge-queue ruleset path" \
   "$tmp_dir/argus-active.log" || fail "Argus refusal did not identify its authority"
 echo "PASS: generic live activation defers Argus to its dedicated ruleset"
 
+seed_ruleset_state() {
+  local fixture=$1
+  local state_file=$2
+  jq '.rulesets[] | select(.name == "homeric-main-baseline")' \
+    "$fixture" >"$state_file"
+}
+
+run_live_update() {
+  local fixture=$1
+  local repos=$2
+  local state_file=$3
+  local snapshot_dir=$4
+  local output_file=$5
+  local put_count_file=$6
+  local get_count_file=$7
+
+  : >"$tmp_dir/gh-calls.log"
+  : >"$put_count_file"
+  : >"$get_count_file"
+  mkdir -p "$snapshot_dir"
+  PATH="$tmp_dir/bin:$PATH" \
+    GH_RULESET_FIXTURE="$fixture" \
+    GH_CALL_LOG="$tmp_dir/gh-calls.log" \
+    GH_ALLOW_MUTATION=true \
+    GH_RULESET_STATE="$state_file" \
+    GH_PUT_COUNT_FILE="$put_count_file" \
+    GH_DETAIL_GET_COUNT_FILE="$get_count_file" \
+    GH_CORRUPT_PUT_AT="${GH_CORRUPT_PUT_AT:-}" \
+    GH_FAIL_PUT_BEFORE_WRITE_AT="${GH_FAIL_PUT_BEFORE_WRITE_AT:-}" \
+    GH_FAIL_PUT_AFTER_WRITE_AT="${GH_FAIL_PUT_AFTER_WRITE_AT:-}" \
+    GH_FAIL_DETAIL_GET_AT="${GH_FAIL_DETAIL_GET_AT:-}" \
+    RULESET_SNAPSHOT_DIR="$snapshot_dir" \
+    tools/github/apply-repo-rulesets.sh --active --repos "$repos" \
+      >"$output_file" 2>&1
+}
+
+assert_durable_snapshot() {
+  local snapshot_dir=$1
+  local expected_file=$2
+  local label=$3
+  local snapshots=()
+  mapfile -t snapshots < <(find "$snapshot_dir" -type f -name '*.json' | sort)
+  [[ ${#snapshots[@]} -eq 1 ]] || \
+    fail "$label expected one durable pre-state snapshot, found ${#snapshots[@]}"
+  jq -e --slurpfile expected "$expected_file" '. == $expected[0]' \
+    "${snapshots[0]}" >/dev/null || fail "$label snapshot is not the exact pre-state"
+}
+
+myrmidons_fixture=tests/fixtures/github/myrmidons-ruleset-contract.json
+
+success_state="$tmp_dir/success-state.json"
+success_pre="$tmp_dir/success-pre.json"
+success_snapshots="$tmp_dir/success-snapshots"
+seed_ruleset_state "$myrmidons_fixture" "$success_state"
+cp "$success_state" "$success_pre"
+if ! run_live_update \
+    "$myrmidons_fixture" Myrmidons "$success_state" "$success_snapshots" \
+    "$tmp_dir/success.log" "$tmp_dir/success-put-count" \
+    "$tmp_dir/success-get-count"; then
+  cat "$tmp_dir/success.log" >&2
+  fail "verified live update scenario failed"
+fi
+assert_durable_snapshot "$success_snapshots" "$success_pre" "verified update"
+[[ $(<"$tmp_dir/success-put-count") -eq 1 ]] || \
+  fail "verified update must issue exactly one PUT"
+[[ $(<"$tmp_dir/success-get-count") -eq 2 ]] || \
+  fail "verified update must read exact post-state after PUT"
+jq -e '
+  .conditions.ref_name == {include: ["refs/heads/main"], exclude: []}
+  and ([.rules[] | select(.type == "merge_queue")] | length) == 1
+' "$success_state" >/dev/null || fail "verified update state does not match the candidate"
+grep -qF "Verified exact postcondition" "$tmp_dir/success.log" || \
+  fail "verified update did not report exact postcondition verification"
+echo "PASS: live update snapshots pre-state and verifies exact post-state"
+
+mismatch_state="$tmp_dir/mismatch-state.json"
+mismatch_pre="$tmp_dir/mismatch-pre.json"
+mismatch_snapshots="$tmp_dir/mismatch-snapshots"
+seed_ruleset_state "$myrmidons_fixture" "$mismatch_state"
+cp "$mismatch_state" "$mismatch_pre"
+if GH_CORRUPT_PUT_AT=1 run_live_update \
+    "$myrmidons_fixture" Myrmidons "$mismatch_state" "$mismatch_snapshots" \
+    "$tmp_dir/mismatch.log" "$tmp_dir/mismatch-put-count" \
+    "$tmp_dir/mismatch-get-count"; then
+  fail "updater accepted a mismatched post-PUT readback"
+fi
+assert_durable_snapshot "$mismatch_snapshots" "$mismatch_pre" "mismatch rollback"
+jq -e --slurpfile expected "$mismatch_pre" '. == $expected[0]' \
+  "$mismatch_state" >/dev/null || fail "mismatched post-state was not rolled back"
+[[ $(<"$tmp_dir/mismatch-put-count") -eq 2 ]] || \
+  fail "mismatched post-state must trigger one rollback PUT"
+[[ $(<"$tmp_dir/mismatch-get-count") -eq 3 ]] || \
+  fail "mismatch rollback must be verified by readback"
+grep -qF "Rollback verified" "$tmp_dir/mismatch.log" || \
+  fail "mismatch rollback was not reported as verified"
+echo "PASS: mismatched postcondition triggers verified rollback"
+
+ambiguous_state="$tmp_dir/ambiguous-state.json"
+ambiguous_pre="$tmp_dir/ambiguous-pre.json"
+ambiguous_snapshots="$tmp_dir/ambiguous-snapshots"
+seed_ruleset_state "$myrmidons_fixture" "$ambiguous_state"
+cp "$ambiguous_state" "$ambiguous_pre"
+if GH_FAIL_PUT_AFTER_WRITE_AT=1 run_live_update \
+    "$myrmidons_fixture" Myrmidons "$ambiguous_state" "$ambiguous_snapshots" \
+    "$tmp_dir/ambiguous.log" "$tmp_dir/ambiguous-put-count" \
+    "$tmp_dir/ambiguous-get-count"; then
+  fail "updater accepted an ambiguous PUT result"
+fi
+assert_durable_snapshot "$ambiguous_snapshots" "$ambiguous_pre" "ambiguous rollback"
+jq -e --slurpfile expected "$ambiguous_pre" '. == $expected[0]' \
+  "$ambiguous_state" >/dev/null || fail "ambiguous PUT was not rolled back"
+[[ $(<"$tmp_dir/ambiguous-put-count") -eq 2 ]] || \
+  fail "ambiguous PUT must trigger one rollback PUT"
+[[ $(<"$tmp_dir/ambiguous-get-count") -eq 2 ]] || \
+  fail "ambiguous PUT rollback must be verified by readback"
+grep -qF "Rollback verified" "$tmp_dir/ambiguous.log" || \
+  fail "ambiguous PUT rollback was not reported as verified"
+echo "PASS: ambiguous PUT failure triggers verified rollback"
+
+readback_state="$tmp_dir/readback-state.json"
+readback_pre="$tmp_dir/readback-pre.json"
+readback_snapshots="$tmp_dir/readback-snapshots"
+seed_ruleset_state "$myrmidons_fixture" "$readback_state"
+cp "$readback_state" "$readback_pre"
+if GH_FAIL_DETAIL_GET_AT=2 run_live_update \
+    "$myrmidons_fixture" Myrmidons "$readback_state" "$readback_snapshots" \
+    "$tmp_dir/readback.log" "$tmp_dir/readback-put-count" \
+    "$tmp_dir/readback-get-count"; then
+  fail "updater accepted a failed post-PUT readback"
+fi
+assert_durable_snapshot "$readback_snapshots" "$readback_pre" "readback rollback"
+jq -e --slurpfile expected "$readback_pre" '. == $expected[0]' \
+  "$readback_state" >/dev/null || fail "failed post-PUT readback was not rolled back"
+[[ $(<"$tmp_dir/readback-put-count") -eq 2 ]] || \
+  fail "failed post-PUT readback must trigger one rollback PUT"
+[[ $(<"$tmp_dir/readback-get-count") -eq 3 ]] || \
+  fail "readback-failure rollback must be verified by another GET"
+echo "PASS: failed post-PUT readback triggers verified rollback"
+
+uncertain_state="$tmp_dir/uncertain-state.json"
+uncertain_snapshots="$tmp_dir/uncertain-snapshots"
+seed_ruleset_state "$myrmidons_fixture" "$uncertain_state"
+if GH_CORRUPT_PUT_AT=1 GH_FAIL_PUT_BEFORE_WRITE_AT=2 run_live_update \
+    "$myrmidons_fixture" Myrmidons,Proteus "$uncertain_state" \
+    "$uncertain_snapshots" "$tmp_dir/uncertain.log" \
+    "$tmp_dir/uncertain-put-count" "$tmp_dir/uncertain-get-count"; then
+  fail "updater accepted an unverified rollback"
+fi
+grep -qF "UNCERTAIN MUTATION" "$tmp_dir/uncertain.log" || {
+  cat "$tmp_dir/uncertain.log" >&2
+  fail "unverified rollback did not report uncertain mutation"
+}
+if grep -qF 'repos/HomericIntelligence/Proteus/rulesets' \
+    "$tmp_dir/gh-calls.log"; then
+  cat "$tmp_dir/gh-calls.log" >&2
+  fail "fleet processing continued after an uncertain mutation"
+fi
+echo "PASS: uncertain rollback aborts fleet processing"
+
 : >"$tmp_dir/gh-calls.log"
+fleet_state="$tmp_dir/fleet-state.json"
+fleet_snapshots="$tmp_dir/fleet-snapshots"
+seed_ruleset_state \
+  tests/fixtures/github/myrmidons-ruleset-contract.json "$fleet_state"
 if ! PATH="$tmp_dir/bin:$PATH" \
     GH_RULESET_FIXTURE=tests/fixtures/github/myrmidons-ruleset-contract.json \
     GH_CALL_LOG="$tmp_dir/gh-calls.log" \
     GH_REPO_LIST=$'Argus\nMyrmidons' \
     GH_ALLOW_MUTATION=true \
+    GH_RULESET_STATE="$fleet_state" \
+    GH_PUT_COUNT_FILE="$tmp_dir/fleet-put-count" \
+    GH_DETAIL_GET_COUNT_FILE="$tmp_dir/fleet-get-count" \
+    RULESET_SNAPSHOT_DIR="$fleet_snapshots" \
     tools/github/apply-repo-rulesets.sh --active --all \
       >"$tmp_dir/all-active.log" 2>&1; then
   cat "$tmp_dir/all-active.log" >&2

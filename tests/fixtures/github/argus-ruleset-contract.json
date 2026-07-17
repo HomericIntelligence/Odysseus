@@ -1,6 +1,6 @@
 {
   "provenance": {
-    "captured_at": "2026-07-16T23:49:25Z",
+    "captured_at": "2026-07-17T00:58:08Z",
     "repository_api": "https://api.github.com/repos/HomericIntelligence/Argus",
     "ruleset_api": [
       "https://api.github.com/repos/HomericIntelligence/Argus/rulesets/15556485",
@@ -8,7 +8,7 @@
     ],
     "rollout_issue": "https://github.com/HomericIntelligence/Argus/issues/550",
     "replacement_pr": "https://github.com/HomericIntelligence/Argus/pull/552",
-    "replacement_pr_head": "b335eb95a49d8e89b580b52879cc7b0bcffa510a"
+    "replacement_pr_head_at_capture": "b335eb95a49d8e89b580b52879cc7b0bcffa510a"
   },
   "repository": "HomericIntelligence/Argus",
   "expected_context_union": [

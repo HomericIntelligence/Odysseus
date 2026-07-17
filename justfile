@@ -338,7 +338,7 @@ render-nomad-configs OUT_DIR="/etc/nomad.d":
     if command -v nomad >/dev/null 2>&1; then nomad fmt -check "{{ OUT_DIR }}"/*.hcl; fi
 
 # Run all CI checks locally
-ci: lint validate-configs check-doc-field-drift
+ci: lint validate-configs check-doc-field-drift test-merge-queue-readiness
     @echo "All checks passed"
 
 # Cut a release: validate tag↔pixi.toml↔CHANGELOG, create tag, push (triggers release.yml)

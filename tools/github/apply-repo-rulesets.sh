@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # apply-repo-rulesets.sh [--active|--evaluate] [--repos repo1,repo2,...]
-#                         [--all] [--dry-run]
+#                         [--all] [--dry-run] [--snapshot-dir path]
 # Adds or updates only the merge-queue rule and enforcement mode in an existing
 # homeric-main-baseline ruleset. All other live rules remain repository-owned.
 # Usage:
@@ -20,6 +20,7 @@ ENFORCEMENT=""
 REPOS_OVERRIDE=""
 DRY_RUN=false
 ALL_REPOS=false
+SNAPSHOT_DIR_OVERRIDE="${RULESET_SNAPSHOT_DIR:-}"
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
@@ -43,6 +44,22 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dry-run)       DRY_RUN=true; shift ;;
     --all)           ALL_REPOS=true; shift ;;
+    --snapshot-dir)
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "ERROR: --snapshot-dir requires a non-empty path" >&2
+        exit 2
+      fi
+      SNAPSHOT_DIR_OVERRIDE=$2
+      shift 2
+      ;;
+    --snapshot-dir=*)
+      SNAPSHOT_DIR_OVERRIDE="${1#--snapshot-dir=}"
+      if [[ -z "$SNAPSHOT_DIR_OVERRIDE" ]]; then
+        echo "ERROR: --snapshot-dir requires a non-empty path" >&2
+        exit 2
+      fi
+      shift
+      ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -69,6 +86,101 @@ desired_merge_queue=$(jq -ec '
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
+
+if [[ -n "$SNAPSHOT_DIR_OVERRIDE" ]]; then
+  SNAPSHOT_ROOT=$SNAPSHOT_DIR_OVERRIDE
+else
+  operation_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  SNAPSHOT_ROOT="$REPO_ROOT/configs/github/backups/ruleset-mutations/$operation_id"
+fi
+
+validate_live_identity_scope() {
+  local ruleset_file=$1
+  local repo=$2
+  jq -e \
+    --arg name "$RULESET_NAME" \
+    --arg source "$ORG/$repo" '
+      .name == $name
+      and .target == "branch"
+      and .source_type == "Repository"
+      and .source == $source
+      and .conditions == {
+        ref_name: {
+          include: ["refs/heads/main"],
+          exclude: []
+        }
+      }
+    ' "$ruleset_file" > /dev/null
+}
+
+write_mutable_payload() {
+  local ruleset_file=$1
+  local payload_file=$2
+  jq -e '{name, target, enforcement, bypass_actors, conditions, rules}' \
+    "$ruleset_file" >"$payload_file"
+}
+
+exact_mutable_state_matches() {
+  local expected_payload=$1
+  local actual_ruleset=$2
+  jq -e --slurpfile expected "$expected_payload" '
+    {name, target, enforcement, bypass_actors, conditions, rules}
+      == $expected[0]
+  ' "$actual_ruleset" > /dev/null
+}
+
+rollback_and_abort() {
+  local repo=$1
+  local existing_id=$2
+  local rollback_payload=$3
+  local reason=$4
+  local snapshot_file=$5
+  local rollback_readback="$tmp_dir/$repo-$existing_id-rollback-readback.json"
+  local rollback_put_rc=0
+
+  MUTATION_ARMED=false
+  trap '' INT TERM
+  echo "  FAILED: $reason; attempting rollback from durable pre-state" >&2
+  gh api -X PUT "repos/$ORG/$repo/rulesets/$existing_id" \
+    --input "$rollback_payload" > /dev/null || rollback_put_rc=$?
+  if ((rollback_put_rc != 0)); then
+    echo "  WARNING: rollback PUT reported exit $rollback_put_rc; verifying live state" >&2
+  fi
+
+  if gh api "repos/$ORG/$repo/rulesets/$existing_id" >"$rollback_readback" &&
+      validate_live_identity_scope "$rollback_readback" "$repo" &&
+      exact_mutable_state_matches "$rollback_payload" "$rollback_readback"; then
+    echo "  Rollback verified exactly; aborting this operation before any further repository." >&2
+    exit 1
+  fi
+
+  echo "  UNCERTAIN MUTATION: rollback could not be verified exactly for $repo ruleset $existing_id." >&2
+  echo "  Durable recovery snapshot: $snapshot_file" >&2
+  exit 1
+}
+
+MUTATION_ARMED=false
+MUTATION_REPO=""
+MUTATION_RULESET_ID=""
+MUTATION_ROLLBACK_PAYLOAD=""
+MUTATION_SNAPSHOT=""
+
+handle_mutation_signal() {
+  local signal_name=$1
+  trap - INT TERM
+  if [[ "$MUTATION_ARMED" == true ]]; then
+    rollback_and_abort \
+      "$MUTATION_REPO" \
+      "$MUTATION_RULESET_ID" \
+      "$MUTATION_ROLLBACK_PAYLOAD" \
+      "received $signal_name during an armed mutation" \
+      "$MUTATION_SNAPSHOT"
+  fi
+  exit 130
+}
+
+trap 'handle_mutation_signal INT' INT
+trap 'handle_mutation_signal TERM' TERM
 
 if [[ -n "$REPOS_OVERRIDE" && "$ALL_REPOS" == true ]]; then
   echo "ERROR: use either --repos or --all, not both" >&2
@@ -147,6 +259,17 @@ for repo in "${REPOS[@]}"; do
 
     if ! gh api "repos/$ORG/$repo/rulesets/$existing_id" > "$live_ruleset"; then
       echo "  FAILED: could not read live ruleset id $existing_id" >&2
+      fail=$((fail + 1))
+      continue
+    fi
+
+    # Validate the fetched object itself before constructing any PUT payload.
+    # The list endpoint is only discovery data; the detail response must prove
+    # exact identity, repository ownership, and an unambiguous main-only branch
+    # scope. Equality is intentionally strict so wildcards and extra scope
+    # selectors fail closed.
+    if ! validate_live_identity_scope "$live_ruleset" "$repo"; then
+      echo "  FAILED: live ruleset identity or main-only branch scope is invalid" >&2
       fail=$((fail + 1))
       continue
     fi
@@ -264,15 +387,56 @@ for repo in "${REPOS[@]}"; do
       continue
     fi
 
-    echo "  Updating only enforcement and merge_queue (id: $existing_id)..."
-    if gh api -X PUT "repos/$ORG/$repo/rulesets/$existing_id" \
-        --input "$update_payload" > /dev/null; then
-      echo "  Updated; repository-specific contexts and unrelated rules preserved."
-      ok=$((ok + 1))
-    else
-      echo "  FAILED" >&2
+    snapshot_file="$SNAPSHOT_ROOT/$repo-ruleset-$existing_id-pre.json"
+    rollback_payload="$tmp_dir/$repo-$existing_id-rollback.json"
+    post_readback="$tmp_dir/$repo-$existing_id-post-readback.json"
+    if ! mkdir -p "$SNAPSHOT_ROOT" || [[ -e "$snapshot_file" ]]; then
+      echo "  FAILED: durable snapshot path is unavailable or already exists: $snapshot_file" >&2
       fail=$((fail + 1))
+      continue
     fi
+    snapshot_tmp="$snapshot_file.tmp"
+    if ! cp "$live_ruleset" "$snapshot_tmp" ||
+        ! chmod 600 "$snapshot_tmp" ||
+        ! mv "$snapshot_tmp" "$snapshot_file" ||
+        ! sync "$snapshot_file"; then
+      echo "  FAILED: could not persist durable pre-state snapshot" >&2
+      fail=$((fail + 1))
+      continue
+    fi
+    if ! write_mutable_payload "$snapshot_file" "$rollback_payload"; then
+      echo "  FAILED: could not derive rollback payload from durable snapshot" >&2
+      fail=$((fail + 1))
+      continue
+    fi
+    echo "  Durable pre-state snapshot: $snapshot_file"
+
+    echo "  Updating only enforcement and merge_queue (id: $existing_id)..."
+    MUTATION_REPO=$repo
+    MUTATION_RULESET_ID=$existing_id
+    MUTATION_ROLLBACK_PAYLOAD=$rollback_payload
+    MUTATION_SNAPSHOT=$snapshot_file
+    MUTATION_ARMED=true
+    if ! gh api -X PUT "repos/$ORG/$repo/rulesets/$existing_id" \
+        --input "$update_payload" > /dev/null; then
+      rollback_and_abort "$repo" "$existing_id" "$rollback_payload" \
+        "PUT failed or returned an ambiguous result" "$snapshot_file"
+    fi
+
+    if ! gh api "repos/$ORG/$repo/rulesets/$existing_id" >"$post_readback"; then
+      rollback_and_abort "$repo" "$existing_id" "$rollback_payload" \
+        "post-PUT readback failed" "$snapshot_file"
+    fi
+    if ! validate_live_identity_scope "$post_readback" "$repo" ||
+        ! exact_mutable_state_matches "$update_payload" "$post_readback"; then
+      rollback_and_abort "$repo" "$existing_id" "$rollback_payload" \
+        "post-PUT state did not match the exact requested postcondition" \
+        "$snapshot_file"
+    fi
+
+    MUTATION_ARMED=false
+    echo "  Verified exact postcondition; repository-specific contexts and unrelated rules preserved."
+    ok=$((ok + 1))
   fi
 done
 

@@ -1,6 +1,6 @@
 {
   "provenance": {
-    "captured_at": "2026-07-16T23:49:25Z",
+    "captured_at": "2026-07-17T00:58:08Z",
     "repository_api": "https://api.github.com/repos/HomericIntelligence/Proteus",
     "ruleset_api": [
       "https://api.github.com/repos/HomericIntelligence/Proteus/rulesets/15556490",
@@ -8,7 +8,7 @@
     ],
     "rollout_issue": "https://github.com/HomericIntelligence/Proteus/issues/214",
     "replacement_pr": "https://github.com/HomericIntelligence/Proteus/pull/216",
-    "replacement_pr_head": "94da0478907c01551a6bae29f3d4645e8e886f30"
+    "replacement_pr_head_at_capture": "3ed68db6e77e6c2ffac9baa334807c2fcddb3664"
   },
   "repository": "HomericIntelligence/Proteus",
   "expected_context_union": [

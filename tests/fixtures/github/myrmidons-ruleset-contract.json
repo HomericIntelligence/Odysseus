@@ -1,13 +1,13 @@
 {
   "provenance": {
-    "captured_at": "2026-07-16T23:49:25Z",
+    "captured_at": "2026-07-17T00:58:08Z",
     "repository_api": "https://api.github.com/repos/HomericIntelligence/Myrmidons",
     "ruleset_api": [
       "https://api.github.com/repos/HomericIntelligence/Myrmidons/rulesets/15556489"
     ],
     "rollout_issue": "https://github.com/HomericIntelligence/Myrmidons/issues/765",
     "replacement_pr": "https://github.com/HomericIntelligence/Myrmidons/pull/767",
-    "replacement_pr_head": "c940de8481fca516794519c3350aa8513f308943"
+    "replacement_pr_head_at_capture": "0b50f16334c3bf9be66c957c97d338968a38cb83"
   },
   "repository": "HomericIntelligence/Myrmidons",
   "expected_context_union": [

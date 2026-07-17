@@ -19,20 +19,6 @@ fail() {
   echo "FAIL: $1" >&2
 }
 
-workflow_prefix() {
-  awk '/^jobs:$/ { exit } { print }' "$1"
-}
-
-job_block() {
-  local workflow=$1
-  local job=$2
-  awk -v job="$job" '
-    $0 == "  " job ":" { in_job = 1 }
-    in_job && $0 ~ /^  [A-Za-z0-9_-]+:$/ && $0 != "  " job ":" { exit }
-    in_job { print }
-  ' "$workflow"
-}
-
 expected_required_workflows=(
   .github/workflows/_required.yml
   .github/workflows/build-images.yml
@@ -68,15 +54,13 @@ for workflow in "${required_workflows[@]}"; do
     fail "$workflow must handle merge_group checks_requested"
   fi
 
-  prefix=$(workflow_prefix "$workflow")
-  if grep -qE '^permissions:$' <<<"$prefix" &&
-     grep -qE '^  contents: read$' <<<"$prefix" &&
-     ! grep -qE '^  (contents|packages): write$' <<<"$prefix"; then
-    pass "$workflow defaults validation to read-only contents"
-  else
-    fail "$workflow must not grant write permission at workflow scope"
-  fi
 done
+
+if python3 tests/github/workflow-permissions.test.py workflow-defaults; then
+  pass "required workflows default validation to parsed contents:read permissions"
+else
+  fail "required workflows must not grant write permission at workflow scope"
+fi
 
 checkout_count=$(grep -hEc 'uses: actions/checkout@' \
   "${required_workflows[@]}" | awk '{ total += $1 } END { print total + 0 }')
@@ -88,40 +72,25 @@ else
   fail "every checkout in a required workflow must disable persisted credentials"
 fi
 
-build_validation=$(job_block .github/workflows/build-images.yml validate)
-if grep -qF "github.event_name == 'pull_request'" <<<"$build_validation" &&
-   grep -qF "github.event_name == 'merge_group'" <<<"$build_validation" &&
-   grep -qF "github.event_name == 'workflow_dispatch'" \
-    <<<"$build_validation" &&
-   ! grep -qE '^[[:space:]]+(contents|packages): write$' \
-    <<<"$build_validation"; then
+if python3 tests/github/workflow-permissions.test.py build-validation; then
   pass "Build Images PR/merge_group/manual validation job is read-only"
 else
   fail "Build Images validation must be read-only for PR/merge_group/manual events"
 fi
 
-build_publish=$(job_block .github/workflows/build-images.yml publish)
-if grep -qF "if: github.event_name == 'push'" \
-    <<<"$build_publish" &&
-   ! grep -qF "workflow_dispatch" <<<"$build_publish" &&
-   grep -qE '^[[:space:]]+packages: write$' <<<"$build_publish" &&
-   grep -qE '^[[:space:]]+contents: read$' <<<"$build_publish"; then
+if python3 tests/github/workflow-permissions.test.py build-publish; then
   pass "Build Images publishing permission is isolated to trusted pushes/tags"
 else
   fail "Build Images publishing must retain packages:write only on trusted pushes/tags"
 fi
 
-release_publish=$(job_block .github/workflows/release.yml publish)
-if grep -qF "startsWith(github.ref, 'refs/tags/')" <<<"$release_publish" &&
-   grep -qE '^[[:space:]]+contents: write$' <<<"$release_publish"; then
+if python3 tests/github/workflow-permissions.test.py release-publish; then
   pass "Release publishing retains contents:write only on trusted tag pushes"
 else
   fail "Release publish job must own the only contents:write grant"
 fi
 
-release_validation=$(job_block .github/workflows/release.yml release)
-if ! grep -qE '^[[:space:]]+(contents|packages): write$' \
-    <<<"$release_validation"; then
+if python3 tests/github/workflow-permissions.test.py release-validation; then
   pass "Release PR/merge_group validation job is read-only"
 else
   fail "Release validation exposes write permission"
