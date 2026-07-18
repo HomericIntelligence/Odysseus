@@ -23,6 +23,7 @@ choice, its context, decision rationale, and consequences.
 | [014](014-runnable-evidence-for-metric-claims.md) | Runnable Evidence for Metric and Training-Run Claims | Proposed | — | — |
 | [015](015-drop-project-prefix.md) | Drop the `Project` Prefix Across the HomericIntelligence Ecosystem | Accepted | — | — |
 | [016](016-split-hephaestus.md) | Split `Hephaestus` — Library vs Agentic Plugins | Accepted | — | — |
+| [017](017-uv-for-python-pixi-for-toolchains.md) | uv for Pure-Python Repos, pixi Where a Conda Toolchain Is Required | Proposed | — | — |
 
 ## How to Create a New ADR
 
