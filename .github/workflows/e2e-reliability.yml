@@ -75,7 +75,10 @@ jobs:
       github.event_name == 'pull_request' || github.event_name == 'push'
       || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 45 min: a cold run builds Agamemnon's Conan deps (openssl et al.) from
+    # source, which alone is ~15-20 min. The Conan cache below makes warm runs
+    # fast; the timeout is headroom for the first (cold-cache) build. Matches T4.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
@@ -88,6 +91,19 @@ jobs:
 
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
+
+      - name: Cache Conan packages (Agamemnon deps built from source)
+        # Without this, `just build` recompiles openssl + all Conan deps from
+        # source every run, which blows the job timeout. Mirrors Agamemnon's own
+        # CI (control/Agamemnon/.github/workflows/_required.yml). Keyed on the
+        # conanfile so a dep change invalidates the cache.
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: ~/.conan2
+          key: conan-${{ runner.os }}-e2e-t1-debug-${{ hashFiles('control/Agamemnon/conanfile.py') }}
+          restore-keys: |
+            conan-${{ runner.os }}-e2e-t1-debug-
+            conan-${{ runner.os }}-e2e-t1-
 
       - name: Install nats-server
         run: |
