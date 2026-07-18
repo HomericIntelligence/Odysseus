@@ -75,10 +75,13 @@ jobs:
       github.event_name == 'pull_request' || github.event_name == 'push'
       || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    # 45 min: a cold run builds Agamemnon's Conan deps (openssl et al.) from
-    # source, which alone is ~15-20 min. The Conan cache below makes warm runs
-    # fast; the timeout is headroom for the first (cold-cache) build. Matches T4.
-    timeout-minutes: 45
+    # 60 min: a COLD run builds Agamemnon's Conan deps (openssl et al.) from
+    # source (~15-20 min) AND runs the full 38-scenario suite (~15 min, several
+    # scenarios wait 90-120s for task drain). The restore/save-split cache below
+    # persists the deps even on a failed/timed-out run, so subsequent runs build
+    # fast (~8 min) and finish well under this ceiling; the 60 min is headroom
+    # for the one cold run that populates the cache.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
@@ -92,12 +95,15 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
 
-      - name: Cache Conan packages (Agamemnon deps built from source)
-        # Without this, `just build` recompiles openssl + all Conan deps from
-        # source every run, which blows the job timeout. Mirrors Agamemnon's own
-        # CI (control/Agamemnon/.github/workflows/_required.yml). Keyed on the
-        # conanfile so a dep change invalidates the cache.
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+      - name: Restore Conan cache (Agamemnon deps built from source)
+        # RESTORE half of a restore/save split. `actions/cache` only SAVES on a
+        # fully-successful job, but this job can fail/time out in the reliability
+        # suite *after* the deps are built — which would never persist the cache,
+        # so every run rebuilt openssl et al. from source (~15-20 min) and blew
+        # the timeout: a chicken-and-egg. The paired save step below runs with
+        # `if: always()` so the built deps persist even when the suite fails.
+        id: conan-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
         with:
           path: ~/.conan2
           key: conan-${{ runner.os }}-e2e-t1-debug-${{ hashFiles('control/Agamemnon/conanfile.py') }}
@@ -136,6 +142,16 @@ jobs:
         env:
           SKIP_ODYSSEY_BUILD: "true"
         run: just build
+
+      - name: Save Conan cache
+        # SAVE half of the split. Runs even if the suite below fails/times out,
+        # so the from-source deps built above persist for the next run (which
+        # then restores them and builds fast). Skipped on an exact-key hit.
+        if: always() && steps.conan-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: ~/.conan2
+          key: ${{ steps.conan-cache.outputs.cache-primary-key }}
 
       - name: Run T1 reliability suite (all categories) and assert exit 0
         # `just e2e-test-local` == run-ipc-tests.sh --topology t1 --category all.
