@@ -28,16 +28,14 @@
 # a rootless-podman DNS workaround in e2e/start-stack.sh) and is intentionally
 # NOT a PR gate so infra flakiness cannot block PRs.
 #
-# ── KNOWN CAVEAT (documented, not hidden) ────────────────────────────────────
-# The `hello-world` worker the harness dispatches to
-# (provisioning/Myrmidons/hello-world/main.py, referenced by process.sh,
-# start-stack.sh, the T3 Dockerfile, and the `start-myrmidon` recipe) is NOT
-# present in the currently-pinned Myrmidons submodule — that repo is now a
-# declarative agent-manifest repo. Until a `hello-world` worker is restored to
-# the Myrmidons pin, the mesh cannot complete tasks and these jobs will fail at
-# myrmidon startup. That is a submodule-pin gap, tracked separately; this
-# workflow is authored so it becomes a real, meaningful gate the moment the
-# worker is back. See the PR body for #373 for the full trace.
+# ── Worker dependency (restored, #392) ───────────────────────────────────────
+# The `hello-world` worker the harness dispatches to is the C++ pull-based
+# myrmidon at provisioning/Myrmidons/hello-world/ (CMakeLists.txt + main.cpp),
+# built by `just _build-myrmidon` into build/Myrmidons/hello-world/hello_myrmidon
+# — the first path start_myrmidon_bg (e2e/lib/process.sh) searches. This worker
+# was absent from the Myrmidons pin (which parked the T1 gate under #391); it was
+# restored to Myrmidons and re-pinned here per #392, so the T1 job below is once
+# again a real PR gate. See the PR body for #373 for the original trace.
 #
 # ── Security ─────────────────────────────────────────────────────────────────
 # Static commands only. No `${{ github.event.* }}` interpolation in any run:
@@ -64,18 +62,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ── T1 local host-process mesh, executes all 38 scenarios ───────────────────
-  # PARKED off the PR/push path until the `hello-world` myrmidon worker is
-  # restored to the Myrmidons submodule (it is absent from the current pin AND
-  # from Myrmidons upstream main — `agents/` has only `_templates` + `hermes`).
-  # With the worker missing, this job fails at myrmidon startup, so gating every
-  # PR on it would show a permanent (non-required, but noisy) red check. Kept on
-  # nightly schedule + manual dispatch so it runs and surfaces the gap without
-  # spamming PRs. FLIP the `if:` back to include `pull_request`/`push` in the
-  # follow-up that restores the worker — the job body is already a correct gate.
+  # ── T1 local host-process mesh, executes all 38 scenarios (PR GATE) ─────────
+  # Runs on every pull_request and push to main. The `hello-world` myrmidon
+  # worker it dispatches to was restored to the Myrmidons pin (#392), so the
+  # mesh completes tasks and a failing scenario is a real, meaningful gate
+  # (non-zero harness exit -> failed job). Also runs nightly + on manual
+  # dispatch. (Was parked on schedule/dispatch only under #391 while the worker
+  # was missing.)
   e2e-reliability-t1:
-    name: e2e-reliability-t1 (nightly until #391 worker restored)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: e2e-reliability-t1 (PR gate)
+    if: >-
+      github.event_name == 'pull_request' || github.event_name == 'push'
+      || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
