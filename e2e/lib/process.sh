@@ -124,7 +124,11 @@ start_myrmidon_bg() {
     done
     [ -z "$bin" ] && { echo "ERROR: hello_myrmidon binary not found. Run 'just build' first." >&2; return 1; }
 
-    NATS_URL="nats://localhost:${NATS_PORT}" "$bin" >/dev/null 2>&1 &
+    # MYRMIDON_WORK_DELAY_MS=0: drop the worker's default 1s/task "simulate work"
+    # delay so fan-out perf scenarios (B07 50 tasks, B08 100 tasks) drain at real
+    # dispatch speed instead of being capped at ~1 task/sec by MaxAckPending=1.
+    NATS_URL="nats://localhost:${NATS_PORT}" MYRMIDON_WORK_DELAY_MS="${MYRMIDON_WORK_DELAY_MS:-0}" \
+        "$bin" >/dev/null 2>&1 &
     register_pid $!
     echo "  Started hello-myrmidon (PID $!, bin $bin)"
     sleep 2  # Allow subscription to establish
