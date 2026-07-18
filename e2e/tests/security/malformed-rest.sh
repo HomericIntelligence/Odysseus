@@ -42,6 +42,7 @@ LARGE_PAYLOAD=$(python3 -c "import json; print(json.dumps({'name': 'x' * 10_000_
 
 CODE=$(curl -sf -o /dev/null -w "%{http_code}" -X POST \
     "http://localhost:${AGAMEMNON_PORT}/v1/agents" \
+    "${AGAMEMNON_AUTH[@]}" \
     -H "Content-Type: application/json" \
     --max-time 10 \
     -d "$LARGE_PAYLOAD" 2>/dev/null || echo "000")
