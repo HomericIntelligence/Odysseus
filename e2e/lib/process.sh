@@ -97,7 +97,12 @@ start_agamemnon_bg() {
     done
     [ -z "$bin" ] && { echo "ERROR: Agamemnon_server not found. Run 'just build' first." >&2; return 1; }
 
-    NATS_URL="nats://localhost:${NATS_PORT}" PORT="$AGAMEMNON_PORT" "$bin" >/dev/null 2>&1 &
+    # Agamemnon (server_main.cpp) FATAL-exits if AGAMEMNON_API_KEY is unset/empty,
+    # and once set enforces it on non-exempt /v1/* endpoints. Launch with the same
+    # key the REST helpers send (e2e/lib/agamemnon.sh AGAMEMNON_AUTH); default to
+    # the shared test key so a keyless env still starts.
+    NATS_URL="nats://localhost:${NATS_PORT}" PORT="$AGAMEMNON_PORT" \
+        AGAMEMNON_API_KEY="${AGAMEMNON_API_KEY:-e2e-test-key}" "$bin" >/dev/null 2>&1 &
     register_pid $!
     echo "  Started Agamemnon (PID $!, port $AGAMEMNON_PORT)"
     wait_for "http://localhost:${AGAMEMNON_PORT}/v1/health" "Agamemnon" 20

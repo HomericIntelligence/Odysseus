@@ -4,10 +4,19 @@
 AGAMEMNON_PORT="${AGAMEMNON_PORT:-8080}"
 AGAMEMNON_URL="http://localhost:${AGAMEMNON_PORT}"
 
+# Agamemnon refuses to start without AGAMEMNON_API_KEY (server_main.cpp) and, once
+# set, enforces it on every non-exempt /v1/* endpoint (auth.cpp / routes.cpp).
+# start_agamemnon_bg (process.sh) launches the server with this same value, so the
+# harness's requests must carry it. Health/version are exempt; sending the header
+# there is harmless.
+AGAMEMNON_API_KEY="${AGAMEMNON_API_KEY:-e2e-test-key}"
+# curl args that add the API key header; expand as "${AGAMEMNON_AUTH[@]}".
+AGAMEMNON_AUTH=(-H "X-API-Key: ${AGAMEMNON_API_KEY}")
+
 # ─── Health ──────────────────────────────────────────────────────────────────
 
 agamemnon_health() {
-    curl -sf "${AGAMEMNON_URL}/v1/health" 2>/dev/null
+    curl -sf "${AGAMEMNON_URL}/v1/health" 2>/dev/null "${AGAMEMNON_AUTH[@]}"
 }
 
 agamemnon_wait_healthy() {
@@ -20,6 +29,7 @@ agamemnon_wait_healthy() {
 agamemnon_create_agent() {
     local name="${1:-e2e-agent}" label="${2:-E2E Agent}"
     curl -sf -X POST "${AGAMEMNON_URL}/v1/agents" \
+        "${AGAMEMNON_AUTH[@]}" \
         -H "Content-Type: application/json" \
         -d "{\"name\":\"${name}\",\"label\":\"${label}\",\"program\":\"none\",\"workingDirectory\":\"/tmp\",\"taskDescription\":\"E2E test\",\"tags\":[\"e2e\"],\"owner\":\"e2e\",\"role\":\"member\"}"
 }
@@ -27,11 +37,12 @@ agamemnon_create_agent() {
 agamemnon_start_agent() {
     local agent_id="$1"
     curl -sf -X POST "${AGAMEMNON_URL}/v1/agents/${agent_id}/start" \
+        "${AGAMEMNON_AUTH[@]}" \
         -H "Content-Type: application/json" -d '{}'
 }
 
 agamemnon_list_agents() {
-    curl -sf "${AGAMEMNON_URL}/v1/agents" 2>/dev/null
+    curl -sf "${AGAMEMNON_URL}/v1/agents" 2>/dev/null "${AGAMEMNON_AUTH[@]}"
 }
 
 # ─── Teams ───────────────────────────────────────────────────────────────────
@@ -39,6 +50,7 @@ agamemnon_list_agents() {
 agamemnon_create_team() {
     local name="${1:-e2e-team}"
     curl -sf -X POST "${AGAMEMNON_URL}/v1/teams" \
+        "${AGAMEMNON_AUTH[@]}" \
         -H "Content-Type: application/json" \
         -d "{\"name\":\"${name}\"}"
 }
@@ -51,12 +63,13 @@ agamemnon_create_task() {
     [ -n "$agent_id" ] && body="${body},\"assigneeAgentId\":\"${agent_id}\""
     body="${body}}"
     curl -sf -X POST "${AGAMEMNON_URL}/v1/teams/${team_id}/tasks" \
+        "${AGAMEMNON_AUTH[@]}" \
         -H "Content-Type: application/json" \
         -d "$body"
 }
 
 agamemnon_get_tasks() {
-    curl -sf "${AGAMEMNON_URL}/v1/tasks" 2>/dev/null
+    curl -sf "${AGAMEMNON_URL}/v1/tasks" 2>/dev/null "${AGAMEMNON_AUTH[@]}"
 }
 
 agamemnon_get_task_status() {
@@ -121,16 +134,17 @@ run_task_lifecycle() {
 agamemnon_inject_fault() {
     local fault_type="$1"
     curl -sf -X POST "${AGAMEMNON_URL}/v1/chaos/${fault_type}" \
+        "${AGAMEMNON_AUTH[@]}" \
         -H "Content-Type: application/json" -d '{}'
 }
 
 agamemnon_remove_fault() {
     local fault_id="$1"
-    curl -sf -X DELETE "${AGAMEMNON_URL}/v1/chaos/${fault_id}"
+    curl -sf -X DELETE "${AGAMEMNON_URL}/v1/chaos/${fault_id}" "${AGAMEMNON_AUTH[@]}"
 }
 
 agamemnon_list_faults() {
-    curl -sf "${AGAMEMNON_URL}/v1/chaos" 2>/dev/null
+    curl -sf "${AGAMEMNON_URL}/v1/chaos" 2>/dev/null "${AGAMEMNON_AUTH[@]}"
 }
 
 # ─── Raw POST (for security/malformed tests) ─────────────────────────────────
@@ -138,6 +152,7 @@ agamemnon_list_faults() {
 agamemnon_raw_post() {
     local path="$1" body="$2" content_type="${3:-application/json}"
     curl -s -o /dev/null -w "%{http_code}" -X POST "${AGAMEMNON_URL}${path}" \
+        "${AGAMEMNON_AUTH[@]}" \
         -H "Content-Type: ${content_type}" \
         --max-time 10 \
         -d "$body" 2>/dev/null || echo "000"
