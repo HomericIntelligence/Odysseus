@@ -55,7 +55,12 @@ run_fanout_test() {
 run_fanout_test 10 "B06" 60
 
 # ─── B07: 50 concurrent tasks ───────────────────────────────────────────────
-run_fanout_test 50 "B07" 120
+# 150s: the hello-world worker is MaxAckPending=1 with a deliberate ~1s/task
+# processing delay, and the harness waits for tasks sequentially (2s poll
+# granularity), so the tail of a 50-task batch needs headroom on a shared CI
+# runner. Observed 47/50 in 120s; 150s (3s/task) matches the worker's by-design
+# rate without weakening the "all tasks drain" assertion.
+run_fanout_test 50 "B07" 150
 
 # ─── B08: 100 concurrent tasks ──────────────────────────────────────────────
 # Only run on T1/T3/T4 (T2 is too slow for 100 tasks via tmux)
