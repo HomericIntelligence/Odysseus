@@ -123,8 +123,18 @@ jobs:
         run: cd control/Agamemnon && pixi run conan profile detect --force
 
       - name: Build mesh binaries (Agamemnon + myrmidon) from source
-        # `just build` produces build/Agamemnon/Agamemnon_server —
-        # the first path start_agamemnon_bg (e2e/lib/process.sh) searches.
+        # `just build` produces build/Agamemnon/Agamemnon_server and
+        # build/Myrmidons/hello-world/hello_myrmidon — the two binaries the T1
+        # harness (e2e/lib/process.sh) searches for.
+        #
+        # SKIP_ODYSSEY_BUILD=true: the T1 reliability mesh needs only Agamemnon +
+        # the myrmidon worker. `_build-odyssey` builds the ProjectOdyssey Mojo
+        # research repo via `podman compose` (odyssey-dev container), which is
+        # unrelated to this suite and fails on a stock runner (podman is present
+        # so the recipe's `podman info` guard passes, but the compose service
+        # isn't provisioned). Skip it explicitly rather than rely on that guard.
+        env:
+          SKIP_ODYSSEY_BUILD: "true"
         run: just build
 
       - name: Run T1 reliability suite (all categories) and assert exit 0
