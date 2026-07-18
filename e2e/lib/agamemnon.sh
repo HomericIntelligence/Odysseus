@@ -69,7 +69,12 @@ agamemnon_create_task() {
 }
 
 agamemnon_get_tasks() {
-    curl -sf "${AGAMEMNON_URL}/v1/tasks" 2>/dev/null "${AGAMEMNON_AUTH[@]}"
+    # limit=1000 (the server's kMaxLimit): GET /v1/tasks paginates at 100 by
+    # default and sorts by task UUID, so once a suite run accumulates >100
+    # tasks, any task whose UUID sorts past the first page becomes invisible
+    # to status polls — it reads as not_found forever and its wait times out.
+    # That is exactly what broke B07/B08 fan-out (4/50 "lost", then a hang).
+    curl -sf "${AGAMEMNON_URL}/v1/tasks?limit=1000" 2>/dev/null "${AGAMEMNON_AUTH[@]}"
 }
 
 agamemnon_get_task_status() {
@@ -82,6 +87,20 @@ tasks = json.load(sys.stdin).get('tasks', [])
 match = [t for t in tasks if t.get('id') == '${task_id}']
 print(match[0].get('status', 'unknown') if match else 'not_found')
 "
+}
+
+# Count how many of the given task ids ($@) are "completed" — ONE task-list
+# fetch per call, so batch waiters (fan-out) poll in O(1) requests instead of
+# one request per task. Prints the count; returns 1 if the list fetch fails.
+agamemnon_count_completed() {
+    local tasks
+    tasks=$(agamemnon_get_tasks) || { echo 0; return 1; }
+    echo "$tasks" | python3 -c "
+import sys, json
+ids = set(sys.argv[1:])
+tasks = json.load(sys.stdin).get('tasks', [])
+print(sum(1 for t in tasks if t.get('id') in ids and t.get('status') == 'completed'))
+" "$@"
 }
 
 # Wait for a task to reach "completed" status. Returns 0 on success, 1 on timeout.

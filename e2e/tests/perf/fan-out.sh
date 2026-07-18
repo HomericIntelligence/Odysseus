@@ -36,10 +36,18 @@ run_fanout_test() {
         pass "$test_id: Created $count tasks" || \
         { fail "$test_id: Only created ${#task_ids[@]}/$count tasks"; return 1; }
 
-    # Wait for all to complete
-    local completed=0
-    for tid in "${task_ids[@]}"; do
-        agamemnon_wait_task_completed "$tid" "$timeout" && completed=$((completed + 1))
+    # Wait for all to complete under ONE shared deadline for the whole batch.
+    # Never wait per-task: sequential per-task timeouts multiply by batch size
+    # when tasks are stuck (B08's worst case was 100 x 180s = 5h), which turned
+    # a test failure into a CI job-timeout CANCEL instead of a fast FAIL.
+    # agamemnon_count_completed is one GET per poll, not one per task.
+    local completed=0 deadline
+    deadline=$(( $(date +%s) + timeout ))
+    while :; do
+        completed=$(agamemnon_count_completed "${task_ids[@]}") || completed=0
+        [ "$completed" -ge "$count" ] && break
+        [ "$(date +%s)" -ge "$deadline" ] && break
+        sleep 2
     done
 
     local end_ts elapsed_ms
@@ -55,11 +63,10 @@ run_fanout_test() {
 run_fanout_test 10 "B06" 60
 
 # ─── B07: 50 concurrent tasks ───────────────────────────────────────────────
-# 150s: the hello-world worker is MaxAckPending=1 with a deliberate ~1s/task
-# processing delay, and the harness waits for tasks sequentially (2s poll
-# granularity), so the tail of a 50-task batch needs headroom on a shared CI
-# runner. Observed 47/50 in 120s; 150s (3s/task) matches the worker's by-design
-# rate without weakening the "all tasks drain" assertion.
+# 150s shared deadline for the whole batch. The worker is MaxAckPending=1 but
+# runs with MYRMIDON_WORK_DELAY_MS=0 in T1 (process.sh), so a 50-task batch
+# drains at real dispatch speed (B06: 10 tasks in <1s); 150s (3s/task) is
+# headroom for a shared CI runner without weakening the "all drain" assertion.
 run_fanout_test 50 "B07" 150
 
 # ─── B08: 100 concurrent tasks ──────────────────────────────────────────────
