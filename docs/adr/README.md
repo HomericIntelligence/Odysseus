@@ -23,7 +23,8 @@ choice, its context, decision rationale, and consequences.
 | [014](014-runnable-evidence-for-metric-claims.md) | Runnable Evidence for Metric and Training-Run Claims | Proposed | — | — |
 | [015](015-drop-project-prefix.md) | Drop the `Project` Prefix Across the HomericIntelligence Ecosystem | Accepted | — | — |
 | [016](016-split-hephaestus.md) | Split `Hephaestus` — Library vs Agentic Plugins | Accepted | — | — |
-| [017](017-uv-for-python-pixi-for-toolchains.md) | uv for Pure-Python Repos, pixi Where a Conda Toolchain Is Required | Proposed | — | — |
+| [017](017-uv-for-python-pixi-for-toolchains.md) | uv for Pure-Python Repos, pixi Where a Conda Toolchain Is Required | Superseded | — | [ADR-018](018-uv-ecosystem-wide.md) |
+| [018](018-uv-ecosystem-wide.md) | uv Is the Ecosystem-Wide Standard — Toolchains via PyPI, apt, and the Mojo pip Package | Proposed | [ADR-017](017-uv-for-python-pixi-for-toolchains.md) | — |
 
 ## How to Create a New ADR
 
