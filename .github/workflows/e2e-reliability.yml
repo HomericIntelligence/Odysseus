@@ -99,6 +99,13 @@ jobs:
       - name: Install Python NATS client (used by scenario assertions)
         run: pip install nats-py
 
+      - name: Detect Conan profile
+        # `just build` -> _build-agamemnon runs `pixi run conan install`, which
+        # needs a default *build* profile in ~/.conan2. On a stock runner there
+        # is none (Agamemnon's own CI runs this same step). Detect it via the
+        # pixi-provided conan so the toolchain matches the recipe's.
+        run: cd control/Agamemnon && pixi run conan profile detect --force
+
       - name: Build mesh binaries (Agamemnon + myrmidon) from source
         # `just build` produces build/Agamemnon/Agamemnon_server —
         # the first path start_agamemnon_bg (e2e/lib/process.sh) searches.
