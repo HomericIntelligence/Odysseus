@@ -69,7 +69,7 @@ ecosystem-table:
 # ===========================================================================
 
 # Build all compilable submodules into build/<name>/ (C++/CMake + Mojo)
-build: _build-agamemnon _build-nestor _build-charybdis _build-keystone _build-odyssey
+build: _build-agamemnon _build-nestor _build-charybdis _build-keystone _build-odyssey _build-myrmidon
     @echo "=== Build complete. Artifacts in {{BUILD_ROOT}}/ ==="
 
 # One-command setup for a fresh clone (after pixi is installed at root)
@@ -168,6 +168,17 @@ _build-odyssey:
     fi
     cd research/Odyssey
     BUILD_ROOT="{{BUILD_ROOT}}/Odyssey" just build
+
+_build-myrmidon:
+    @echo "--- Building provisioning/Myrmidons/hello-world (hello_myrmidon) ---"
+    # Produces {{BUILD_ROOT}}/Myrmidons/hello-world/hello_myrmidon — the first
+    # path start_myrmidon_bg (e2e/lib/process.sh:115) searches. Plain
+    # FetchContent (nats.c + nlohmann/json), no Conan toolchain needed.
+    @if [ -d "{{BUILD_ROOT}}/Myrmidons/hello-world" ]; then rm -rf "{{BUILD_ROOT}}/Myrmidons/hello-world/CMakeCache.txt" "{{BUILD_ROOT}}/Myrmidons/hello-world/CMakeFiles"; fi
+    pixi run cmake -S provisioning/Myrmidons/hello-world -B "{{BUILD_ROOT}}/Myrmidons/hello-world" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -G Ninja
+    pixi run cmake --build "{{BUILD_ROOT}}/Myrmidons/hello-world"
 
 # ===========================================================================
 # Test
