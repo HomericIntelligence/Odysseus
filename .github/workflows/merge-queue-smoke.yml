@@ -1,0 +1,52 @@
+# Fast merge-queue gate. This is the ONLY workflow that runs on merge_group
+# events: _required.yml, build-images.yml, install-test.yml, and release.yml
+# no longer trigger there, so re-running the full required matrix per queue
+# entry (70-90 min of runner-slot starvation) is replaced by this single job.
+# PR-side CI is completely untouched; after the ruleset flip,
+# `merge-queue-smoke` is the only ruleset-required context and is produced
+# exclusively on merge_group events by this job.
+#
+# The steps below are real, fail-fast validations borrowed from the repo's
+# fastest required jobs (lint, install, release). They are NOT decorative: a
+# malformed YAML/JSON config, a broken installer script, or a broken release
+# contract in the merge group fails the queue entry.
+name: Merge Queue Smoke
+
+on:
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mq-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  merge-queue-smoke:
+    name: merge-queue-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Lint YAML (configs/ and .github/workflows/)
+        run: yamllint -d relaxed configs/ .github/workflows/
+
+      - name: Validate all JSON files in configs/
+        run: |
+          set -euo pipefail
+          find configs/ -name "*.json" -print0 | xargs -0 -r -I{} jq . {} > /dev/null
+          echo "All JSON OK"
+
+      - name: Installer script is valid bash
+        run: bash -n install.sh
+
+      - name: Release-contract regression tests (dry-run)
+        run: bash tests/release/release.test.sh
