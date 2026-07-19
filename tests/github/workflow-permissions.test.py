@@ -90,17 +90,38 @@ def assert_workflow_structure() -> None:
         f"required workflow context union changed: got {supplied_contexts!r}"
     )
 
+    # Merge-queue checks are served solely by the single fast
+    # `merge-queue-smoke` job in merge-queue-smoke.yml. The context-supplying
+    # workflows must NOT run for merge groups any more: re-running the full
+    # required matrix per queue entry serialized on runner slots (70-90 min
+    # per merge). PR-side CI is untouched.
+    for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+        relative_path = str(path.relative_to(ROOT))
+        triggers = load_workflow(relative_path).get("on")
+        if not isinstance(triggers, dict):
+            raise AssertionError(f"{relative_path} on must be a mapping")
+        if relative_path == ".github/workflows/merge-queue-smoke.yml":
+            assert triggers.get("merge_group") == {"types": ["checks_requested"]}, (
+                "merge-queue-smoke.yml must handle merge_group checks_requested"
+            )
+        else:
+            assert "merge_group" not in triggers, (
+                f"{relative_path} must not run for merge groups; the queue is "
+                "served solely by merge-queue-smoke.yml"
+            )
+
+    smoke = load_workflow(".github/workflows/merge-queue-smoke.yml")
+    smoke_jobs = smoke.get("jobs")
+    assert isinstance(smoke_jobs, dict) and list(smoke_jobs) == ["merge-queue-smoke"], (
+        "merge-queue-smoke.yml must define exactly one job: merge-queue-smoke"
+    )
+    assert smoke_jobs["merge-queue-smoke"].get("name") == "merge-queue-smoke"
+    assert permissions(smoke) == {"contents": "read"}, (
+        "merge-queue-smoke.yml workflow permissions must be exactly contents: read"
+    )
+
     for path in REQUIRED_WORKFLOWS:
         workflow = load_workflow(path)
-        triggers = workflow.get("on")
-        if not isinstance(triggers, dict):
-            raise AssertionError(f"{path} on must be a mapping")
-        merge_group = triggers.get("merge_group")
-        assert merge_group == {"types": ["checks_requested"]}, (
-            f"{path} must handle only merge_group checks_requested; "
-            f"got {merge_group!r}"
-        )
-
         jobs = workflow.get("jobs")
         if not isinstance(jobs, dict):
             raise AssertionError(f"{path} jobs must be a mapping")

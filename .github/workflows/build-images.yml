@@ -20,8 +20,8 @@ name: Build Images
 on:
   pull_request:
     branches: [main]
-  merge_group:
-    types: [checks_requested]
+  # merge_group intentionally removed: merge-queue checks are served by the
+  # single fast `merge-queue-smoke` job in merge-queue-smoke.yml (see that file).
   push:
     branches: [main]
     tags:
