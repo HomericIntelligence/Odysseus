@@ -43,9 +43,17 @@ for i in range(20):
     task_id = resp.get('task', {}).get('id', '')
 
     # Poll for completion
+    #
+    # GET /v1/tasks paginates at kDefaultLimit=100 (routes.cpp) and
+    # list_all_tasks sorts by task UUID before slicing (store.cpp), so once
+    # earlier scenarios in the run (fan-out.sh alone leaves 160 tasks behind
+    # it) have pushed the store past 100 entries, a newly created task's UUID
+    # can sort past page 1 and never appear in an unpaginated GET — the same
+    # class of bug agamemnon_get_tasks (agamemnon.sh) already works around
+    # with limit=1000 (the server's kMaxLimit). Mirror that here.
     for _ in range(60):
         tasks = json.loads(urllib.request.urlopen(
-            urllib.request.Request(f'{base}/v1/tasks', headers=auth)).read())
+            urllib.request.Request(f'{base}/v1/tasks?limit=1000', headers=auth)).read())
         match = [t for t in tasks.get('tasks', []) if t.get('id') == task_id]
         if match and match[0].get('status') == 'completed':
             break
