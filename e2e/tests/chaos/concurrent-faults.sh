@@ -109,7 +109,18 @@ AFTER_COUNT=$(echo "$FAULTS_AFTER" | python3 -c "import sys,json; print(len(json
     fail "E13: $AFTER_COUNT faults still active after clearance"
 
 # Final task lifecycle to prove full recovery
-run_task_lifecycle "hello" 30 && \
+#
+# 60s (not the library default 30s): this lifecycle runs immediately after
+# clearing a "kill" fault (one of the three injected above) on a mesh that,
+# by the concurrent-faults position in the chaos category, has already
+# processed the full fault + perf + protocol + security categories in this
+# same run — the store holds several hundred tasks and the debug-build
+# Agamemnon server is under sustained load (see perf/latency.sh's B04, which
+# measures materially higher round-trip latency than at suite start). Give
+# it the same headroom already used for other late/heavy scenarios in this
+# suite (fan-out.sh B07=150s/B08=180s, nats-crash-reconnect.sh's second
+# lifecycle=90s) rather than the library's cold-start default.
+run_task_lifecycle "hello" 60 && \
     pass "E13: Task lifecycle works after cascade recovery" || \
     fail "E13: Task lifecycle broken after cascade"
 

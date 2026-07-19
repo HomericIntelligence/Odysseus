@@ -11,7 +11,17 @@ source "$(dirname "$(dirname "$SCRIPT_DIR")")/lib/agamemnon.sh"
 info "E11: Random service restart during message flow"
 
 # Verify baseline
-run_task_lifecycle "hello" 30 && \
+#
+# 60s (not the library default 30s): random-restart runs last in the chaos
+# category, after fault + perf + protocol + security have all already run in
+# this same process mesh. By this point the task store holds several hundred
+# entries and the (debug-build, per justfile) Agamemnon server has been under
+# continuous load for minutes — round-trip latency measured by perf/latency.sh
+# earlier in the same run (B04) is materially higher than at suite start, so a
+# single hello-task lifecycle needs the same kind of headroom already given to
+# fan-out.sh's late/large batches (B07=150s, B08=180s) and the second
+# nats-crash-reconnect.sh lifecycle (90s).
+run_task_lifecycle "hello" 60 && \
     pass "E11: Baseline lifecycle passes" || \
     fail_exit "E11: Baseline failed"
 

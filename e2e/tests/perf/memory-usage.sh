@@ -38,14 +38,20 @@ for i in range(1000):
 elapsed = time.monotonic() - start
 print(f'Created {created} agents in {elapsed:.1f}s ({created/elapsed:.0f} agents/sec)')
 
-# Query agent list to verify
+# Query agent list to verify. GET /v1/agents paginates at kDefaultLimit=100
+# (routes.cpp) and sorts by agent UUID before slicing (store.cpp) — mirror
+# the limit=1000 (kMaxLimit) workaround agamemnon_get_tasks (agamemnon.sh)
+# already applies for the same pagination shape on /v1/tasks, and give the
+# two post-loop requests their own explicit timeout so one slow response
+# (this runs after 1000 rapid POSTs against a debug build) can't silently
+# read as 'bulk creation failed' via an unbounded urlopen() hang.
 agents = json.loads(urllib.request.urlopen(
-    urllib.request.Request(f'{base}/v1/agents', headers=auth)).read())
+    urllib.request.Request(f'{base}/v1/agents?limit=1000', headers=auth), timeout=30).read())
 total = len(agents.get('agents', []))
 print(f'Total agents in store: {total}')
 
 # Health check — Agamemnon should still be responsive
-health = json.loads(urllib.request.urlopen(f'{base}/v1/health').read())
+health = json.loads(urllib.request.urlopen(f'{base}/v1/health', timeout=30).read())
 print(f'Health: {health.get(\"status\", \"unknown\")}')
 " 2>/dev/null && \
     pass "B13: 1000 agents created, Agamemnon responsive" || \
