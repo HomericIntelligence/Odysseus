@@ -40,7 +40,7 @@ RUNTIME_PREFIX="${ODYSSEUS_RUNTIME_PREFIX:-$HOME/.local}"
 # `hermes` WSL host this oversubscribes CPU ~2x and (with parallel pixi solves)
 # exhausts RAM + swap, hanging the VM. Default 2 cores/build; with the agent
 # concurrency cap (HERMES_MAX_CONCURRENT_AGENTS=3) that is <=6 of 8 cores.
-# Override with ODYSSEUS_BUILD_JOBS. See Odysseus CLAUDE.md "Resource limits".
+# Override with ODYSSEUS_BUILD_JOBS. See Odysseus AGENTS.md "Resource limits".
 BUILD_JOBS="${ODYSSEUS_BUILD_JOBS:-2}"
 
 # Pre-create install tree so nats.c FetchContent install doesn't fail trying

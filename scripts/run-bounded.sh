@@ -4,7 +4,7 @@
 # Wrap pixi / cmake / podman / pytest invocations so an over-budget process
 # fails as a recoverable error of ITS OWN, instead of letting the kernel
 # OOM-killer thrash swap and hang the whole WSL VM. This is the defense that
-# would have contained the `hermes` host overload (see Odysseus CLAUDE.md
+# would have contained the `hermes` host overload (see Odysseus AGENTS.md
 # "Resource limits & concurrency"): `ulimit -v` turns the uncatchable SIGKILL
 # into a normal non-zero exit / MemoryError that unwinds cleanly.
 #

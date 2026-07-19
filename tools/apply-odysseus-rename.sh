@@ -17,7 +17,7 @@
 # Files NEVER touched (always left for human follow-up):
 #   - .github/workflows/* (require human review per AGENTS.md)
 #   - submodule working trees (separate upstream repos)
-#   - docs/adr/00*.md (append-only per CLAUDE.md principle 3)
+#   - docs/adr/00*.md (append-only per AGENTS.md Key Principles item 3)
 #
 # USAGE
 #   tools/apply-odysseus-rename.sh           # dry-run (DEFAULT; safe)
@@ -84,7 +84,7 @@ SCOPE_FILES=(
 OUT_OF_SCOPE=(
     ".github/workflows/* — requires human review per AGENTS.md"
     "submodule working trees — separate upstream repos; do not edit from meta-repo"
-    "docs/adr/00*.md — append-only per CLAUDE.md principle 3"
+    "docs/adr/00*.md — append-only per AGENTS.md Key Principles item 3"
 )
 
 # Hyphen/underscore-prefix sanity guard.

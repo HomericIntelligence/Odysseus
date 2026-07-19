@@ -261,7 +261,7 @@ just --list
 
 ### Development
 
-- **Project Structure** → `CLAUDE.md` (repo layout and development guidelines)
+- **Project Structure** → `AGENTS.md` (repo layout and development guidelines)
 - **CI/CD Pipelines** → `ci-cd/Proteus/` (Dagger TypeScript)
 - **E2E Tests** → `e2e/` (integration and topology tests)
 - E2E scenario coverage is mapped in [`e2e/tests/README.md`](../e2e/tests/README.md)

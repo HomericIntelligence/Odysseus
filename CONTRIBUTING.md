@@ -299,7 +299,7 @@ or skip independent human review of workflow changes.
 - **ADR format**: See existing ADRs in `docs/adr/` for the template
 - **Runbook format**: See existing runbooks in `docs/runbooks/` for the template
 - **Component map**: See `docs/architecture.md` for the full system overview
-- **Project overview**: See `CLAUDE.md` for repository structure and principles
+- **Project overview**: See `AGENTS.md` for repository structure and principles
 
 ## Reporting Issues
 
@@ -331,7 +331,7 @@ See [SECURITY.md](SECURITY.md) for the responsible disclosure process.
 
 If you have questions:
 
-1. Check existing documentation in [CLAUDE.md](CLAUDE.md) and [docs/architecture.md](docs/architecture.md)
+1. Check existing documentation in [AGENTS.md](AGENTS.md) and [docs/architecture.md](docs/architecture.md)
 2. Search existing GitHub issues
 3. Create a new discussion or issue with your question
 
