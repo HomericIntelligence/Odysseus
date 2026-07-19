@@ -20,7 +20,13 @@ import asyncio, json, time, nats as natslib
 
 async def throughput_test(nc, payload_size, count, label):
     payload = b'x' * payload_size
-    subject = 'hi.myrmidon.hello.throughput-test'
+    # Deliberately NOT under hi.myrmidon.hello.>: these raw non-JSON payloads
+    # land in the homeric-myrmidon stream, and the hello-myrmidon durable pull
+    # consumer (MaxAckPending=1) NAK-loops forever on the first unparseable
+    # message, head-of-line blocking every later hello task in the suite.
+    # B01-B03 measure NATS server throughput, not the worker, so publish to a
+    # sibling subject no consumer filters.
+    subject = 'hi.myrmidon.perf.throughput-test'
 
     start = time.monotonic()
     for _ in range(count):

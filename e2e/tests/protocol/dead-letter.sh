@@ -18,13 +18,16 @@ agamemnon_start_agent "$AGENT_ID" >/dev/null
 TEAM_RESP=$(agamemnon_create_team "dead-letter-team")
 TEAM_ID=$(echo "$TEAM_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('team',{}).get('id',''))")
 
-# Create a task with type=nonexistent — dispatches to hi.myrmidon.nonexistent.{task_id}
-# No myrmidon subscribes to this subject, so the message has no consumer.
-TASK_RESP=$(agamemnon_create_task "$TEAM_ID" "Dead letter test" "nonexistent" "$AGENT_ID")
+# Create a task with type=research — dispatches to hi.myrmidon.research.{task_id}.
+# No myrmidon subscribes to that subject in this topology, so the message has no
+# consumer. (An arbitrary made-up type no longer works: Agamemnon validates the
+# type against kValidTaskTypes in routes.cpp and rejects unknown types with 400,
+# which under `set -e` killed this script at creation time.)
+TASK_RESP=$(agamemnon_create_task "$TEAM_ID" "Dead letter test" "research" "$AGENT_ID")
 TASK_ID=$(echo "$TASK_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('id',''))")
 
 [ -n "$TASK_ID" ] && [ "$TASK_ID" != "None" ] && \
-    pass "C08: Task created with nonexistent type (no subscriber)" || \
+    pass "C08: Task created with unserved type (no subscriber)" || \
     fail_exit "C08: Task creation failed"
 
 # Wait briefly — task should stay pending (no consumer to process it)
