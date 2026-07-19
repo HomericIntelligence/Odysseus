@@ -41,9 +41,12 @@ info "A14: SIGTERM behavior"
 CONN_BEFORE=$(nats_connection_count 2>/dev/null || echo "0")
 pass "A14: Current NATS connections: $CONN_BEFORE (would decrease on clean SIGTERM shutdown)"
 
-# Verify the myrmidon has signal handlers (check main.py code pattern)
+# Verify the myrmidon has signal handlers. The hello-world worker is C++
+# (main.cpp), which registers std::signal(SIGINT/SIGTERM, ...) — see
+# provisioning/Myrmidons/hello-world/main.cpp. (It used to be a Python main.py;
+# this check followed the rename per #392.)
 ODYSSEUS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-MYRMIDON_MAIN="$ODYSSEUS_ROOT/provisioning/Myrmidons/hello-world/main.py"
+MYRMIDON_MAIN="$ODYSSEUS_ROOT/provisioning/Myrmidons/hello-world/main.cpp"
 grep -q "SIGTERM" "$MYRMIDON_MAIN" 2>/dev/null && grep -q "SIGINT" "$MYRMIDON_MAIN" 2>/dev/null && \
     pass "A14: Myrmidon has SIGTERM/SIGINT handlers" || \
     skip "A14: Cannot verify myrmidon signal handlers"

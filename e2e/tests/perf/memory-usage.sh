@@ -17,6 +17,9 @@ python3 -c "
 import urllib.request, json, time
 
 base = 'http://localhost:${AGAMEMNON_PORT}'
+# Agamemnon enforces X-API-Key on every non-exempt /v1/* endpoint (auth.cpp);
+# raw urllib calls must carry it just like the curl helpers do.
+auth = {'X-API-Key': '${AGAMEMNON_API_KEY}'}
 
 # Create 1000 agents
 start = time.monotonic()
@@ -27,7 +30,7 @@ for i in range(1000):
                         'tags': ['mem'], 'owner': 'e2e', 'role': 'member'}).encode()
     try:
         req = urllib.request.Request(f'{base}/v1/agents', data=body,
-                                     headers={'Content-Type': 'application/json'})
+                                     headers={'Content-Type': 'application/json', **auth})
         urllib.request.urlopen(req)
         created += 1
     except: pass
@@ -36,7 +39,8 @@ elapsed = time.monotonic() - start
 print(f'Created {created} agents in {elapsed:.1f}s ({created/elapsed:.0f} agents/sec)')
 
 # Query agent list to verify
-agents = json.loads(urllib.request.urlopen(f'{base}/v1/agents').read())
+agents = json.loads(urllib.request.urlopen(
+    urllib.request.Request(f'{base}/v1/agents', headers=auth)).read())
 total = len(agents.get('agents', []))
 print(f'Total agents in store: {total}')
 

@@ -35,10 +35,15 @@ OBSERVED_STATES=$(python3 -c "
 import urllib.request, json, time
 task_id = '${RAPID_TASK_ID}'
 base = 'http://localhost:${AGAMEMNON_PORT}'
+# Agamemnon enforces X-API-Key on every non-exempt /v1/* endpoint (auth.cpp);
+# without it every poll 401s silently inside the try/except and the check
+# would pass vacuously on an empty state set.
+auth = {'X-API-Key': '${AGAMEMNON_API_KEY}'}
 states = set()
 for _ in range(60):
     try:
-        resp = urllib.request.urlopen(f'{base}/v1/tasks')
+        resp = urllib.request.urlopen(
+            urllib.request.Request(f'{base}/v1/tasks', headers=auth))
         tasks = json.loads(resp.read()).get('tasks', [])
         match = [t for t in tasks if t.get('id') == task_id]
         if match:
