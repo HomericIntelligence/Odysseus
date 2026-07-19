@@ -475,4 +475,3 @@ jobs:
 
       - name: Validate version consistency (pixi.toml vs CHANGELOG)
         run: python3 scripts/check_version_consistency.py
-
