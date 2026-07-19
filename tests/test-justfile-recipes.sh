@@ -12,7 +12,7 @@ info "justfile parse round-trip"
 if just --summary >/dev/null 2>&1; then pass "just --summary parses"; else fail "just --summary failed"; fi
 if just --list >/dev/null 2>&1; then pass "just --list parses"; else fail "just --list failed"; fi
 
-info "canonical recipes documented in CLAUDE.md exist"
+info "canonical recipes documented in AGENTS.md exist"
 mapfile -t recipes < <(just --summary | tr ' ' '\n' | sort -u)
 for r in bootstrap status update-submodules apply-all hermes-start \
          argus-start telemachy-run validate-configs ci \

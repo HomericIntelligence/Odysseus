@@ -58,7 +58,7 @@ ISSUE_NUMBER = int(os.environ.get("ISSUE_NUMBER", "8"))
 # Cap concurrent HEAVY Claude agent invocations (each does clone -> pixi install
 # (a ~0.5-1 GB conda/pypi SAT solve) -> C++ build). On the 16 GB / 8-core `hermes`
 # WSL host, fanning all 16 repos out at once exhausted RAM + 16 GB swap and hung
-# the VM (see CLAUDE.md "Resource limits & concurrency"). Default 3 keeps peak at
+# the VM (see AGENTS.md "Resource limits & concurrency"). Default 3 keeps peak at
 # ~3 x 3 GB with headroom; override with HERMES_MAX_CONCURRENT_AGENTS.
 MAX_CONCURRENT_HEAVY = int(os.environ.get("HERMES_MAX_CONCURRENT_AGENTS", "3"))
 
