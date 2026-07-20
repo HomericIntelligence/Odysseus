@@ -18,6 +18,12 @@ fi
 # ─── C02: Dedup window prevents duplicates ───────────────────────────────────
 info "C02: Publish with dedup — no duplicates"
 
+# hi.myrmidon.hello.dedup-test matches the hello-myrmidon durable pull
+# consumer's FilterSubject (hi.myrmidon.hello.>, MaxAckPending=1) — that
+# worker sees these non-task payloads too. Left unpurged, they sit ahead of
+# every real hello task submitted later in the run (same head-of-line-
+# blocking shape documented in malformed-nats.sh and confirmed against run
+# 29719332327). Purge this test's subject once C02 is done publishing.
 python3 -c "
 import asyncio, json, nats as natslib
 from nats.js.api import StreamConfig
@@ -25,6 +31,7 @@ from nats.js.api import StreamConfig
 async def main():
     nc = await natslib.connect('nats://localhost:${NATS_PORT}')
     js = nc.jetstream()
+    jsm = nc.jsm()
 
     # Publish the same message ID twice — JetStream should dedup
     msg_id = 'dedup-test-msg-001'
@@ -43,6 +50,7 @@ async def main():
         # This may happen if dedup window is not configured — document it
         print('NOTE: JetStream dedup requires MaxAge or Duplicates window on stream config')
 
+    await jsm.purge_stream('homeric-myrmidon', subject='hi.myrmidon.hello.dedup-test')
     await nc.close()
 
 asyncio.run(main())
@@ -58,13 +66,19 @@ info "C03: Nak causes message redelivery"
 # Note: Current myrmidon uses core NATS subscribe (not JetStream pull consumer).
 # Ack/Nak semantics only apply to JetStream consumers.
 # This test documents the current at-most-once behavior.
-
+#
+# hi.myrmidon.hello.nak-test matches hello-myrmidon's FilterSubject too, and
+# this test deliberately NAKs the first delivery — precisely the pattern
+# that head-of-line-blocks that shared consumer if the message (or its
+# redelivery) is left in the stream afterward. Purge unconditionally,
+# whichever branch of the try/except above was taken.
 python3 -c "
 import asyncio, json, nats as natslib
 
 async def main():
     nc = await natslib.connect('nats://localhost:${NATS_PORT}')
     js = nc.jetstream()
+    jsm = nc.jsm()
 
     # Publish a test message
     payload = json.dumps({'test': 'nak-redeliver'}).encode()
@@ -89,6 +103,8 @@ async def main():
             print('DIFFERENT: Got different message after NAK')
     except asyncio.TimeoutError:
         print('TIMEOUT: No redelivery after NAK within 10s')
+    finally:
+        await jsm.purge_stream('homeric-myrmidon', subject='hi.myrmidon.hello.nak-test')
 
     await sub.unsubscribe()
     await nc.close()

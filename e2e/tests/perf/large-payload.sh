@@ -15,12 +15,20 @@ else
     NATS_PORT="${NATS_PORT:-4222}"
 fi
 
+# hi.myrmidon.hello.large-payload-test matches the hello-myrmidon durable
+# pull consumer's FilterSubject (hi.myrmidon.hello.>, MaxAckPending=1) — that
+# worker sees this 900KB non-task payload too, independent of this test's
+# own large-payload-consumer. Left unpurged, it sits ahead of every real
+# hello task submitted later in the run (same head-of-line-blocking shape
+# documented in malformed-nats.sh and confirmed against run 29719332327).
+# Purge this test's subject after reading the message back.
 python3 -c "
 import asyncio, json, nats as natslib
 
 async def main():
     nc = await natslib.connect('nats://localhost:${NATS_PORT}')
     js = nc.jetstream()
+    jsm = nc.jsm()
 
     # Create a ~900KB payload (NATS default max_payload is 1MB including headers)
     large_data = 'A' * (900 * 1024)
@@ -50,6 +58,7 @@ async def main():
         exit(1)
 
     await sub.unsubscribe()
+    await jsm.purge_stream('homeric-myrmidon', subject='hi.myrmidon.hello.large-payload-test')
     await nc.close()
 
 asyncio.run(main())
