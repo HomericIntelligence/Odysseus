@@ -94,44 +94,59 @@ echo "$HEALTH" | python3 -c "import sys,json; assert json.load(sys.stdin).get('s
 
 # ── Cleanup: purge the malformed messages from the stream ────────────────────
 # The hello-myrmidon durable pull consumer (MaxAckPending=1) NAKs unparseable
-# messages and JetStream redelivers them immediately, so without a purge the
-# garbage published above head-of-line blocks every later hello task in the
-# run (the chaos category runs after security). Purging only this test's
-# subject removes the poison while leaving real task messages untouched.
+# messages and JetStream redelivers them, so without cleanup the garbage
+# published above head-of-line blocks every later hello task in the run (the
+# chaos category runs after security). Purging only this test's subject
+# removes the poison while leaving real task messages untouched.
 #
-# A single purge races the consumer: MaxAckPending=1 means at most one
-# malformed message is ever "in flight" (delivered-but-unacked) at a time,
-# and NAK's immediate redelivery can hand the consumer a fresh copy in the
-# same instant the purge runs — a copy the stream-level purge can no longer
-# reach once it has already been redelivered. That message then permanently
-# occupies the consumer's one ack-pending slot, silently head-of-line-
-# blocking every real hello task for the rest of the run (observed: E13's
-# and E11's post-security run_task_lifecycle baselines both timing out with
-# no error afterward, run 29711342293). Poll the consumer's own JetStream
-# state — not a fixed sleep — and re-purge until both its redelivery queue
-# (num_pending) and in-flight slot (num_ack_pending) are actually empty.
+# Do NOT gate this on the consumer's overall num_pending/num_ack_pending
+# reaching zero: by the time this test runs, the shared homeric-myrmidon
+# stream already carries a large legitimate backlog from every earlier
+# fan-out/throughput/backpressure scenario (observed: 11681+ stream messages
+# before this test even starts, run 29717958552) that the single
+# MaxAckPending=1 worker has not finished draining. num_pending for the
+# hello-myrmidon consumer is routinely nonzero at this point in the suite —
+# waiting for it to hit zero here just times out on unrelated backlog, it
+# never signals whether OUR poison is gone (confirmed: the drained-wait
+# fix attempted in commit 3c40716 still reported "Consumer still has
+# pending/ack-pending messages" after 10 retries and did not fix E13/E11).
+#
+# What actually matters: are any messages still stream-resident on our
+# specific subject (hi.myrmidon.hello.malformed-test)? Check that via
+# stream_info's subjects_filter — independent of the rest of the stream's
+# backlog — after purging, and after a fixed settle window sized to the
+# worker's own fetch/Nak/redeliver cycle (Fetch(1, 5000ms) per message, up
+# to 4 payloads) so any copy that was mid-delivery at purge time has had a
+# full cycle to be Nak'd and either redelivered (then caught by a second
+# purge) or fall out of the filtered subject entirely.
 python3 -c "
 import asyncio, nats as natslib
+
+async def leftover_count(jsm):
+    info = await jsm.stream_info('homeric-myrmidon', subjects_filter='hi.myrmidon.hello.malformed-test')
+    subjects = info.state.subjects or {}
+    return sum(subjects.values())
 
 async def main():
     nc = await natslib.connect('nats://localhost:${NATS_PORT}')
     jsm = nc.jsm()
 
-    drained = False
-    for _attempt in range(10):
+    await jsm.purge_stream('homeric-myrmidon', subject='hi.myrmidon.hello.malformed-test')
+
+    clean = (await leftover_count(jsm)) == 0
+    if not clean:
+        # A copy was mid-delivery at purge time; give the worker's own
+        # Fetch/Nak cycle time to redeliver it, then purge once more.
+        await asyncio.sleep(6)
         await jsm.purge_stream('homeric-myrmidon', subject='hi.myrmidon.hello.malformed-test')
-        info = await jsm.consumer_info('homeric-myrmidon', 'hello-myrmidon')
-        if info.num_pending == 0 and info.num_ack_pending == 0:
-            drained = True
-            break
-        await asyncio.sleep(0.5)
+        clean = (await leftover_count(jsm)) == 0
 
     await nc.close()
-    if drained:
-        print('Purged hi.myrmidon.hello.malformed-test from homeric-myrmidon (consumer drained)')
+    if clean:
+        print('Purged hi.myrmidon.hello.malformed-test from homeric-myrmidon (subject clear)')
     else:
-        print('Consumer still has pending/ack-pending messages after purge retries')
-    return drained
+        print('hi.myrmidon.hello.malformed-test still has stream-resident messages after purge retries')
+    return clean
 
 ok = asyncio.run(main())
 raise SystemExit(0 if ok else 1)
