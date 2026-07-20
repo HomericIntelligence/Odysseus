@@ -11,11 +11,20 @@ on:
   workflow_dispatch:
 jobs:
   idempotent-build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, self-hosted-aeolus]
+    container:
+      image: ubuntu:24.04
     timeout-minutes: 60
     env:
       SKIP_ODYSSEY_BUILD: "true"
     steps:
+      - name: Bootstrap container toolchain
+        # Runs before checkout: actions/checkout needs `git` on PATH itself to
+        # handle `submodules: recursive`, which a bare ubuntu:24.04 lacks.
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            sudo git curl ca-certificates bash
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           submodules: recursive
