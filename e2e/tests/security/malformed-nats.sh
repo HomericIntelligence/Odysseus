@@ -98,17 +98,43 @@ echo "$HEALTH" | python3 -c "import sys,json; assert json.load(sys.stdin).get('s
 # garbage published above head-of-line blocks every later hello task in the
 # run (the chaos category runs after security). Purging only this test's
 # subject removes the poison while leaving real task messages untouched.
+#
+# A single purge races the consumer: MaxAckPending=1 means at most one
+# malformed message is ever "in flight" (delivered-but-unacked) at a time,
+# and NAK's immediate redelivery can hand the consumer a fresh copy in the
+# same instant the purge runs — a copy the stream-level purge can no longer
+# reach once it has already been redelivered. That message then permanently
+# occupies the consumer's one ack-pending slot, silently head-of-line-
+# blocking every real hello task for the rest of the run (observed: E13's
+# and E11's post-security run_task_lifecycle baselines both timing out with
+# no error afterward, run 29711342293). Poll the consumer's own JetStream
+# state — not a fixed sleep — and re-purge until both its redelivery queue
+# (num_pending) and in-flight slot (num_ack_pending) are actually empty.
 python3 -c "
 import asyncio, nats as natslib
 
 async def main():
     nc = await natslib.connect('nats://localhost:${NATS_PORT}')
     jsm = nc.jsm()
-    await jsm.purge_stream('homeric-myrmidon', subject='hi.myrmidon.hello.malformed-test')
-    await nc.close()
-    print('Purged hi.myrmidon.hello.malformed-test from homeric-myrmidon')
 
-asyncio.run(main())
+    drained = False
+    for _attempt in range(10):
+        await jsm.purge_stream('homeric-myrmidon', subject='hi.myrmidon.hello.malformed-test')
+        info = await jsm.consumer_info('homeric-myrmidon', 'hello-myrmidon')
+        if info.num_pending == 0 and info.num_ack_pending == 0:
+            drained = True
+            break
+        await asyncio.sleep(0.5)
+
+    await nc.close()
+    if drained:
+        print('Purged hi.myrmidon.hello.malformed-test from homeric-myrmidon (consumer drained)')
+    else:
+        print('Consumer still has pending/ack-pending messages after purge retries')
+    return drained
+
+ok = asyncio.run(main())
+raise SystemExit(0 if ok else 1)
 " 2>/dev/null && \
     pass "D12: Cleanup — malformed messages purged from stream" || \
     fail "D12: Cleanup purge failed (later hello tasks may starve)"
