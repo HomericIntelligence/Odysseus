@@ -679,6 +679,54 @@ odysseus-console NATS_URL="nats://localhost:4222":
     NATS_URL={{ NATS_URL }} python3 tools/odysseus-console.py
 
 # ===========================================================================
+# AlexNet Mesh Fleet Deployment
+# ===========================================================================
+# Run Odyssey's AlexNet training independently across the Tailscale mesh —
+# one training job per host, results collected centrally. The fleet ships
+# the same odyssey:dev image (built once on the hub, distributed via rsync
+# over Tailscale) and runs training in rootless Podman containers on each
+# target. Use --network=host to avoid the rootlessport binary issue
+# (e2e-walkthrough-report.md), and --userns=keep-id for UID mapping.
+#
+# Per-host CPU-specific Mojo flags are auto-applied via alexnet-train.sh:
+#   aeolus (Sandy Bridge-E) gets --target-features -avx2 because the
+#   2012-era silicon has AVX only, no AVX2. The May-2026 cross-CPU survey
+#   confirmed the Intel fleet runs Mojo cleanly without AVX-512, so no
+#   AVX-512 stripping is needed for Skylake/Whiskey Lake/Lunar Lake hosts.
+#
+# Hosts: epimetheus (build/distribution hub), apollo, aeolus, hephaestus.
+# hermes is intentionally excluded by the task.
+# See docs/runbooks/alexnet-mesh-fleet.md for the full deployment plan.
+
+# Launch AlexNet training on the current host (per-host script).
+# ALL parameters are passed as env vars, NOT positional args. Example:
+#   EPOCHS=10 BATCH_SIZE=64 just alexnet-train
+#   FORCE_AVX2=1 MAX_BATCHES=3 just alexnet-train
+alexnet-train:
+    bash e2e/alexnet-train.sh
+
+# Epimetheus/hub only — build the image, distribute to fleet, launch training.
+# Pass optional config via env vars: EPOCHS, BATCH_SIZE, FLEET, DRY_RUN, etc.
+alexnet-fleet-deploy:
+    bash e2e/alexnet-deploy-fleet.sh
+
+# Centrally collect training results from all fleet hosts (rsync over Tailscale).
+# Pass CENTRAL_DIR=~/custom-path just alexnet-fleet-collect to override the dir.
+alexnet-fleet-collect:
+    bash e2e/alexnet-collect-results.sh
+
+# Tear down alexnet-training containers on every fleet host and (optionally with
+# CLEAN_SCRIPTS=1) remove the rsync'd helper scripts. Prompts for confirmation
+# unless FORCE=1 is set.
+alexnet-fleet-teardown:
+    bash e2e/alexnet-fleet-teardown.sh
+
+# Convenience: end-to-end smoke test on the current host (3 synthetic batches).
+# Same as: MAX_BATCHES=3 just alexnet-train
+alexnet-smoke:
+    MAX_BATCHES=3 bash e2e/alexnet-train.sh
+
+# ===========================================================================
 # Python Package Installation
 # ===========================================================================
 
