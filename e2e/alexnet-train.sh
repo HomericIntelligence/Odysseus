@@ -69,8 +69,12 @@ if ! command -v podman >/dev/null 2>&1; then
     exit 1
 fi
 
-if ! podman images "$IMAGE_NAME" --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -q "^${IMAGE_NAME}$"; then
-    echo "ERROR: Image '$IMAGE_NAME' not loaded. Build or distribute first:" >&2
+# podman-compose build (and rootless podman save+load) tag the resulting image
+# as `localhost/$IMAGE_NAME` rather than `$IMAGE_NAME`. Accept both forms so the
+# preflight doesn't spuriously fail when the image was built here and rsynced
+# to remotes (or vice-versa).
+if ! podman images "$IMAGE_NAME" --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -qE "^(localhost/)?${IMAGE_NAME}$"; then
+    echo "ERROR: Image '$IMAGE_NAME' not loaded (tried '<NAME>' and 'localhost/<NAME>'). Build or distribute first:" >&2
     echo "  Build:   cd $WORKSPACE_DIR/research/Odyssey && \\" >&2
     echo "           podman compose build odyssey-dev" >&2
     echo "  Receive: rsync -avz <hub-host>:/tmp/odyssey-dev.tar ~/ && podman load -i ~/odyssey-dev.tar" >&2
@@ -130,6 +134,64 @@ LOG="$RESULTS_DIR/training.log"
     echo ""
 } | tee -a "$LOG"
 
+# ── Detect training entry-point + supported flags ──
+# Odyssey renamed `train.mojo` → `run_train.mojo` across submodule SHAs; the
+# rename added `--smoke` and `--max-batches` CLI flags. Older legacy variants
+# (`train.mojo`/`train_new.mojo`) may still exist on hosts whose submodule
+# predates the rename. Auto-detect so the same fleet-deploy script works across
+# the divergent SHA spread on the HomericIntelligence mesh.
+ENTRY_POINT=""
+for cand in run_train.mojo train.mojo train_new.mojo; do
+    if [[ -f "$WORKSPACE_DIR/research/Odyssey/examples/alexnet_cifar10/$cand" ]]; then
+        ENTRY_POINT="$cand"
+        break
+    fi
+done
+if [[ -z "$ENTRY_POINT" ]]; then
+    echo "ERROR: No training entry-point found at" >&2
+    echo "  $WORKSPACE_DIR/research/Odyssey/examples/alexnet_cifar10/" >&2
+    echo "  Searched for: run_train.mojo, train.mojo, train_new.mojo" >&2
+    exit 1
+fi
+ENTRY_POINT_PATH="$WORKSPACE_DIR/research/Odyssey/examples/alexnet_cifar10/$ENTRY_POINT"
+
+# Older entry-points (apollo's projectodyssey-namespaced ff58c9b2 build, plus
+# legacy train.mojo) lack --smoke and --max-batches flags. Forward ONLY the
+# flags the chosen entry-point understands. The detection heuristic looks for
+# the literal `"smoke"` and `"max-batches"` argument-definition strings.
+# Empirical inspection of Odyssey's shipped run_train.mojo variants confirms
+# the literal quoted forms appear in argument-definition contexts only (apollo
+# uses `parser.add_argument("smoke", "bool", ...)`; epimetheus/hephaestus use
+# `args.get_bool("smoke")`). False positives are theoretically possible — a
+# future fork using `"smoke"` as a string literal in print/log/test context
+# would misfire — but are uncommon in practice.
+SUPPORTS_SMOKE=0
+SUPPORTS_MAX_BATCHES=0
+if grep -qE '"smoke"' "$ENTRY_POINT_PATH"; then
+    SUPPORTS_SMOKE=1
+fi
+if grep -qE '"max-batches"' "$ENTRY_POINT_PATH"; then
+    SUPPORTS_MAX_BATCHES=1
+fi
+
+echo "Entry point:   $ENTRY_POINT"
+echo "Smoke flag:    $([[ $SUPPORTS_SMOKE -eq 1 ]] && echo supported || echo unsupported)"
+echo "Max batches:   $([[ $SUPPORTS_MAX_BATCHES -eq 1 ]] && echo supported || echo unsupported)"
+
+# Smoke-mode fallback warning: if the user requested smoke (MAX_BATCHES > 0) but
+# the detected entry-point cannot honor --smoke / --max-batches, surface that
+# mismatch loudly instead of silently running full training. Without this guard,
+# legacy entry-points on apollo/aeolus (ff58c9b2 689-line variant) would happily
+# execute a 10-epoch full-dataset run despite the operator requesting a smoke.
+if [[ "$MAX_BATCHES" -gt 0 ]]; then
+    missing=()
+    [[ $SUPPORTS_SMOKE -eq 0 ]] && missing+=(--smoke)
+    [[ $SUPPORTS_MAX_BATCHES -eq 0 ]] && missing+=(--max-batches)
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "WARN: $ENTRY_POINT cannot honor MAX_BATCHES=$MAX_BATCHES (missing flags: ${missing[*]}); running full training instead" >&2
+    fi
+fi
+
 # ── Launch training container ──
 # --network=host: avoids rootlessport binary missing (verified workaround)
 # --userns=keep-id: maps host UID→container UID so bind-mount writes succeed
@@ -153,22 +215,28 @@ podman run -d \
     -e PRECISION="$PRECISION" \
     -e MAX_BATCHES="$MAX_BATCHES" \
     -e MOJO_TARGET_FLAGS="$MOJO_TARGET_FLAGS" \
+    -e ENTRY_POINT="$ENTRY_POINT" \
+    -e SUPPORTS_SMOKE="$SUPPORTS_SMOKE" \
+    -e SUPPORTS_MAX_BATCHES="$SUPPORTS_MAX_BATCHES" \
     "$IMAGE_NAME" \
     bash -c '
         set -euo pipefail
         echo "[$(date -u +%H:%M:%S)] Container started. Image: $(pixi run mojo --version 2>&1 | head -1)"
-        if [ "$MAX_BATCHES" -gt 0 ]; then
-            SMOKE_FLAG="--smoke"
-        else
-            SMOKE_FLAG=""
+
+        EXTRA_ARGS=()
+        if [[ "$SUPPORTS_SMOKE" -eq 1 && "$MAX_BATCHES" -gt 0 ]]; then
+            EXTRA_ARGS+=("--smoke")
         fi
+        if [[ "$SUPPORTS_MAX_BATCHES" -eq 1 ]]; then
+            EXTRA_ARGS+=("--max-batches" "$MAX_BATCHES")
+        fi
+
         pixi run mojo run $MOJO_TARGET_FLAGS -I . \
-            examples/alexnet_cifar10/run_train.mojo \
+            "examples/alexnet_cifar10/$ENTRY_POINT" \
             --epochs "$EPOCHS" \
             --batch-size "$BATCH_SIZE" \
             --lr "$LEARNING_RATE" \
-            $SMOKE_FLAG \
-            --max-batches "$MAX_BATCHES" \
+            "${EXTRA_ARGS[@]}" \
             --weights-dir /results/alexnet_weights \
             2>&1
         echo "[$(date -u +%H:%M:%S)] Training run finished"
