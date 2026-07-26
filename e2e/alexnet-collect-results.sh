@@ -9,11 +9,11 @@
 #   CENTRAL_DIR=~/<path> bash e2e/alexnet-collect-results.sh
 #   FLEET="epimetheus apollo aeolus" bash e2e/alexnet-collect-results.sh  # subset
 #
-# Required env (FLEET is optional — defaults to all 4 hosts):
-#   (none — defaults to FLEET="epimetheus apollo aeolus hephaestus")
+# Required env (FLEET is optional — defaults to all 5 hosts):
+#   (none — defaults to FLEET="epimetheus apollo aeolus hephaestus hermes")
 #
 # Optional env:
-#   FLEET           — space-separated host list (default: epimetheus apollo aeolus hephaestus)
+#   FLEET           — space-separated host list (default: epimetheus apollo aeolus hephaestus hermes)
 #   CENTRAL_DIR     — central results root (default: ~/alexnet-fleet-results)
 #   REMOTE_RESULTS_DIR — host-side results subdir (default: ~/alexnet-results)
 
@@ -22,11 +22,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── Configuration ──
-FLEET="${FLEET:-epimetheus apollo aeolus hephaestus}"
+FLEET="${FLEET:-epimetheus apollo aeolus hephaestus hermes}"
 CENTRAL_DIR="${CENTRAL_DIR:-$HOME/alexnet-fleet-results}"
 REMOTE_RESULTS_DIR="${REMOTE_RESULTS_DIR:-alexnet-results}"
 
 mkdir -p "$CENTRAL_DIR"
+
+# ── Parse FLEET into a glob-safe array (must happen BEFORE any iteration) ──
+# Avoid `for host in $FLEET` — that would pathname-expand if FLEET accidentally
+# contained a glob like 'epimeth*'. Empty FLEET silently skips every host.
+IFS=' ' read -ra _hosts <<< "$FLEET"
+TOTAL_HOSTS=${#_hosts[@]}
 
 # ── Resolve Tailscale IPs (resilient to Tailscale restarts) ──
 declare -A HOST_IPS
@@ -56,11 +62,8 @@ echo "Fleet:       $FLEET"
 echo "Central to:  $CENTRAL_DIR"
 echo ""
 
-# Count hosts from the FLEET string. Use IFS+here-string + read -ra for
-# safety: unquoted `set -- $FLEET` would perform pathname expansion if FLEET
-# contained a glob, and `${#FLEET[@]}` on a plain string variable is 0.
-IFS=' ' read -ra _hosts <<< "$FLEET"
-TOTAL_HOSTS=${#_hosts[@]}
+# Count hosts from the FLEET string. TOTAL_HOSTS is set above (parse-block hoisted
+# before any iteration).
 
 COLLECTED=0
 MISSING=()

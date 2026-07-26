@@ -33,7 +33,7 @@ ODYSSEUS_ROOT="$(dirname "$SCRIPT_DIR")"
 LOCAL_HOST=$(hostname)
 
 # ── Configuration ──
-FLEET="${FLEET:-epimetheus apollo aeolus hephaestus}"
+FLEET="${FLEET:-epimetheus apollo aeolus hephaestus hermes}"
 EPOCHS="${EPOCHS:-100}"
 BATCH_SIZE="${BATCH_SIZE:-128}"
 IMAGE_NAME="${IMAGE_NAME:-odyssey:dev}"

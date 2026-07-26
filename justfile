@@ -694,7 +694,7 @@ odysseus-console NATS_URL="nats://localhost:4222":
 #   confirmed the Intel fleet runs Mojo cleanly without AVX-512, so no
 #   AVX-512 stripping is needed for Skylake/Whiskey Lake/Lunar Lake hosts.
 #
-# Hosts: epimetheus (build/distribution hub), apollo, aeolus, hephaestus.
+# Hosts: epimetheus (build/distribution hub), apollo, aeolus, hephaestus, hermes.
 # hermes is intentionally excluded by the task.
 # See docs/runbooks/alexnet-mesh-fleet.md for the full deployment plan.
 

@@ -28,7 +28,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FLEET="${FLEET:-epimetheus apollo aeolus hephaestus}"
+FLEET="${FLEET:-epimetheus apollo aeolus hephaestus hermes}"
 LOCAL_HOST=$(hostname)
 
 # Parse FLEET into a glob-safe bash array. Avoid `for host in $FLEET` which would

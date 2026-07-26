@@ -24,7 +24,7 @@ of "the same workload on different hardware."
 | **apollo** | Training target | i7-8565U (Whiskey Lake) | AVX2+VNNI | HomelabOS host. Docker installed but coexisting Podman works. Python 3.7 is irrelevant — container has Python 3.12+. |
 | **aeolus** | Training target | i7-3820 (Sandy Bridge-E) | **AVX only** | 2012 silicon. Mojo JIT may emit AVX2; script auto-strips via `--target-features -avx2`. |
 | **hephaestus** | Training target | Unknown | Unknown | Run `just install-worker` first; verify SIMD via `/proc/cpuinfo`. |
-| ~~hermes~~ | **EXCLUDED** | — | — | Intentionally not in the fleet per the task scope. |
+| **hermes** | Training target | Intel Core Ultra 7 258V (Lunar Lake) | AVX2 | Modern 2024 silicon. Per the May-2026 cross-CPU survey, runs Mojo cleanly without `--target-features` strip. Preflight investigation flagged 2026-05-12 (see Per-Host Notes). |
 
 ## Prerequisites (per host)
 
@@ -106,7 +106,7 @@ DRY_RUN=1 bash e2e/alexnet-deploy-fleet.sh
 
 # Full fleet smoke run (3 batches each)
 EPOCHS=10 MAX_BATCHES=3 bash e2e/alexnet-deploy-fleet.sh
-# Builds image, distributes to apollo/aeolus/hephaestus over Tailscale, launches
+# Builds image, distributes to apollo/aeolus/hephaestus/hermes over Tailscale, launches
 # 4 training jobs in parallel. ~90s for image transfer, then training runs concurrent.
 
 # Full training run
@@ -127,12 +127,12 @@ While the fleet trains, monitor each host independently:
 ```bash
 # Stream individual host logs
 podman logs -f alexnet-training                             # epimetheus
-ssh apollo "podman logs -f alexnet-training"
-ssh aeolus "podman logs -f alexnet-training"
-ssh hephaestus "podman logs -f alexnet-training"
+for h in apollo aeolus hephaestus hermes; do
+    ssh "$h" "podman logs -f alexnet-training"
+done
 
 # Check final loss summaries
-for host in epimetheus apollo aeolus hephaestus; do
+for host in epimetheus apollo aeolus hephaestus hermes; do
     echo "── $host ──"
     grep -E "Average Loss|Test Accuracy" ~/alexnet-results/$host/training.log | tail -5
 done
@@ -207,6 +207,34 @@ grep -E "model name|flags" /proc/cpuinfo | head -5
 # Check for avx, avx2, avx512f flags. If avx512 is absent but Mojo targets it,
 # add MOJO_TARGET_FLAGS manually via container env (overrides the script).
 ```
+
+### hermes (Lunar Lake — new fleet member as of 2026-05-12)
+
+Intel Core Ultra 7 258V (Lunar Lake, late-2024 silicon), **15.4 GB** kernel-reported RAM
+(16 GB physical), 8 cores, 353 GB free disk.Podman 5.8.3 installed (epimetheus currently ships 5.8.1) but
+preflight probes on 2026-05-12 raised two soft concerns that need operator
+investigation before the first fleet smoke:
+
+| Preflight check | Result | What to investigate |
+|-----------------|--------|---------------------|
+| `/proc/sys/kernel/unprivileged_userns_clone` (user-mode read) | `(unreadable)` | On some kernels the sysctl hides itself from unprivileged users when the value is `0`. Likely same kernel blocker as apollo. Verify with `sudo cat /proc/sys/kernel/unprivileged_userns_clone`. |
+| `podman info` | **FAILED** | Could not verify cgroups / graph driver. Likely same root cause as the sysctl above (rootless user-namespace clone disabled). If confirmed at `0`, deploy Phase 2 (`podman load`) will fail with `cannot clone` — same failure pattern as apollo. |
+| Podman version | 5.8.3 | OK. |
+| Odyssey workspace (`research/Odyssey`) | Absent before 2026-05-12 onboarding | After meta-repo sync: `git submodule update --init --recursive`. |
+
+**If `kernel.unprivileged_userns_clone=0`**, hermes has the same blocker as apollo
+and the deploy will fail at image load. Two operator options:
+
+1. **One-shot workaround**: `sudo sysctl -w kernel.unprivileged_userns_clone=1`
+   (requires sudo + persistence across reboots via `/etc/sysctl.d/99-tailnet.conf`).
+2. **Skip hermes in the active FLEET** for the smoke run: `FLEET="epimetheus apollo
+   aeolus hephaestus" bash e2e/alexnet-deploy-fleet.sh`. Keep hermes in the default
+   for documentation but explicitly exclude for the first run until preflight clears.
+
+**If `kernel.unprivileged_userns_clone=1`**, hermes should work like epimetheus
+with no preflight remediation needed. `e2e/alexnet-train.sh`'s per-host CPU-flag
+block has only an `aeolus` exclusion; hermes (Lunar Lake) keeps the default empty
+`MOJO_TARGET_FLAGS`.
 
 ## Verification Checklist
 
