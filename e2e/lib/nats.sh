@@ -163,7 +163,13 @@ nats_restart() {
         -m "${NATS_MONITOR_PORT:?}" \
         --store_dir "${NATS_DATA_DIR:?}" >/dev/null 2>&1 &
     NATS_BG_PID=$!; export NATS_BG_PID
-    register_pid "$NATS_BG_PID"
+    # register_pid lives in process.sh, which not every caller sources next to
+    # nats.sh (nats-crash-reconnect.sh doesn't) — logged as "register_pid:
+    # command not found" in CI. Register for cleanup only when available; the
+    # restart itself must not depend on it.
+    if command -v register_pid >/dev/null 2>&1; then
+        register_pid "$NATS_BG_PID"
+    fi
     nats_wait_healthy 30
 }
 

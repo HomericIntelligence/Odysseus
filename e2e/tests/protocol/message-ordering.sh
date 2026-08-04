@@ -17,12 +17,24 @@ else
 fi
 
 # Publish 100 sequentially numbered messages and verify order
+#
+# hi.myrmidon.hello.ordering-test matches the hello-myrmidon durable pull
+# consumer's FilterSubject (hi.myrmidon.hello.>, MaxAckPending=1) — that
+# worker sees these 100 non-task payloads too, independent of this test's
+# own ordering-test-consumer. Left unpurged, they sit ahead of every real
+# hello task submitted later in the run (observed: run 29719332327 —
+# malformed-nats.sh's own poison confirmed purged, yet concurrent-faults.sh's
+# E13 and random-restart.sh's E11 still timed out on a fresh task lifecycle
+# submitted well after this test). Purge this test's subject after reading
+# the messages back so the shared consumer isn't left with 100 messages of
+# backlog for the rest of the suite.
 python3 -c "
 import asyncio, json, nats as natslib
 
 async def main():
     nc = await natslib.connect('nats://localhost:${NATS_PORT}')
     js = nc.jetstream()
+    jsm = nc.jsm()
 
     # Publish 100 numbered messages to a test subject within homeric-myrmidon stream
     for i in range(100):
@@ -44,6 +56,7 @@ async def main():
         pass
 
     await sub.unsubscribe()
+    await jsm.purge_stream('homeric-myrmidon', subject='hi.myrmidon.hello.ordering-test')
     await nc.close()
 
     # Verify FIFO order

@@ -27,6 +27,9 @@ import urllib.request, json, time
 base = 'http://localhost:${AGAMEMNON_PORT}'
 team_id = '${TEAM_ID}'
 agent_id = '${AGENT_ID}'
+# Agamemnon enforces X-API-Key on every non-exempt /v1/* endpoint (auth.cpp);
+# raw urllib calls must carry it just like the curl helpers do.
+auth = {'X-API-Key': '${AGAMEMNON_API_KEY}'}
 latencies = []
 
 for i in range(20):
@@ -35,13 +38,22 @@ for i in range(20):
     # Create task
     body = json.dumps({'subject': f'latency-{i}', 'description': 'perf', 'type': 'hello', 'assigneeAgentId': agent_id}).encode()
     req = urllib.request.Request(f'{base}/v1/teams/{team_id}/tasks', data=body,
-                                 headers={'Content-Type': 'application/json'})
+                                 headers={'Content-Type': 'application/json', **auth})
     resp = json.loads(urllib.request.urlopen(req).read())
     task_id = resp.get('task', {}).get('id', '')
 
     # Poll for completion
+    #
+    # GET /v1/tasks paginates at kDefaultLimit=100 (routes.cpp) and
+    # list_all_tasks sorts by task UUID before slicing (store.cpp), so once
+    # earlier scenarios in the run (fan-out.sh alone leaves 160 tasks behind
+    # it) have pushed the store past 100 entries, a newly created task's UUID
+    # can sort past page 1 and never appear in an unpaginated GET — the same
+    # class of bug agamemnon_get_tasks (agamemnon.sh) already works around
+    # with limit=1000 (the server's kMaxLimit). Mirror that here.
     for _ in range(60):
-        tasks = json.loads(urllib.request.urlopen(f'{base}/v1/tasks').read())
+        tasks = json.loads(urllib.request.urlopen(
+            urllib.request.Request(f'{base}/v1/tasks?limit=1000', headers=auth)).read())
         match = [t for t in tasks.get('tasks', []) if t.get('id') == task_id]
         if match and match[0].get('status') == 'completed':
             break
@@ -72,7 +84,15 @@ print(f'Max: {max(latencies):.0f}ms')
 info "B05: Hermes webhook → NATS publish latency"
 
 hermes_health >/dev/null 2>&1 || {
-    skip "B05: Hermes not running"
+    # Hermes is not part of the T1/T2 process topologies (topology.sh starts
+    # only NATS + Agamemnon + myrmidon), so its absence there is structural —
+    # N/A, not a failure. On T3/T4 (container stacks that do include Hermes)
+    # an unreachable Hermes IS a genuine failure.
+    if [ "${IPC_TOPOLOGY:-}" = "t1" ] || [ "${IPC_TOPOLOGY:-}" = "t2" ]; then
+        echo -e "  ${BLUE}N/A${NC}: B05: Hermes not in ${IPC_TOPOLOGY} topology"
+    else
+        skip "B05: Hermes not running"
+    fi
     summary; exit_code; exit $?
 }
 
