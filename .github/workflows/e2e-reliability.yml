@@ -70,19 +70,22 @@ jobs:
   # dispatch. (Was parked on schedule/dispatch only under #391 while the worker
   # was missing.)
   e2e-reliability-t1:
-    name: e2e-reliability-t1 (PR gate)
-    if: >-
-      github.event_name == 'pull_request' || github.event_name == 'push'
-      || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    # 60 min: a COLD run builds Agamemnon's Conan deps (openssl et al.) from
-    # source (~15-20 min) AND runs the full 38-scenario suite (~15 min, several
-    # scenarios wait 90-120s for task drain). The restore/save-split cache below
-    # persists the deps even on a failed/timed-out run, so subsequent runs build
-    # fast (~8 min) and finish well under this ceiling; the 60 min is headroom
-    # for the one cold run that populates the cache.
-    timeout-minutes: 60
+    name: e2e-reliability-t1 (nightly until #391 worker restored)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, self-hosted-aeolus]
+    container:
+      image: ubuntu:24.04
+    timeout-minutes: 30
     steps:
+      - name: Bootstrap container toolchain
+        # Runs before checkout: actions/checkout needs `git` on PATH itself to
+        # handle `submodules: recursive`, which a bare ubuntu:24.04 lacks.
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            sudo git curl ca-certificates bash python3 python3-pip
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
@@ -119,7 +122,7 @@ jobs:
           nats-server --version
 
       - name: Install Python NATS client (used by scenario assertions)
-        run: pip install nats-py
+        run: pip install --user nats-py
 
       - name: Detect Conan profile
         # `just build` -> _build-agamemnon runs `pixi run conan install`, which
