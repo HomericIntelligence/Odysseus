@@ -44,8 +44,10 @@ case "$ACTION" in
         done
         [ -z "$agamemnon_bin" ] && { echo "ERROR: Agamemnon_server not found" >&2; exit 1; }
 
+        # AGAMEMNON_API_KEY is required or the server FATAL-exits (server_main.cpp);
+        # use the same default the REST helpers send (e2e/lib/agamemnon.sh).
         tmux split-window -t "$SESSION_NAME" -h \
-            "NATS_URL=nats://localhost:$NATS_PORT PORT=$AGAMEMNON_PORT $agamemnon_bin 2>&1; read"
+            "NATS_URL=nats://localhost:$NATS_PORT PORT=$AGAMEMNON_PORT AGAMEMNON_API_KEY=${AGAMEMNON_API_KEY:-e2e-test-key} $agamemnon_bin 2>&1; read"
 
         wait_for "http://localhost:${AGAMEMNON_PORT}/v1/health" "Agamemnon" 20 || {
             echo "Agamemnon failed. Check: tmux attach -t $SESSION_NAME" >&2

@@ -97,7 +97,12 @@ start_agamemnon_bg() {
     done
     [ -z "$bin" ] && { echo "ERROR: Agamemnon_server not found. Run 'just build' first." >&2; return 1; }
 
-    NATS_URL="nats://localhost:${NATS_PORT}" PORT="$AGAMEMNON_PORT" "$bin" >/dev/null 2>&1 &
+    # Agamemnon (server_main.cpp) FATAL-exits if AGAMEMNON_API_KEY is unset/empty,
+    # and once set enforces it on non-exempt /v1/* endpoints. Launch with the same
+    # key the REST helpers send (e2e/lib/agamemnon.sh AGAMEMNON_AUTH); default to
+    # the shared test key so a keyless env still starts.
+    NATS_URL="nats://localhost:${NATS_PORT}" PORT="$AGAMEMNON_PORT" \
+        AGAMEMNON_API_KEY="${AGAMEMNON_API_KEY:-e2e-test-key}" "$bin" >/dev/null 2>&1 &
     register_pid $!
     echo "  Started Agamemnon (PID $!, port $AGAMEMNON_PORT)"
     wait_for "http://localhost:${AGAMEMNON_PORT}/v1/health" "Agamemnon" 20
@@ -119,7 +124,11 @@ start_myrmidon_bg() {
     done
     [ -z "$bin" ] && { echo "ERROR: hello_myrmidon binary not found. Run 'just build' first." >&2; return 1; }
 
-    NATS_URL="nats://localhost:${NATS_PORT}" "$bin" >/dev/null 2>&1 &
+    # MYRMIDON_WORK_DELAY_MS=0: drop the worker's default 1s/task "simulate work"
+    # delay so fan-out perf scenarios (B07 50 tasks, B08 100 tasks) drain at real
+    # dispatch speed instead of being capped at ~1 task/sec by MaxAckPending=1.
+    NATS_URL="nats://localhost:${NATS_PORT}" MYRMIDON_WORK_DELAY_MS="${MYRMIDON_WORK_DELAY_MS:-0}" \
+        "$bin" >/dev/null 2>&1 &
     register_pid $!
     echo "  Started hello-myrmidon (PID $!, bin $bin)"
     sleep 2  # Allow subscription to establish
