@@ -38,8 +38,6 @@ jobs:
         with:
           submodules: recursive
       - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347  # v0.10.1
-      - name: Detect conan profile
-        run: pixi run conan profile detect
       - name: Reset conan cache (zlib patches corruption)
         # The self-hosted runner persists the conan home (~/.conan2 under
         # HOME=/github/home) across job runs. A wedged zlib recipe export
@@ -50,8 +48,11 @@ jobs:
         # disk and is reused because its hash is deterministic. A fresh cache
         # builds zlib/1.3.2 cleanly (verified locally, same conan 2.31.1 +
         # revision 1cb806da), so nuke the whole conan home for a clean slate.
+        # Runs BEFORE profile detection so the freshly detected profile is kept.
         # Ref #405 / #427 (self-hosted move).
         run: rm -rf "$HOME/.conan2"
+      - name: Detect conan profile
+        run: pixi run conan profile detect
       - name: Run idempotency test
         env:
           SKIP_ODYSSEY_BUILD: "true"
