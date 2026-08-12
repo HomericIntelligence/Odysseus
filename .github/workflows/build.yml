@@ -21,17 +21,19 @@ jobs:
       - name: Bootstrap container toolchain
         # Runs before checkout: actions/checkout needs `git` on PATH itself to
         # handle `submodules: recursive`, which a bare ubuntu:24.04 lacks.
-        # build-essential provides the C++ toolchain (gcc/g++/make): the job
-        # builds C++ submodules via `conan install --build=missing`, and a
-        # compiler-less container makes `conan profile detect` emit a default
-        # profile with no settings.compiler for the build context — conan then
+        # The job builds C++ submodules, so the container needs the full dev
+        # toolchain, not the minimal bootstrap: (1) build-essential provides
+        # gcc/g++/make — without a compiler, `conan profile detect` emits a
+        # build-context default profile with no settings.compiler and conan
         # errors with "Invalid: 'settings.compiler' value not defined" on build
-        # requirements like libtool (regression from #427's move to a bare
-        # container; ref #405).
+        # requirements like libtool; (2) libssl-dev/pkg-config/zlib1g-dev are
+        # needed by nats.c (FetchContent in Keystone + Myrmidons hello-world),
+        # which #includes openssl/ssl.h. Regression from #427's move to a bare
+        # container (ref #405).
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            sudo git curl ca-certificates bash build-essential
+            sudo git curl ca-certificates bash build-essential libssl-dev pkg-config zlib1g-dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
