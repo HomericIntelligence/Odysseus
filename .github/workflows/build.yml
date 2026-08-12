@@ -40,16 +40,18 @@ jobs:
       - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347  # v0.10.1
       - name: Detect conan profile
         run: pixi run conan profile detect
-      - name: Clear corrupted conan cache (zlib patches)
-        # The self-hosted runner persists ~/.conan2 across job runs. A wedged
-        # zlib recipe export (missing its patches/ folder — `source()` then
-        # fails on apply_conandata_patches FileNotFoundError) survived cache
-        # refreshes because conan reuses the cached revision. This is a cache
-        # corruption, not a recipe bug: a fresh cache builds zlib/1.3.2 cleanly
-        # (verified locally, same conan 2.31.1 + zlib/1.3.2 revision). Remove
-        # the affected recipes so the next install re-exports them from
-        # conancenter. Ref #405 / #427 (self-hosted move).
-        run: pixi run conan remove "zlib/*" -c
+      - name: Reset conan cache (zlib patches corruption)
+        # The self-hosted runner persists the conan home (~/.conan2 under
+        # HOME=/github/home) across job runs. A wedged zlib recipe export
+        # (missing its patches/ folder) makes `source()` fail with
+        # apply_conandata_patches FileNotFoundError. `conan remove` did not
+        # help: the metadata DB reports 0 recipes (nothing to purge) while the
+        # orphaned p/<hash>/ folder with the broken export sources survives on
+        # disk and is reused because its hash is deterministic. A fresh cache
+        # builds zlib/1.3.2 cleanly (verified locally, same conan 2.31.1 +
+        # revision 1cb806da), so nuke the whole conan home for a clean slate.
+        # Ref #405 / #427 (self-hosted move).
+        run: rm -rf "$HOME/.conan2"
       - name: Run idempotency test
         env:
           SKIP_ODYSSEY_BUILD: "true"
