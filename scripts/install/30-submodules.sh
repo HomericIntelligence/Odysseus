@@ -15,7 +15,11 @@ section "Submodule Initialization"
 # Key sentinel files — if these exist the submodule is properly initialized
 #
 # NOTE for future maintainers: every VALUE below MUST start with its
-# corresponding KEY, byte-for-byte. The post-init re-verification loop
+# corresponding KEY, byte-for-byte. When a submodule migrates manifest
+# formats (pixi -> uv, etc.), update that submodule's sentinel to its current
+# canonical file (e.g. pyproject.toml) — a stale sentinel makes a healthy
+# submodule report as "still empty" after init (regression: #441).
+# The post-init re-verification loop
 # performs `${SENTINEL_FILES[$mod]/"$mod"/"$resolved"}` to swap the prefix
 # when `resolve_submodule_path` flips to the bare (post-rename) form on
 # disk; the substitution silently no-ops if the value does not start with
