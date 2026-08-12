@@ -21,10 +21,17 @@ jobs:
       - name: Bootstrap container toolchain
         # Runs before checkout: actions/checkout needs `git` on PATH itself to
         # handle `submodules: recursive`, which a bare ubuntu:24.04 lacks.
+        # build-essential provides the C++ toolchain (gcc/g++/make): the job
+        # builds C++ submodules via `conan install --build=missing`, and a
+        # compiler-less container makes `conan profile detect` emit a default
+        # profile with no settings.compiler for the build context — conan then
+        # errors with "Invalid: 'settings.compiler' value not defined" on build
+        # requirements like libtool (regression from #427's move to a bare
+        # container; ref #405).
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            sudo git curl ca-certificates bash
+            sudo git curl ca-certificates bash build-essential
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
