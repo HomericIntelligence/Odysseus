@@ -130,9 +130,10 @@ for host_dir in "$CENTRAL_DIR"/*/; do
 
     echo "── $host ──"
     if [[ -f "$log" ]]; then
-        # Pull out the most informative status line
-        status=$(grep -E "Training complete!|Average Loss:|Test Accuracy:|Completed:" "$log" | tail -3 || true)
-        if [[ -n "$status" ]]; then
+        # Pull out the most informative status line. Explicit if-guard (the
+        # no-silent-failures rule): grep exits 1 when no marker matches, and
+        # the if-condition keeps set -e from aborting on that expected miss.
+        if status=$(grep -E "Training complete!|Average Loss:|Test Accuracy:|Completed:" "$log" | tail -3); then
             echo "$status" | sed 's/^/  /'
         else
             echo "  (log present but no completion markers)"
