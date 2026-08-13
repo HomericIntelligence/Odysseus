@@ -31,6 +31,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEET="${FLEET:-epimetheus apollo aeolus hephaestus hermes}"
 LOCAL_HOST=$(hostname)
 
+# Bounded ssh for every remote probe: an offline/unreachable host (e.g. hermes
+# on the tailnet) must not hang teardown. `timeout` caps the whole ssh session
+# and ConnectTimeout fails fast when the host does not answer SYN.
+# Matches the guard used by e2e/alexnet-fleet-wait.sh (SSH_BASE).
+SSH_BASE=(timeout 15 ssh -o ConnectTimeout=5 -o BatchMode=yes)
+
 # Parse FLEET into a glob-safe bash array. Avoid `for host in $FLEET` which would
 # pathname-expand if FLEET accidentally contained a pattern like 'epimeth*'.
 IFS=' ' read -ra FLEET_ARR <<< "$FLEET"
@@ -94,7 +100,9 @@ for host in "${FLEET_ARR[@]}"; do
     else
         echo "  → $host ($ip)"
         # Idempotent: podman rm -f on a missing container exits 1; tolerate that.
-        ssh "$ip" "podman rm -f alexnet-training 2>/dev/null && echo '[ok] removed' || echo '[skip] no container'" &
+        # Bounded ssh: an unreachable host surfaces as a WARN here instead of a
+        # hang (see SSH_BASE above).
+        "${SSH_BASE[@]}" "$ip" "podman rm -f alexnet-training 2>/dev/null && echo '[ok] removed' || echo '[skip] no container'" &
     fi
 done
 wait
@@ -106,7 +114,7 @@ if [[ "${CLEAN_SCRIPTS:-0}" == "1" ]]; then
     for host in "${FLEET_ARR[@]}"; do
         ip="${HOST_IPS[$host]:-}"
         [[ -z "$ip" || "$ip" == "localhost" ]] && continue
-        ssh "$ip" "rm -rf ~/alexnet-fleet-scripts && echo '[ok] $host: scripts removed'" &
+        "${SSH_BASE[@]}" "$ip" "rm -rf ~/alexnet-fleet-scripts && echo '[ok] $host: scripts removed'" &
     done
     wait
 fi

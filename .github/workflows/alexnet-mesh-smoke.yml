@@ -1,0 +1,183 @@
+# alexnet-mesh-smoke.yml — Run the AlexNet mesh smoke test end-to-end from CI.
+#
+# Repeatable + gated fleet test: build the odyssey:dev image, distribute it to
+# the Tailscale fleet, launch bounded training on every host, wait for all
+# containers to exit, verify per-host completion evidence ("Training complete!"
+# in `podman logs alexnet-training` + non-empty weights dir), then collect
+# results centrally and tear down. The job FAILS if any host lacks completion
+# evidence, so the smoke test is a real gate, not a fire-and-forget launch.
+#
+# ── Runner requirement (ONE-TIME, on epimetheus) ─────────────────────────────
+# This workflow CANNOT run on a GitHub-hosted runner: it needs podman and
+# Tailscale reachability to the fleet. Register a self-hosted runner on
+# epimetheus (the build/distribution hub) with the labels `self-hosted,mesh`:
+#
+#   # epimetheus: create a registration token for this repo, then:
+#   mkdir -p ~/actions-runner && cd ~/actions-runner
+#   curl -fsSL -o runner.tar.gz <latest-runner-linux-x64-url>
+#   tar xzf runner.tar.gz
+#   ./config.sh --url https://github.com/HomericIntelligence/Odysseus \
+#       --token <registration-token> --labels self-hosted,mesh
+#   ./run.sh   (or install as a systemd user service; enable linger)
+#
+# The runner account must satisfy the runbook prerequisites: rootless podman,
+# tailscale up, `jq`, and the Odyssey submodule synced (checkout handles this
+# per-run; the runner user's `podman` must work non-interactively).
+#
+# ── Why NOT a PR gate ────────────────────────────────────────────────────────
+# The full fleet smoke takes ~30-150 min (image build + per-host training) and
+# depends on physical fleet hosts. It is intentionally manual-dispatch only and
+# is not wired into _required.yml — infra flakiness must not block PRs. The
+# fleet e2e PR gate remains e2e-reliability-t1 (host-process mesh on stock
+# runners). See docs/runbooks/alexnet-mesh-fleet.md.
+#
+# ── Security ─────────────────────────────────────────────────────────────────
+# Static commands only: dispatch inputs are passed via env (never interpolated
+# into a run block), avoiding the Actions script-injection class. Actions are
+# pinned to commit SHAs per repo convention.
+
+name: AlexNet mesh smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      epochs:
+        description: Training epochs per host (10 = fleet smoke, 3 = fast smoke)
+        required: false
+        default: "10"
+      max_batches:
+        description: Cap batches per epoch (3 = smoke, 0 = full dataset)
+        required: false
+        default: "3"
+      fleet:
+        description: Space-separated host list
+        required: false
+        default: "epimetheus apollo aeolus hephaestus"
+      skip_build:
+        description: Reuse the existing odyssey:dev image (skip build + distribute)
+        required: false
+        type: boolean
+        default: false
+      teardown:
+        description: Remove alexnet-training containers on all hosts after collection
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # SHARED with alexnet-mesh-chaos.yml: both use the `alexnet-training`
+  # container name on the same runner, and the chaos suite's C6 reseeds/removes
+  # that container — they must never run concurrently. One fleet run at a time.
+  group: alexnet-mesh-fleet
+  cancel-in-progress: false
+
+jobs:
+  mesh-smoke:
+    name: AlexNet mesh smoke (gated)
+    runs-on: [self-hosted, mesh]
+    # 240 min budget: deploy (cold image build + distribution) takes 15-30+ min
+    # on a fresh runner, and the wait+gate step alone can run up to its own
+    # 150-min default. 180 was too tight — the job could be killed mid-poll
+    # before the gate ever ran.
+    timeout-minutes: 240
+    env:
+      INPUT_EPOCHS: ${{ inputs.epochs }}
+      INPUT_MAX_BATCHES: ${{ inputs.max_batches }}
+      INPUT_FLEET: ${{ inputs.fleet }}
+      INPUT_SKIP_BUILD: ${{ inputs.skip_build }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Preflight (podman, tailscale, jq, submodule)
+        run: |
+          set -euo pipefail
+          command -v podman >/dev/null || { echo "::error::podman missing — register the runner on a host with rootless podman (runbook prerequisites)"; exit 1; }
+          command -v tailscale >/dev/null || { echo "::error::tailscale missing — the runner must be on the tailnet"; exit 1; }
+          command -v jq >/dev/null || { echo "::error::jq missing (deploy/collect scripts use it for tailscale status parsing)"; exit 1; }
+          command -v just >/dev/null || { echo "::error::just missing (teardown step calls the just recipe alexnet-fleet-teardown)"; exit 1; }
+          podman --version
+          # Explicit if-guard (no-silent-failures Bucket B): a failed probe is
+          # reported, and the deploy step still fails hard if hosts are down.
+          if ! tailscale status 2>&1 | sed -n '1,3p'; then
+              echo "WARN: tailscale status unavailable — deploy will fail if fleet hosts are unreachable" >&2
+          fi
+          test -f research/Odyssey/.git || { echo "::error::Odyssey submodule not checked out (submodules: recursive)"; exit 1; }
+          echo "Preflight OK"
+
+      - name: Deploy smoke to fleet (build, distribute, launch)
+        env:
+          WORKSPACE_DIR: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          export FLEET="$INPUT_FLEET"
+          export EPOCHS="$INPUT_EPOCHS"
+          export MAX_BATCHES="$INPUT_MAX_BATCHES"
+          if [[ "$INPUT_SKIP_BUILD" == "true" ]]; then
+            export SKIP_BUILD=1
+            echo "SKIP_BUILD=1 — reusing existing odyssey:dev image"
+          fi
+          # WORKSPACE_DIR is inherited by the local alexnet-train.sh launch so
+          # the local host trains against THIS checkout, not a stale ~/Projects
+          # checkout. Remote hosts keep their own default (runbook prerequisites).
+          bash e2e/alexnet-deploy-fleet.sh
+
+      - name: Wait for all hosts + gate on completion evidence
+        run: |
+          set -euo pipefail
+          export FLEET="$INPUT_FLEET"
+          WAIT_ARGS=()
+          # Smoke runs (max_batches>0) intentionally save NO weights
+          # (run_train.mojo #5551): the "Training complete!" marker is the gate.
+          # Smoke runs (max_batches>0) save no weights (run_train.mojo #5551),
+          # so relax the gate to marker-only; full runs stay strict by default.
+          if [[ "$INPUT_MAX_BATCHES" != "0" ]]; then
+            WAIT_ARGS+=(--smoke)
+          fi
+          bash e2e/alexnet-fleet-wait.sh "${WAIT_ARGS[@]}"
+
+      - name: Collect results centrally
+        # Runs even when the gate failed so partial results (weights from hosts
+        # that completed) are preserved for the artifact and forensics.
+        if: always()
+        env:
+          CENTRAL_DIR: ${{ runner.temp }}/alexnet-fleet-results
+        run: |
+          set -euo pipefail
+          export FLEET="$INPUT_FLEET"
+          bash e2e/alexnet-collect-results.sh
+
+      - name: Write run summary
+        if: always()
+        run: |
+          {
+            echo "### AlexNet mesh smoke"
+            echo ""
+            echo "- Epochs: $INPUT_EPOCHS / Max batches: $INPUT_MAX_BATCHES"
+            echo "- Fleet: $INPUT_FLEET"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload fleet results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: alexnet-mesh-smoke-results
+          path: ${{ runner.temp }}/alexnet-fleet-results/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Tear down training containers (unless disabled)
+        if: always() && inputs.teardown
+        env:
+          FLEET: ${{ inputs.fleet }}
+        run: |
+          set -euo pipefail
+          # Teardown is fleet hygiene (orphaned alexnet-training containers
+          # consume RAM on every host) — a failure is real and must surface,
+          # not be swallowed (no-silent-failures Bucket B).
+          FORCE=1 just alexnet-fleet-teardown

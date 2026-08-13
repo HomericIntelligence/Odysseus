@@ -1,0 +1,10 @@
+# actionlint configuration
+# https://github.com/rhysd/actionlint/blob/main/docs/config.md
+#
+# Declares the custom self-hosted runner labels used by this repo's workflows.
+# The `mesh` label is the AlexNet fleet runner registered on epimetheus
+# (see .github/workflows/alexnet-mesh-smoke.yml and
+# docs/runbooks/alexnet-mesh-fleet.md for registration instructions).
+self-hosted-runner:
+  labels:
+    - mesh

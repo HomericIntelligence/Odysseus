@@ -1,0 +1,103 @@
+# alexnet-mesh-chaos.yml — Crash-test the AlexNet mesh fleet scripts.
+#
+# Runs the self-contained chaos suite (e2e/alexnet-mesh-chaos.sh), which
+# deliberately CRASHES the fleet scripts to prove they fail fast and cleanly:
+#   C1 offline-host teardown (must not hang)   C2 unresolvable-host deploy
+#   C3 missing image (clear diagnostic)        C4 [live] clobber guard
+#   C5 [live] kill-mid-run (gate detects)      C6/C6b smoke-gate semantics
+#   C7 teardown idempotency
+#
+# Manual-dispatch only — same policy as the full mesh smoke: infra-dependent
+# jobs must not auto-gate PRs or main. Default mode (no inputs) runs the FAST
+# suite (C1-C3, C6, C6b, C7 — a minute or two, no training, no fleet writes
+# beyond the bounded offline probes). Live mode (`live: true`) launches and
+# SIGKILLs a REAL training container (C4/C5) and also runs the C6 live smoke,
+# so budget ~15-20 min.
+#
+# ── Runner requirement ──────────────────────────────────────────────────────
+# Must run on a self-hosted runner with the `self-hosted,mesh` labels (rootless
+# podman + tailscale + jq — see the smoke workflow and runbook for one-time
+# registration). GitHub-hosted runners cannot reach the fleet and lack the
+# tailscale CLI the suite requires to resolve fleet hosts.
+#
+# ── Check status notes ───────────────────────────────────────────────────────
+# • Manual-dispatch only: no pull_request/push/schedule triggers, so it never
+#   appears as a PR or main check and can never block a merge. Dispatch it
+#   explicitly when a mesh change needs crash-testing.
+# • While a mesh smoke is running, a dispatched chaos run sits pending in the
+#   shared-concurrency queue until the smoke finishes — that is expected, not
+#   a stuck runner; the suite must never run while training is in flight.
+#
+# ── Safety ──────────────────────────────────────────────────────────────────
+# Serialized against the mesh smoke via a SHARED concurrency group: both use
+# the `alexnet-training` container name on the same runner, and the chaos
+# suite's C6 reseeds/removes that container when it finds one that is not a
+# completed smoke — it must never run concurrently with live training.
+# Static commands only: dispatch inputs pass via env, never interpolated into
+# a run block. Actions pinned to commit SHAs per repo convention.
+
+name: AlexNet mesh chaos
+
+on:
+  workflow_dispatch:
+    inputs:
+      live:
+        description: "Run live cases: C4 clobber guard + C5 kill-mid-run against a real training container"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # SHARED with alexnet-mesh-smoke.yml — see Safety note above. Never cancel
+  # an in-flight run: the suite under test may be mid-crash.
+  group: alexnet-mesh-fleet
+  cancel-in-progress: false
+
+jobs:
+  mesh-chaos:
+    name: AlexNet mesh chaos (crash-test)
+    runs-on: [self-hosted, mesh]
+    # 40 min: live mode waits up to 11 min for a training container to reach
+    # 'running' (C5) plus up to 10 min for the C6 live smoke to exit — 30 left
+    # only ~7 min of margin on a cold-compile host.
+    timeout-minutes: 40
+    env:
+      INPUT_LIVE: ${{ inputs.live || false }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Preflight (podman, tailscale, jq)
+        run: |
+          set -euo pipefail
+          command -v podman >/dev/null || { echo "::error::podman missing — register the runner on a host with rootless podman (runbook prerequisites)"; exit 1; }
+          command -v tailscale >/dev/null || { echo "::error::tailscale missing — the runner must be on the tailnet (the suite resolves fleet hosts over it)"; exit 1; }
+          command -v jq >/dev/null || { echo "::error::jq missing (tailscale status parsing)"; exit 1; }
+          podman --version
+          echo "Preflight OK"
+
+      - name: Run chaos suite
+        run: |
+          set -euo pipefail
+          if [[ "$INPUT_LIVE" == "true" ]]; then
+            echo "Live mode: C4 clobber guard + C5 kill-mid-run against a real training container"
+            CHAOS_LIVE=1 bash e2e/alexnet-mesh-chaos.sh | tee "$RUNNER_TEMP/chaos.log"
+          else
+            echo "Default mode: offline-host + gate-semantics crash tests (fast)"
+            bash e2e/alexnet-mesh-chaos.sh | tee "$RUNNER_TEMP/chaos.log"
+          fi
+
+      - name: Upload chaos log
+        # Always upload — a failing run's log is the evidence the suite exists
+        # to produce.
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: alexnet-mesh-chaos-log
+          path: ${{ runner.temp }}/chaos.log
+          if-no-files-found: warn
+          retention-days: 14

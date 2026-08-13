@@ -123,6 +123,32 @@ if (( ${#MISSING[@]} > 0 )); then
     done
 fi
 echo ""
+# ── Pull final training markers from a host's container log ──
+# Full training output streams to the container log driver (podman logs), NOT
+# to training.log (which carries only the launch header). Best-effort: the
+# training container may already have been torn down, and rootless podman over
+# a non-interactive ssh may not resolve its runtime dir.
+# Rootless podman over a non-interactive ssh needs the user runtime dir — same
+# preamble as e2e/alexnet-fleet-wait.sh. Single-quoted so `$(id -u)` stays
+# literal here and is evaluated by the REMOTE shell.
+# shellcheck disable=SC2016
+REMOTE_PODMAN_PREFIX='export XDG_RUNTIME_DIR=/run/user/$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus'
+
+extract_podman_markers() {
+    # No `|| true` here (repo no-silent-failures rule): "no markers found" or an
+    # unreachable host is an explicit non-zero exit the caller handles in an
+    # `if` condition. See docs/runbooks/no-silent-failures.md Bucket D.
+    local ip="$1"
+    local pat="Training complete|Average Loss|Test Accuracy"
+    if [[ "$ip" == "localhost" ]]; then
+        podman logs alexnet-training 2>/dev/null | grep -E "$pat" | tail -3
+    else
+        timeout 10 ssh -o ConnectTimeout=5 "$ip" \
+            "$REMOTE_PODMAN_PREFIX; podman logs alexnet-training 2>/dev/null | grep -E '$pat' | tail -3" \
+            2>/dev/null
+    fi
+}
+
 for host_dir in "$CENTRAL_DIR"/*/; do
     [[ -d "$host_dir" ]] || continue
     host=$(basename "$host_dir")
@@ -130,14 +156,23 @@ for host_dir in "$CENTRAL_DIR"/*/; do
 
     echo "── $host ──"
     if [[ -f "$log" ]]; then
-        # Pull out the most informative status line. Explicit if-guard (the
-        # no-silent-failures rule): grep exits 1 when no marker matches, and
-        # the if-condition keeps set -e from aborting on that expected miss.
+        # Launch-header markers (rare; some configs also log the header summary).
+        # Explicit if-guard per no-silent-failures.md Bucket D: a grep with no
+        # matches exits 1, which is the intended "no markers" branch, not a
+        # swallowed failure.
         if status=$(grep -E "Training complete!|Average Loss:|Test Accuracy:|Completed:" "$log" | tail -3); then
             echo "$status" | sed 's/^/  /'
         else
-            echo "  (log present but no completion markers)"
-            tail -3 "$log" | sed 's/^/  /'
+            # training.log holds only the launch header — real markers live in
+            # the container's log driver on the host. Pull them best-effort.
+            if markers=$(extract_podman_markers "$ip"); then
+                echo "$markers" | sed 's/^/  /'
+            elif [[ -d "$host_dir/alexnet_weights" ]]; then
+                echo "  (weights present — run completed; container log no longer available)"
+            else
+                echo "  (no completion markers — training incomplete or container torn down)"
+                tail -3 "$log" | sed 's/^/  /'
+            fi
         fi
         if [[ -d "$host_dir/alexnet_weights" ]]; then
             n=$(ls "$host_dir/alexnet_weights" 2>/dev/null | wc -l)
@@ -151,4 +186,5 @@ done
 
 echo "Per-host results inspection:"
 echo "  ls -la $CENTRAL_DIR/<hostname>/"
-echo "  cat $CENTRAL_DIR/<hostname>/training.log"
+echo "  cat $CENTRAL_DIR/<hostname>/training.log   # launch header / config only"
+echo "  podman logs alexnet-training               # full training output (on each host)"
