@@ -1,26 +1,39 @@
+# Dependabot configuration — HomericIntelligence fleet baseline
+# Cadence: monthly. Grouping: minor+patch updates in one PR, major-version
+# bumps in their own PR for focused review. See the Dependabot options
+# reference for details.
+
 version: 2
 updates:
-  - package-ecosystem: github-actions
-    directory: /
+  - package-ecosystem: 'github-actions'
+    directory: '/'
     schedule:
-      interval: weekly
-      day: monday
+      interval: "monthly"
     open-pull-requests-limit: 5
     labels:
-      - dependencies
-      - github-actions
-
-  # Git submodules: Dependabot tracks each submodule pin in .gitmodules and
-  # opens one PR per submodule when the pinned SHA falls behind the submodule's
-  # default branch. Those PRs trigger the full required CI matrix
-  # (pull_request on _required.yml), so every submodule bump is tested before
-  # it can merge — no native execution, container CI as everywhere else.
-  - package-ecosystem: gitsubmodule
-    directory: /
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: 'chore(ci)'
+    groups:
+      minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+  - package-ecosystem: 'gitsubmodule'
+    directory: '/'
     schedule:
-      interval: weekly
-      day: monday
+      interval: "monthly"
     open-pull-requests-limit: 10
     labels:
-      - dependencies
-      - submodules
+      - "dependencies"
+      - "submodules"
+    commit-message:
+      prefix: 'chore(submodules)'
