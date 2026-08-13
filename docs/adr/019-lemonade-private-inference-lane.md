@@ -174,8 +174,45 @@ Claude cloud lane remains the default path).
 - The Anthropic API key remains required for the primary lane; the fleet now
   carries two inference paths instead of one.
 
+## Addendum (2026-08-12): Router policies (`collection.router`)
+
+Lemonade's **Router** ([Router Policies](https://lemonade-server.ai/docs/dev/router-policy/))
+is an in-process, per-request **model-selection engine** — not an API gateway,
+reverse proxy, load balancer, or message router. A `collection.router` policy
+is registered like any collection (`POST /v1/pull`); pointing the OpenAI
+`model` field at the collection's name triggers the routing engine, which
+evaluates rules top-to-bottom (first match wins, `default_model` fallback)
+and selects a candidate model per request.
+
+- **Conditions**: deterministic (`keywords_any`/`keywords_all`, `regex`,
+  `min_chars`/`max_chars`, `has_tools`/`has_images`, `metadata`) and
+  model-backed (`semantic_similarity`, `classifier` via `/v1/classify`, or
+  `llm`-as-classifier). An `routing.router` block replaces authored rules with
+  an LLM picking the candidate itself.
+- **Candidates**: any registered component — local GGUF/ONNX models or
+  `cloud`-recipe models from an installed and authenticated provider (e.g.
+  Fireworks). A policy can keep `consent: denied` requests local while heavy
+  work routes to the cloud; the split is entirely policy-driven.
+- **Observability**: every routed response carries an `x-lemonade-route`
+  header (matched rule id or `default`); with `"route_trace": true` the body
+  (or first SSE event when streaming) carries the full decision trace — a
+  natural fit for the fleet's runnable-evidence posture (ADR-014).
+
+**Placement in the mesh**: the Router is a **feature of the ADR-019 lane, not
+a replacement for any fleet component**. It replaces nothing today: it absorbs
+the role of *client-side* per-request model selection (no fleet client has
+written that logic yet), keeping model-choice policy server-side. It does not
+overlap NATS routing, Hermes message delivery, Agamemnon planning, or Keystone
+task dispatch — those operate at the infrastructure/event layer, while the
+Router selects a model within a single Lemonade instance. The ADR-013
+*LLM-never-in-C++* principle is unchanged: router policies are authored
+configuration, and the lane remains non-gating with the Anthropic lane as
+default.
+
 ## References
 
+- [Router Policies (`collection.router`)](https://lemonade-server.ai/docs/dev/router-policy/) —
+  model-selection engine (addendum 2026-08-12)
 - [ADR-001](001-podman-over-docker.md) — podman as the container runtime
 - [ADR-005](005-nats-subject-schema.md) — NATS subject schema (extended here)
 - [ADR-008](008-nats-tls-encryption.md) / [ADR-009](009-nats-authentication.md)
