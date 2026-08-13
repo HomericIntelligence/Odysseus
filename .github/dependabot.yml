@@ -9,3 +9,18 @@ updates:
     labels:
       - dependencies
       - github-actions
+
+  # Git submodules: Dependabot tracks each submodule pin in .gitmodules and
+  # opens one PR per submodule when the pinned SHA falls behind the submodule's
+  # default branch. Those PRs trigger the full required CI matrix
+  # (pull_request on _required.yml), so every submodule bump is tested before
+  # it can merge — no native execution, container CI as everywhere else.
+  - package-ecosystem: gitsubmodule
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - submodules

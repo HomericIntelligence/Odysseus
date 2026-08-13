@@ -19,6 +19,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       has_drift: ${{ steps.drift.outputs.has_drift }}
+      drifted: ${{ steps.drifted.outputs.drifted }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -28,6 +29,13 @@ jobs:
         id: drift
         run: bash scripts/check-submodule-drift.sh --ci
 
+      # Emit the JSON list of drifted submodule paths for the per-submodule
+      # PR matrix (dependabot-style granularity).
+      - name: Emit drifted submodule list
+        id: drifted
+        run: |
+          echo "drifted=$(jq -c '[.submodules[] | select(.status == "behind") | .submodule]' drift-report.json)" >> "$GITHUB_OUTPUT"
+
       - name: Upload drift report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
@@ -36,51 +44,93 @@ jobs:
           path: drift-report.json
           retention-days: 30
 
-  create-update-pr:
-    name: open draft submodule-bump PR
+  create-update-prs:
+    name: open submodule-bump PR (${{ matrix.submodule }})
     needs: check-drift
     if: needs.check-drift.outputs.has_drift == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: write
       pull-requests: write
+    strategy:
+      fail-fast: false
+      matrix:
+        submodule: ${{ fromJson(needs.check-drift.outputs.drifted) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: true
 
-      - name: Bump stale submodule pins
+      # Dedupe: skip submodules that already have an open bump PR (opened by
+      # this workflow on a previous run, or by Dependabot gitsubmodule).
+      - name: Skip if a bump PR already exists
+        id: dedupe
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -uo pipefail
-          BRANCH="chore/submodule-updates-$(date +%Y-%m-%d)"
-          # Skip if a branch for today's run already exists (idempotency).
-          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
-            echo "Branch $BRANCH already exists — skipping."
-            echo "skip=true" >> "$GITHUB_ENV"
-            exit 0
+          SM="${{ matrix.submodule }}"
+          EXISTING=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --json title \
+            --jq '[.[] | select(.title | contains("'"$SM"'"))] | length' 2>/dev/null || echo 0)
+          echo "existing_open_prs=$EXISTING"
+          if [ "$EXISTING" -gt 0 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$BRANCH"
-          git submodule update --remote
-          echo "branch=$BRANCH" >> "$GITHUB_ENV"
 
-      - name: Open draft PR
-        if: env.skip != 'true'
+      - name: Bump pin and open CI-tested PR
+        if: steps.dedupe.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
-          if git diff --quiet; then
-            echo "No submodule pin changes after update --remote — nothing to PR."
+          SM="${{ matrix.submodule }}"
+          SAFE_NAME="${SM//\//-}"
+          BRANCH="chore/submodule-${SAFE_NAME}-$(date +%Y-%m-%d)"
+
+          # Idempotency: skip if a branch for this submodule already exists.
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "Branch $BRANCH already exists — skipping."
             exit 0
           fi
-          DATESTR="$(date +%Y-%m-%d)"
-          git add -A
-          git commit -m "chore(submodules): bump stale submodule pins (${DATESTR})"
-          git push -u origin "$branch"
-          gh pr create \
-            --draft \
-            --title "chore(submodules): bump stale submodule pins (${DATESTR})" \
-            --body "Automated draft PR opened by the Submodule Update Check workflow. One or more submodule pins were behind their upstream default branch. Review the changes and the attached drift report before merging. This PR is **not** auto-merged."
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+
+          git submodule update --remote "$SM"
+          if git diff --quiet; then
+            echo "No pin change for $SM — nothing to PR."
+            exit 0
+          fi
+
+          OLD_SHA=$(git diff HEAD -- "$SM" | awk '/^-Subproject/{print $3}' | cut -c1-8)
+          NEW_SHA=$(git -C "$SM" rev-parse HEAD | cut -c1-8)
+
+          git add "$SM"
+          git commit -m "chore(submodules): bump $SM to $NEW_SHA"
+          git push -u origin "$BRANCH"
+
+          # The label is managed here so `gh pr create --label` never fails on
+          # a fresh repository.
+          if gh label create submodules --force --color 7057ff \
+              --description "Git submodule pin updates" >/dev/null 2>&1; then
+            echo "submodules label ready"
+          else
+            echo "warn: could not ensure the submodules label exists" >&2
+          fi
+
+          PR_BODY=$(printf 'Automated PR opened by the Submodule Update Check workflow.\n\n| Submodule | %s |\n|---|---|\n| Pinned SHA | `%s` |\n| Upstream SHA | `%s` |\n\nThe full required CI matrix runs on this PR (pull_request trigger) to test the submodule bump before it can merge. Auto-merge (squash) is enabled — the PR merges only when every required check passes.\n' "$SM" "$OLD_SHA" "$NEW_SHA")
+
+          PR_URL=$(gh pr create \
+            --title "chore(submodules): bump $SM to $NEW_SHA" \
+            --body "$PR_BODY" \
+            --label submodules)
+
+          echo "Opened: $PR_URL"
+          if gh pr merge "$PR_URL" --auto --squash; then
+            echo "Auto-merge (squash) enabled on $PR_URL"
+          else
+            echo "warn: auto-merge could not be enabled on $PR_URL (mergeable state still computing)" >&2
+          fi
