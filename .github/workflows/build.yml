@@ -21,14 +21,36 @@ jobs:
       - name: Bootstrap container toolchain
         # Runs before checkout: actions/checkout needs `git` on PATH itself to
         # handle `submodules: recursive`, which a bare ubuntu:24.04 lacks.
+        # The job builds C++ submodules, so the container needs the full dev
+        # toolchain, not the minimal bootstrap: (1) build-essential provides
+        # gcc/g++/make — without a compiler, `conan profile detect` emits a
+        # build-context default profile with no settings.compiler and conan
+        # errors with "Invalid: 'settings.compiler' value not defined" on build
+        # requirements like libtool; (2) libssl-dev/pkg-config/zlib1g-dev are
+        # needed by nats.c (FetchContent in Keystone + Myrmidons hello-world),
+        # which #includes openssl/ssl.h. Regression from #427's move to a bare
+        # container (ref #405).
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            sudo git curl ca-certificates bash
+            sudo git curl ca-certificates bash build-essential libssl-dev pkg-config zlib1g-dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
       - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347  # v0.10.1
+      - name: Reset conan cache (zlib patches corruption)
+        # The self-hosted runner persists the conan home (~/.conan2 under
+        # HOME=/github/home) across job runs. A wedged zlib recipe export
+        # (missing its patches/ folder) makes `source()` fail with
+        # apply_conandata_patches FileNotFoundError. `conan remove` did not
+        # help: the metadata DB reports 0 recipes (nothing to purge) while the
+        # orphaned p/<hash>/ folder with the broken export sources survives on
+        # disk and is reused because its hash is deterministic. A fresh cache
+        # builds zlib/1.3.2 cleanly (verified locally, same conan 2.31.1 +
+        # revision 1cb806da), so nuke the whole conan home for a clean slate.
+        # Runs BEFORE profile detection so the freshly detected profile is kept.
+        # Ref #405 / #427 (self-hosted move).
+        run: rm -rf "$HOME/.conan2"
       - name: Detect conan profile
         run: pixi run conan profile detect
       - name: Run idempotency test
