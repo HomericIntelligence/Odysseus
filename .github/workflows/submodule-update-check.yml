@@ -114,8 +114,12 @@ jobs:
 
           # The label is managed here so `gh pr create --label` never fails on
           # a fresh repository.
-          gh label create submodules --force --color 7057ff \
-            --description "Git submodule pin updates" >/dev/null 2>&1 || true
+          if gh label create submodules --force --color 7057ff \
+              --description "Git submodule pin updates" >/dev/null 2>&1; then
+            echo "submodules label ready"
+          else
+            echo "warn: could not ensure the submodules label exists" >&2
+          fi
 
           PR_BODY=$(printf 'Automated PR opened by the Submodule Update Check workflow.\n\n| Submodule | %s |\n|---|---|\n| Pinned SHA | `%s` |\n| Upstream SHA | `%s` |\n\nThe full required CI matrix runs on this PR (pull_request trigger) to test the submodule bump before it can merge. Auto-merge (squash) is enabled — the PR merges only when every required check passes.\n' "$SM" "$OLD_SHA" "$NEW_SHA")
 
@@ -125,4 +129,8 @@ jobs:
             --label submodules)
 
           echo "Opened: $PR_URL"
-          gh pr merge "$PR_URL" --auto --squash 2>&1 | tail -1 || true
+          if gh pr merge "$PR_URL" --auto --squash; then
+            echo "Auto-merge (squash) enabled on $PR_URL"
+          else
+            echo "warn: auto-merge could not be enabled on $PR_URL (mergeable state still computing)" >&2
+          fi
