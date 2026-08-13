@@ -726,6 +726,22 @@ alexnet-fleet-teardown:
 alexnet-smoke:
     MAX_BATCHES=3 bash e2e/alexnet-train.sh
 
+# Crash-test the mesh fleet scripts (self-contained chaos suite): asserts the
+# scripts fail FAST and cleanly — offline-host teardown/deploy must not hang,
+# missing image gives a clear diagnostic, smoke-gate semantics hold, teardown
+# is idempotent. Fast (a minute or two, no training) — safe on any fleet host.
+# CHAOS_TIMEOUT=<s> overrides the per-case kill guard (default 45).
+alexnet-mesh-chaos:
+    bash e2e/alexnet-mesh-chaos.sh
+
+# Same suite PLUS the live cases: C4 clobber guard (train must REFUSE to
+# overwrite a running container) and C5 kill-mid-run (launch a REAL training
+# container, SIGKILL it, gate must detect it). Takes minutes and needs the
+# odyssey:dev image loaded on this host. Do not run while a fleet training or
+# smoke is in progress — both use the shared alexnet-training container name.
+alexnet-mesh-chaos-live:
+    CHAOS_LIVE=1 bash e2e/alexnet-mesh-chaos.sh
+
 # ===========================================================================
 # Python Package Installation
 # ===========================================================================

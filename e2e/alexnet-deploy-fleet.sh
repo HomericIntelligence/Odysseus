@@ -18,6 +18,7 @@
 #   FLEET            — space-separated host list (default: epimetheus apollo aeolus hephaestus)
 #   EPOCHS           — epochs per host (default: 100)
 #   BATCH_SIZE       — batch size per host (default: 128)
+#   MAX_BATCHES      — cap batches per epoch (0 = full dataset). Smoke test: 3.
 #   SKIP_BUILD=1     — use existing odyssey:dev image, don't rebuild or redistribute
 #   SKIP_DISTRIBUTE=1— don't rsync to remote hosts (image already loaded there)
 #   SKIP_LAUNCH=1    — build/distribute only, don't launch training
@@ -32,10 +33,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ODYSSEUS_ROOT="$(dirname "$SCRIPT_DIR")"
 LOCAL_HOST=$(hostname)
 
+# Bounded ssh for every remote operation: an offline/unreachable host must not
+# hang distribution or launch. `timeout` caps the whole ssh session and
+# ConnectTimeout fails fast when the host does not answer SYN. Same guard as
+# e2e/alexnet-fleet-wait.sh (SSH_BASE) and e2e/alexnet-fleet-teardown.sh.
+SSH_BASE=(timeout 15 ssh -o ConnectTimeout=5 -o BatchMode=yes)
+
 # ── Configuration ──
 FLEET="${FLEET:-epimetheus apollo aeolus hephaestus hermes}"
 EPOCHS="${EPOCHS:-100}"
 BATCH_SIZE="${BATCH_SIZE:-128}"
+MAX_BATCHES="${MAX_BATCHES:-0}"
 IMAGE_NAME="${IMAGE_NAME:-odyssey:dev}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 SKIP_DISTRIBUTE="${SKIP_DISTRIBUTE:-0}"
@@ -88,6 +96,7 @@ echo "Fleet:           $FLEET"
 echo "Remote targets:  ${REMOTE_LIST:-(none)}"
 echo "Image:           $IMAGE_NAME"
 echo "Epochs/Batch:    $EPOCHS / $BATCH_SIZE"
+echo "Max batches:     $MAX_BATCHES $([[ $MAX_BATCHES -gt 0 ]] && echo '(smoke)' || echo '(full dataset)')"
 echo ""
 
 # ── Phase 1: Build the Odyssey container image on local ──
@@ -149,7 +158,11 @@ if [[ "$SKIP_DISTRIBUTE" != "1" && -n "$REMOTE_LIST" ]]; then
         for host in $REMOTE_LIST; do
             ip="${REMOTE_HOSTS[$host]}"
             echo "  → $host ($ip): rsync odyssey-dev.tar"
-            rsync -az --info=progress2 /tmp/odyssey-dev.tar "${ip}:~/odyssey-dev.tar" &
+            # --timeout: rsync's own I/O stall guard; -e: ssh ConnectTimeout so
+            # an offline host cannot hang the rsync (bounded like the ssh calls).
+            rsync -az --info=progress2 --timeout=60 \
+                -e 'ssh -o ConnectTimeout=5 -o BatchMode=yes' \
+                /tmp/odyssey-dev.tar "${ip}:~/odyssey-dev.tar" &
         done
         wait
         echo "  image rsync complete."
@@ -160,13 +173,14 @@ if [[ "$SKIP_DISTRIBUTE" != "1" && -n "$REMOTE_LIST" ]]; then
         echo "  rsync launch scripts to ~/alexnet-fleet-scripts/ on each host"
         for host in $REMOTE_LIST; do
             ip="${REMOTE_HOSTS[$host]}"
-            ssh "$ip" "mkdir -p ~/alexnet-fleet-scripts" &
+            "${SSH_BASE[@]}" "$ip" "mkdir -p ~/alexnet-fleet-scripts" &
         done
         wait
         # rsync doesn't support a host list as a dest; do per-host instead.
         for host in $REMOTE_LIST; do
             ip="${REMOTE_HOSTS[$host]}"
-            rsync -az --info=progress2 \
+            rsync -az --info=progress2 --timeout=60 \
+                -e 'ssh -o ConnectTimeout=5 -o BatchMode=yes' \
                 "$SCRIPT_DIR/alexnet-train.sh" \
                 "$SCRIPT_DIR/alexnet-collect-results.sh" \
                 "$SCRIPT_DIR/alexnet-deploy-fleet.sh" \
@@ -175,7 +189,7 @@ if [[ "$SKIP_DISTRIBUTE" != "1" && -n "$REMOTE_LIST" ]]; then
         wait
         for host in $REMOTE_LIST; do
             ip="${REMOTE_HOSTS[$host]}"
-            ssh "$ip" "chmod +x ~/alexnet-fleet-scripts/*.sh && ls -la ~/alexnet-fleet-scripts/" &
+            "${SSH_BASE[@]}" "$ip" "chmod +x ~/alexnet-fleet-scripts/*.sh && ls -la ~/alexnet-fleet-scripts/" &
         done
         wait
         echo "  script rsync + chmod complete."
@@ -184,7 +198,7 @@ if [[ "$SKIP_DISTRIBUTE" != "1" && -n "$REMOTE_LIST" ]]; then
         for host in $REMOTE_LIST; do
             ip="${REMOTE_HOSTS[$host]}"
             echo "  → $host: podman load"
-            ssh "$ip" "podman load -i ~/odyssey-dev.tar && rm ~/odyssey-dev.tar && podman images $IMAGE_NAME --format '{{.Repository}}:{{.Tag}}'" &
+            "${SSH_BASE[@]}" "$ip" "podman load -i ~/odyssey-dev.tar && rm ~/odyssey-dev.tar && podman images $IMAGE_NAME --format '{{.Repository}}:{{.Tag}}'" &
         done
         wait
     fi
@@ -207,10 +221,10 @@ if [[ "$SKIP_LAUNCH" != "1" ]]; then
         echo "  DRY_RUN=1: would launch training on:"
         for host in "${_hosts[@]}"; do
             if [[ "$host" == "$LOCAL_HOST" ]]; then
-                echo "    local:  EPOCHS='$EPOCHS' BATCH_SIZE='$BATCH_SIZE' bash $SCRIPT_DIR/alexnet-train.sh"
+                echo "    local:  EPOCHS='$EPOCHS' BATCH_SIZE='$BATCH_SIZE' MAX_BATCHES='$MAX_BATCHES' bash $SCRIPT_DIR/alexnet-train.sh"
             else
                 ip="${REMOTE_HOSTS[$host]:-<unresolved>}"
-                echo "    ssh $ip:  EPOCHS='$EPOCHS' BATCH_SIZE='$BATCH_SIZE' bash ~/alexnet-fleet-scripts/alexnet-train.sh"
+                echo "    ssh $ip:  EPOCHS='$EPOCHS' BATCH_SIZE='$BATCH_SIZE' MAX_BATCHES='$MAX_BATCHES' bash ~/alexnet-fleet-scripts/alexnet-train.sh"
             fi
         done
     else
@@ -220,7 +234,7 @@ if [[ "$SKIP_LAUNCH" != "1" ]]; then
         for host in "${_hosts[@]}"; do
             echo "  → $host"
             if [[ "$host" == "$LOCAL_HOST" ]]; then
-                EPOCHS="$EPOCHS" BATCH_SIZE="$BATCH_SIZE" \
+                EPOCHS="$EPOCHS" BATCH_SIZE="$BATCH_SIZE" MAX_BATCHES="$MAX_BATCHES" \
                     bash "$SCRIPT_DIR/alexnet-train.sh" &
             else
                 ip="${REMOTE_HOSTS[$host]:-}"
@@ -233,8 +247,8 @@ if [[ "$SKIP_LAUNCH" != "1" ]]; then
                 # double-quoted string interpolates EPOCHS/BATCH_SIZE into the
                 # remote command's prefix. Net effect on remote: clean
                 # `EPOCHS=N BATCH_SIZE=M bash ~/alexnet-fleet-scripts/...`.
-                EPOCHS="$EPOCHS" BATCH_SIZE="$BATCH_SIZE" \
-                    ssh "$ip" "EPOCHS='$EPOCHS' BATCH_SIZE='$BATCH_SIZE' bash ~/alexnet-fleet-scripts/alexnet-train.sh" &
+                EPOCHS="$EPOCHS" BATCH_SIZE="$BATCH_SIZE" MAX_BATCHES="$MAX_BATCHES" \
+                    "${SSH_BASE[@]}" "$ip" "EPOCHS='$EPOCHS' BATCH_SIZE='$BATCH_SIZE' MAX_BATCHES='$MAX_BATCHES' bash ~/alexnet-fleet-scripts/alexnet-train.sh" &
             fi
         done
         wait

@@ -69,6 +69,19 @@ if ! command -v podman >/dev/null 2>&1; then
     exit 1
 fi
 
+# ── cgroup CPU controller availability ──
+# Rootless podman only applies --cpus when the cpu controller is delegated to
+# the user slice (cgroup v2). On hosts where systemd delegates only memory+pids
+# (e.g. default Debian user@.service), --cpus makes crun fail with
+# "controller `cpu` is not available under .../cgroup.controllers".
+# Detect delegation and drop the CPU limit if the controller is missing.
+CPU_CTRL_AVAILABLE=1
+USER_CGROUP_CONTROLLERS=/sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.controllers
+if [[ -f "$USER_CGROUP_CONTROLLERS" ]] && ! grep -qw "cpu" "$USER_CGROUP_CONTROLLERS" 2>/dev/null; then
+    echo "NOTE: cpu controller not delegated to user slice — skipping --cpus limit" >&2
+    CPU_CTRL_AVAILABLE=0
+fi
+
 # podman-compose build (and rootless podman save+load) tag the resulting image
 # as `localhost/$IMAGE_NAME` rather than `$IMAGE_NAME`. Accept both forms so the
 # preflight doesn't spuriously fail when the image was built here and rsynced
@@ -112,7 +125,7 @@ if [[ "$MAX_BATCHES" -eq 0 ]]; then
             -v "$WORKSPACE_DIR/research/Odyssey:/workspace:Z" \
             -w /workspace \
             "$IMAGE_NAME" \
-            pixi run python examples/alexnet_cifar10/download_cifar10.py
+            python examples/alexnet_cifar10/download_cifar10.py
     fi
 fi
 
@@ -132,6 +145,10 @@ LOG="$RESULTS_DIR/training.log"
         echo "CPU:      $(grep -m1 "model name" /proc/cpuinfo | sed 's/^model name\s*:\s*//')"
     fi
     echo ""
+    echo "NOTE: Full training output streams to the container log driver."
+    echo "      View it with:  podman logs -f alexnet-training"
+    echo "      This file holds only the launch header (config) above."
+    echo ""
 } | tee -a "$LOG"
 
 # Single training entry point. Fleet ships run_train.mojo on every host.
@@ -144,12 +161,17 @@ LOG="$RESULTS_DIR/training.log"
 # -v workspace:Z: SELinux relabel for workspace bind-mount (Fedora/RHEL)
 # -v results:Z: SELinux relabel for results bind-mount
 echo "Launching training container..."
+# --cpus is only passed when the cpu cgroup controller is delegated (see above)
+CPUS_ARGS=()
+if [[ "$CPU_CTRL_AVAILABLE" == "1" ]]; then
+    CPUS_ARGS=(--cpus "$CPU_LIMIT")
+fi
 podman run -d \
     --name alexnet-training \
     --network=host \
     --userns=keep-id \
-    --mem-limit="$MEM_LIMIT" \
-    --cpus="$CPU_LIMIT" \
+    --memory="$MEM_LIMIT" \
+    "${CPUS_ARGS[@]}" \
     --shm-size="$SHM_SIZE" \
     -v "$WORKSPACE_DIR/research/Odyssey:/workspace:Z" \
     -v "$RESULTS_DIR:/results:Z" \
@@ -164,7 +186,7 @@ podman run -d \
     "$IMAGE_NAME" \
     bash -c '
         set -euo pipefail
-        echo "[$(date -u +%H:%M:%S)] Container started. Image: $(pixi run mojo --version 2>&1 | head -1)"
+        echo "[$(date -u +%H:%M:%S)] Container started. Image: $(mojo --version 2>&1 | head -1)"
 
         # Smoke mode: when MAX_BATCHES > 0, pass --smoke and --max-batches
         # unconditionally. Hosts whose run_train.mojo lacks those flags will
@@ -174,7 +196,8 @@ podman run -d \
             EXTRA_ARGS=(--smoke --max-batches "$MAX_BATCHES")
         fi
 
-        pixi run mojo run $MOJO_TARGET_FLAGS -I . \
+        # odyssey package lives under src/ (CI convention: -I src -I .)
+        mojo run $MOJO_TARGET_FLAGS -I src -I . \
             examples/alexnet_cifar10/run_train.mojo \
             --epochs "$EPOCHS" \
             --batch-size "$BATCH_SIZE" \
@@ -187,9 +210,11 @@ podman run -d \
 
 echo ""
 echo "Training launched on $HOST_NAME."
-echo "Monitor with:"
+echo "Monitor with (full output — loss, accuracy, 'Training complete!'):"
 echo "  podman logs -f alexnet-training"
-echo "  tail -f $RESULTS_DIR/training.log"
+echo ""
+echo "  $RESULTS_DIR/training.log holds only the launch header (config);"
+echo "  the training run itself is NOT written there — it streams to podman logs."
 echo ""
 echo "To collect results centrally on epimetheus:"
 echo "  bash $SCRIPT_DIR/alexnet-collect-results.sh"

@@ -17,7 +17,15 @@ jobs:
     timeout-minutes: 60
     env:
       SKIP_ODYSSEY_BUILD: "true"
+      # The container's /tmp is a RAM-backed tmpfs sized to the runner's
+      # container memory; a full C++ build (Agamemnon test tree, ~178 ninja
+      # targets) exhausts it and g++ dies with "No space left on device"
+      # writing /tmp/cc*.s. Redirect compiler temp files to the disk-backed
+      # workspace mount instead.
+      TMPDIR: /__w/tmp
     steps:
+      - name: Prepare disk-backed tmpdir
+        run: mkdir -p /__w/tmp && chmod 1777 /__w/tmp
       - name: Bootstrap container toolchain
         # Runs before checkout: actions/checkout needs `git` on PATH itself to
         # handle `submodules: recursive`, which a bare ubuntu:24.04 lacks.
