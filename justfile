@@ -901,6 +901,31 @@ protection-remove-all:
     ./tools/github/remove-classic-protection.sh --all
 
 # ===========================================================================
+# Code Quality audit (GitHub Code Quality preview → paid after GA 2026-07-20)
+# ===========================================================================
+# Read-only audit. The actual disable path is per-repo UI; see
+# docs/runbooks/disable-code-quality.md. No `code-quality-disable` recipe is
+# exposed because the free GitHub plan does not provide a REST endpoint for
+# /repos/{r}/code-quality PATCH (verified 2026-07). When the API lands, add a
+# disable recipe here and update the runbook.
+
+# Audit the 16 .gitmodules-derived HomericIntelligence repos (+ Odysseus)
+code-quality-audit:
+    @bash tools/probe-code-quality.sh
+
+# Audit all 17 repos in the org (incl. modular-community)
+code-quality-audit-all:
+    @bash tools/probe-code-quality.sh --all
+
+# Audit and write to docs/ecosystem-code-quality-status.md (CI-friendly artifact)
+code-quality-update:
+    @bash tools/probe-code-quality.sh --output docs/ecosystem-code-quality-status.md
+
+# Print the runbook path
+code-quality-runbook:
+    @echo "Open docs/runbooks/disable-code-quality.md for the per-repo UI disable procedure."
+
+# ===========================================================================
 # Atlas review wave
 # ===========================================================================
 
