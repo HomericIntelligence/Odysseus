@@ -45,7 +45,7 @@ else
   mapfile -t REPOS < <(
     {
       git config --file "$REPO_ROOT/.gitmodules" --get-regexp 'submodule\..*\.url' \
-        | sed -E 's#.*github.com/##; s#\.git$##' \
+        | sed -E 's#.*github.com/##; s#git@github.com:##; s#\.git$##' \
         | awk -F/ '{print $NF}'
       echo "Odysseus"
     } | sort -u
@@ -130,6 +130,8 @@ append "- **Code Quality** column probes \`/repos/{r}/code-quality\`."
 append "  - \`on\`  → feature is enabled. UI-disable per \`docs/runbooks/disable-code-quality.md\`."
 append "  - \`off\` → feature is explicitly disabled (target state)."
 append "  - \`404\` → endpoint not exposed for this org tier (common on free public orgs; verify in repo UI)."
+append "  - \`?\`   → API/network failure while probing; re-run the audit."
+append "- **Dependabot sec / Secret scan / Push prot** may also show \`?\` on an API failure — same meaning."
 append "- **CQ config** = presence of \`.github/codeql/code-quality-config.yml\`."
 append "  - \`present\` = custom config file exists."
 append "  - \`absent\`  = platform defaults run if the feature is otherwise toggled on."

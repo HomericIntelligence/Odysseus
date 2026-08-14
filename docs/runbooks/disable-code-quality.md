@@ -78,6 +78,7 @@ on disk**, you must disable per-repo via UI (this runbook).
 From this Odysseus meta-repo:
 
 ```bash
+mkdir -p docs/diagnostics
 just code-quality-audit > docs/diagnostics/code-quality-before.md
 just code-quality-audit-all > docs/diagnostics/code-quality-before-all.md
 ```
