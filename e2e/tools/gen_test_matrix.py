@@ -82,7 +82,7 @@ def render(rows: list[dict]) -> str:
         "# E2E Test Coverage Matrix",
         "",
         "Maps each scenario test in `e2e/tests/` to the scenario IDs and the "
-        "system properties it verifies. Tests marked **T4** are partial on the "
+        + "system properties it verifies. Tests marked **T4** are partial on the "
         "default topology and fully exercised only under the T4 "
         "(multi-container) topology — i.e. intentionally deferred on single-node runs.",
         "",

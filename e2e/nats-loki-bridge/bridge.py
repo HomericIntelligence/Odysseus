@@ -109,7 +109,8 @@ async def main() -> None:
                     })
                 await msg.ack()
         except nats.errors.TimeoutError:
-            pass
+            # A fetch timeout is expected under load; the outer loop re-fetches.
+            await asyncio.sleep(0.5)
         except Exception as exc:
             print(f"[nats-loki-bridge] fetch error: {exc}", file=sys.stderr, flush=True)
             await asyncio.sleep(1)

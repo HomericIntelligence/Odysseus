@@ -29,6 +29,7 @@ Environment:
 
 import argparse
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -359,14 +360,10 @@ async def watch() -> None:
             if stop.is_set():
                 # Graceful shutdown
                 for sub in subs:
-                    try:
+                    with contextlib.suppress(Exception):
                         await sub.unsubscribe()
-                    except Exception:
-                        pass
-                try:
+                with contextlib.suppress(Exception):
                     await nc.drain()
-                except Exception:
-                    pass
                 break
 
             # Connection permanently closed — outer loop retries
@@ -383,10 +380,8 @@ async def watch() -> None:
 
             # Clean up partial connection
             if nc is not None:
-                try:
+                with contextlib.suppress(Exception):
                     await nc.close()
-                except Exception:
-                    pass
         finally:
             if panel is not None:
                 panel.stop()
@@ -394,10 +389,8 @@ async def watch() -> None:
         # Wait before retrying, but stop immediately on Ctrl+C
         if not stop.is_set():
             print_status("reconnecting", f"Retrying in {RETRY_INTERVAL}s...", inline=True)
-            try:
+            with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=RETRY_INTERVAL)
-            except asyncio.TimeoutError:
-                pass
 
     clear_inline()
     print(f"\n{DIM}Disconnected.{RESET}")
