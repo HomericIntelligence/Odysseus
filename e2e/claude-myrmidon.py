@@ -246,6 +246,7 @@ def _build_container_cmd(claude_args: list[str], cwd: str = WORKING_DIR) -> list
             if not (_st.st_mode & stat.S_IROTH):
                 os.chmod(_path, _st.st_mode | stat.S_IROTH)
         except OSError:
+            # File may already be gone; the permission adjustment is best-effort.
             pass
 
     # Standalone binary path — newer version uses api.anthropic.com for OAuth
@@ -412,9 +413,8 @@ def post_issue_comment(issue_number: int, stage: str, iteration: int, content: s
             )
             # Extract comment ID from the URL in output
             if result.stdout.strip():
-                # gh issue comment prints the URL
-                url = result.stdout.strip()
-                # Fetch the latest comment to get its ID
+                # Fetch the latest comment to get its ID (the URL line is
+                # informational only)
                 comments_json = subprocess.run(
                     ["gh", "api", f"repos/{REPO}/issues/{issue_number}/comments",
                      "--jq", ".[-1].id"],
