@@ -75,6 +75,12 @@ jobs:
     runs-on: [self-hosted, self-hosted-aeolus]
     container:
       image: ubuntu:24.04
+    defaults:
+      run:
+        # The container's /bin/sh is dash, which rejects `set -o pipefail`
+        # (the runner injects it). Force bash so every run step behaves like
+        # a normal GitHub-hosted Linux job.
+        shell: bash
     timeout-minutes: 30
     steps:
       - name: Bootstrap container toolchain
@@ -185,6 +191,26 @@ jobs:
           sudo apt-get install -y --no-install-recommends podman podman-compose
           podman --version
           podman compose version || podman-compose --version
+
+      - name: Start rootless podman socket
+        # docker-compose (via the podman-docker shim, used by `just e2e-up`)
+        # connects to $XDG_RUNTIME_DIR/podman/podman.sock, which is not
+        # running by default on a fresh ubuntu-latest runner. Start the
+        # rootless socket service (systemd user session, else a bare
+        # `podman system service`) before compose up.
+        run: |
+          set -euo pipefail
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          if systemctl --user start podman.socket 2>/dev/null; then
+            echo "podman.socket started via systemd"
+          else
+            podman system service --time=0 "unix://$XDG_RUNTIME_DIR/podman/podman.sock" &
+            for _ in $(seq 1 10); do
+              [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ] && break
+              sleep 1
+            done
+          fi
+          podman info >/dev/null
 
       - name: Bring up the T4 compose stack
         run: just e2e-up
