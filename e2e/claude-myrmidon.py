@@ -541,7 +541,7 @@ Output ONLY the bash script. No explanation. Start with #!/usr/bin/env bash."""
         test_path = os.path.join(WORKING_DIR, "e2e", f"test-task-{task_id[:8]}.sh")
         with open(test_path, "w") as f:
             f.write(result)
-        os.chmod(test_path, 0o755)
+        os.chmod(test_path, 0o700)
         log("test", f"Wrote test script to {test_path}")
     else:
         log("test", f"[DRY-RUN] Would write test script ({len(result)} chars)")

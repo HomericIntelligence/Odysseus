@@ -704,7 +704,7 @@ Output ONLY the bash script. Start with #!/usr/bin/env bash."""
         test_path = os.path.join(WORKING_DIR, "e2e", f"test-{TASK_SLUG}-{repo_slug}.sh")
         with open(test_path, "w") as f:
             f.write(result)
-        os.chmod(test_path, 0o755)
+        os.chmod(test_path, 0o700)
         log("test", f"[{repo_slug}] Wrote test script to {test_path}")
 
     next_data = {
