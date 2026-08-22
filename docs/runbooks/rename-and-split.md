@@ -15,7 +15,7 @@ rolls forward in an ordered sequence (soft cutover).
 > [ADR-016](../adr/016-split-hephaestus.md) — this runbook is the
 > mechanical execution of those decisions.
 
-> **Current Execution Status (commit `0a6fb6f`, 2026-07-12):**
+> **Current Execution Status (updated 2026-08-21):**
 >
 > - ✅ **Step 1 + 1b:** `Hephaestus` split → `shared/Hephaestus` +
 >   `agentic/Athena` carve-out complete. Both gitlink pins already
@@ -23,29 +23,19 @@ rolls forward in an ordered sequence (soft cutover).
 >   --install` flow registers ONLY `athena@Athena`; the canonical
 >   post-install template (`.claude/settings.json`) was aligned with
 >   that in commit `0a6fb6f`.
-> - ⏳ **Steps 2–12:** Ten upstream `HomericIntelligence/Project<X>`
->   renames remaining. Each requires (a) a GitHub web UI rename, (b) a
->   per-repo internal-touch PR (CMake options, pyproject.toml name
->   changes, internal doc references), (c) wait for merge. Order
->   matters: least-coupled first (ProjectScylla, ProjectCharybdis),
->   `ProjectAgamemnon` LAST (HMAS orchestrator with the largest blast
->   radius).
-> - ⏳ **Step 13:** Odysseus-side finish. Blocked until 2–12 are green.
->   Operator workflow:
->     1. Confirm upstream stability: `git ls-remote
->        https://github.com/HomericIntelligence/<X>.git` for each renamed
->        repo.
->     2. Pre-stage on a feature branch.
->     3. `tools/apply-odysseus-rename.sh --check` (no writes; reports
->        stale `Project<X>` refs in scope files).
->     4. `tools/apply-odysseus-rename.sh --apply` (mass rewrite of
->        `.gitmodules`, `justfile`, `docker-compose.e2e.yml`,
->        `tools/github/*.sh`).
->     5. `just ecosystem-table` to regenerate the README
->        `<!-- ECOSYSTEM-CI-TABLE:START -->` block.
->     6. Open the meta-repo finish PR per section 4 — `@mvillmow` merges
->        by hand (NOT auto-merge; AGENTS.md forbids auto-merge for
->        cross-repo integration PRs).
+> - ✅ **Steps 2–12:** All eleven upstream
+>   `HomericIntelligence/Project<X>` → `<X>` GitHub renames are done.
+>   Canonical slugs verified via the GitHub API on 2026-08-21; the
+>   legacy `Project<X>` names survive only as server-side redirects.
+> - ✅ **Step 13:** Odysseus-side finish landed. `.gitmodules` section
+>   names were aligned with their paths via
+>   `tools/apply-odysseus-rename.sh --apply`, and redirect-dependent
+>   `Project<X>` references were purged from checked-in code:
+>   `e2e/claude-myrmidon-multi.py` (REPOS registry paths + slugs),
+>   `e2e/tests/unit/test_claude_myrmidon_multi.py` (fixtures),
+>   `.env.example`, and an `e2e-reliability.yml` comment. Historical
+>   records (ADRs, CHANGELOG, propagation reports, migration scripts,
+>   this runbook's procedure text) intentionally retain old names.
 
 > **Submodule pin audit (commit `07fd153`, 2026-07-12):**
 >

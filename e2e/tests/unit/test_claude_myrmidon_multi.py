@@ -116,13 +116,13 @@ class _GlobalStateMixin(unittest.TestCase):
         harness.REPOS.update(
             {
                 "keystone": {
-                    "path": "provisioning/ProjectKeystone",
-                    "github_repo": "HomericIntelligence/ProjectKeystone",
+                    "path": "provisioning/Keystone",
+                    "github_repo": "HomericIntelligence/Keystone",
                     "description": "Test repo",
                 },
                 "hephaestus": {
-                    "path": "shared/ProjectHephaestus",
-                    "github_repo": "HomericIntelligence/ProjectHephaestus",
+                    "path": "shared/Hephaestus",
+                    "github_repo": "HomericIntelligence/Hephaestus",
                     "description": "Shared tooling",
                 },
             }
