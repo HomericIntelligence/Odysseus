@@ -143,7 +143,7 @@ jobs:
         # harness (e2e/lib/process.sh) searches for.
         #
         # SKIP_ODYSSEY_BUILD=true: the T1 reliability mesh needs only Agamemnon +
-        # the myrmidon worker. `_build-odyssey` builds the ProjectOdyssey Mojo
+        # the myrmidon worker. `_build-odyssey` builds the Odyssey Mojo
         # research repo via `podman compose` (odyssey-dev container), which is
         # unrelated to this suite and fails on a stock runner (podman is present
         # so the recipe's `podman info` guard passes, but the compose service

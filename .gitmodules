@@ -6,11 +6,11 @@
     path = infrastructure/AchaeanFleet
     url = https://github.com/HomericIntelligence/AchaeanFleet.git
 
-[submodule "infrastructure/ProjectArgus"]
+[submodule "infrastructure/Argus"]
 	path = infrastructure/Argus
     url = https://github.com/HomericIntelligence/Argus.git
 
-[submodule "infrastructure/ProjectHermes"]
+[submodule "infrastructure/Hermes"]
 	path = infrastructure/Hermes
     url = https://github.com/HomericIntelligence/Hermes.git
 
@@ -18,11 +18,11 @@
 # Provisioning
 # ===========================================================================
 
-[submodule "provisioning/ProjectTelemachy"]
+[submodule "provisioning/Telemachy"]
 	path = provisioning/Telemachy
     url = https://github.com/HomericIntelligence/Telemachy.git
 
-[submodule "provisioning/ProjectKeystone"]
+[submodule "provisioning/Keystone"]
 	path = provisioning/Keystone
     url = https://github.com/HomericIntelligence/Keystone.git
 
@@ -34,7 +34,7 @@
 # CI/CD
 # ===========================================================================
 
-[submodule "ci-cd/ProjectProteus"]
+[submodule "ci-cd/Proteus"]
 	path = ci-cd/Proteus
     url = https://github.com/HomericIntelligence/Proteus.git
 
@@ -42,11 +42,11 @@
 # Research
 # ===========================================================================
 
-[submodule "research/ProjectOdyssey"]
+[submodule "research/Odyssey"]
 	path = research/Odyssey
     url = https://github.com/HomericIntelligence/Odyssey.git
 
-[submodule "research/ProjectScylla"]
+[submodule "research/Scylla"]
 	path = research/Scylla
     url = https://github.com/HomericIntelligence/Scylla.git
 
@@ -54,7 +54,7 @@
 # Shared
 # ===========================================================================
 
-[submodule "shared/ProjectMnemosyne"]
+[submodule "shared/Mnemosyne"]
 	path = shared/Mnemosyne
     url = https://github.com/HomericIntelligence/Mnemosyne.git
 
@@ -66,11 +66,11 @@
 # Control
 # ===========================================================================
 
-[submodule "control/ProjectAgamemnon"]
+[submodule "control/Agamemnon"]
 	path = control/Agamemnon
     url = https://github.com/HomericIntelligence/Agamemnon.git
 
-[submodule "control/ProjectNestor"]
+[submodule "control/Nestor"]
 	path = control/Nestor
     url = https://github.com/HomericIntelligence/Nestor.git
 
@@ -78,7 +78,7 @@
 # Testing
 # ===========================================================================
 
-[submodule "testing/ProjectCharybdis"]
+[submodule "testing/Charybdis"]
 	path = testing/Charybdis
     url = https://github.com/HomericIntelligence/Charybdis.git
 [submodule "agentic/Athena"]

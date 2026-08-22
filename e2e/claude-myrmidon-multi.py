@@ -109,35 +109,35 @@ REPOS: dict[str, dict] = {
         "description": "OCI image build recipes (build-vessel)",
     },
     "argus": {
-        "path": "infrastructure/ProjectArgus",
-        "github_repo": "HomericIntelligence/ProjectArgus",
+        "path": "infrastructure/Argus",
+        "github_repo": "HomericIntelligence/Argus",
         "description": "Observability stack (Prometheus/Grafana)",
     },
     "hermes": {
-        "path": "infrastructure/ProjectHermes",
-        "github_repo": "HomericIntelligence/ProjectHermes",
+        "path": "infrastructure/Hermes",
+        "github_repo": "HomericIntelligence/Hermes",
         "description": "NATS event bridge (FastAPI webhook → JetStream)",
     },
     # Control plane
     "agamemnon": {
-        "path": "control/ProjectAgamemnon",
-        "github_repo": "HomericIntelligence/ProjectAgamemnon",
+        "path": "control/Agamemnon",
+        "github_repo": "HomericIntelligence/Agamemnon",
         "description": "Orchestration REST API (C++20, port 8080)",
     },
     "nestor": {
-        "path": "control/ProjectNestor",
-        "github_repo": "HomericIntelligence/ProjectNestor",
+        "path": "control/Nestor",
+        "github_repo": "HomericIntelligence/Nestor",
         "description": "Research + ideation service (C++20, port 8081)",
     },
     # Provisioning
     "telemachy": {
-        "path": "provisioning/ProjectTelemachy",
-        "github_repo": "HomericIntelligence/ProjectTelemachy",
+        "path": "provisioning/Telemachy",
+        "github_repo": "HomericIntelligence/Telemachy",
         "description": "Declarative workflow runner (Telemachy)",
     },
     "keystone": {
-        "path": "provisioning/ProjectKeystone",
-        "github_repo": "HomericIntelligence/ProjectKeystone",
+        "path": "provisioning/Keystone",
+        "github_repo": "HomericIntelligence/Keystone",
         "description": "C++20 MessageBus + ThreadPool library (HMAS transport)",
     },
     "myrmidons": {
@@ -147,31 +147,31 @@ REPOS: dict[str, dict] = {
     },
     # CI/CD
     "proteus": {
-        "path": "ci-cd/ProjectProteus",
-        "github_repo": "HomericIntelligence/ProjectProteus",
+        "path": "ci-cd/Proteus",
+        "github_repo": "HomericIntelligence/Proteus",
         "description": "CI/CD pipeline trigger recipes",
     },
     # Research
     "odyssey": {
-        "path": "research/ProjectOdyssey",
-        "github_repo": "HomericIntelligence/ProjectOdyssey",
+        "path": "research/Odyssey",
+        "github_repo": "HomericIntelligence/Odyssey",
         "description": "Mojo ML training framework (standalone, no mesh integration)",
     },
     "scylla": {
-        "path": "research/ProjectScylla",
-        "github_repo": "HomericIntelligence/ProjectScylla",
+        "path": "research/Scylla",
+        "github_repo": "HomericIntelligence/Scylla",
         "description": "Agent evaluation and benchmarking framework",
     },
     # Testing
     "charybdis": {
-        "path": "testing/ProjectCharybdis",
-        "github_repo": "HomericIntelligence/ProjectCharybdis",
+        "path": "testing/Charybdis",
+        "github_repo": "HomericIntelligence/Charybdis",
         "description": "Chaos and resilience testing via Agamemnon /v1/chaos/*",
     },
     # Shared
     "mnemosyne": {
-        "path": "shared/ProjectMnemosyne",
-        "github_repo": "HomericIntelligence/ProjectMnemosyne",
+        "path": "shared/Mnemosyne",
+        "github_repo": "HomericIntelligence/Mnemosyne",
         "description": "Skills marketplace and knowledge registry",
     },
     "hephaestus": {
