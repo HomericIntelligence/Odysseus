@@ -4,10 +4,11 @@
 # plus a planner sub-agent step that performs the epic decomposition
 # (athena:advise-gated). Telemachy executes the workflow; it never plans.
 #
-# Run from Odysseus root:
-#   WORKFLOWS_DIR=workflows pixi run telemachy run workflows/m0-contracts.yaml
-# or: just telemachy-run WORKFLOW=workflows/m0-contracts.yaml (after the
-# recipe gains WORKFLOWS_DIR passthrough — see M0 epic).
+# Run (from provisioning/Telemachy so pixi resolves the telemachy env;
+# paths resolve against CWD, WORKFLOWS_DIR is not consulted for lookup):
+#   cd provisioning/Telemachy
+#   pixi run telemachy validate ../../workflows/m0-contracts.yaml   # schema check
+#   pixi run telemachy run      ../../workflows/m0-contracts.yaml   # execute
 #
 # Epics are registered PER REPO (epic_home in metadata); child issues are
 # the dispatchable units. Field names follow the canonical YAML contract:
