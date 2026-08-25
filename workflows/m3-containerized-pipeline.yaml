@@ -1,0 +1,45 @@
+# Milestone 3 — pipeline domain, single host, containerized.
+# Epic home: Myrmidons. See ADR-020 sections 2, 4, 5.
+
+apiVersion: telemachy/v1
+metadata:
+  name: m3-containerized-pipeline-domain
+  description: >-
+    achaean-mesh vessel gains agent-CLI build ARG (opencode default lane,
+    claude variant retained); Myrmidons manifests for all six roles with
+    per-lane model fields; Odyssey 6-level hierarchy ported into Myrmidons;
+    dev-mesh fleet wiring; agamemnon-apply reconciliation; compose T4 E2E.
+    Exit: just mesh-e2e green; Argus panels live.
+  adr: "020"
+  epic_home: Myrmidons
+agents:
+  - name: loop-planner
+    program: claude-code
+    working_dir: /tmp/m3-planner
+    runtime: local
+teams:
+  - name: m3-provisioning
+    agents: [loop-planner]
+    tasks:
+      - subject: Requirements and invariants for containerized mesh pools
+        description: >-
+          Capture: vessel must install hephaestus[mesh] plus the selected
+          agent CLI via ARG with pinned HEPHAESTUS_REF; credentials mounted
+          read-only per CLI; one container per (domain, role) queue;
+          resources within hermes budget (2 cpu / 4g each, max three
+          concurrent); merger runs least-scoped token (merge plus label
+          write only). Invariant: manifests stay GitOps source of truth;
+          hierarchy definitions in Myrmidons validate all per-repo copies.
+        assign_to: loop-planner
+      - subject: Plan provisioning decomposition (advise-gated)
+        description: >-
+          Run athena:advise planning mode first. Decompose into child issues:
+          mesh-vessel ARG for agent CLI; opencode auth mounting; new role
+          manifests plan-reviewer, pr-reviewer, merger, learner with lane
+          models from M0; hierarchy import under agents/hierarchy/ with sync
+          gate; fleet dev-mesh update; Agamemnon payload-pointer verification
+          issue; compose T4 services and just mesh-e2e recipe.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for containerized mesh pools
+teardown: on_completion

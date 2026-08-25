@@ -1,0 +1,41 @@
+# Milestone 2 — single host, multi-process per role.
+# Epic home: Odysseus (e2e harness lives here). See ADR-020 section 9.
+
+apiVersion: telemachy/v1
+metadata:
+  name: m2-single-host-multi-process
+  description: >-
+    One mesh-worker process per role on hermes (bare processes, local NATS).
+    Extend the e2e harness. Exit criterion: killing any worker mid-stage is
+    recovered correctly by the seeder (restart = re-run holds across
+    processes).
+  adr: "020"
+  epic_home: Odysseus
+agents:
+  - name: loop-planner
+    program: claude-code
+    working_dir: /tmp/m2-planner
+    runtime: local
+teams:
+  - name: m2-multiprocess
+    agents: [loop-planner]
+    tasks:
+      - subject: Requirements and invariants for multi-process operation
+        description: >-
+          Capture: process-per-role supervision story (manual at this stage),
+          shared NATS/credentials config surface, lease handoff between
+          processes of the same role must stay safe (durable consumers),
+          seeder must never double-dispatch an in-flight lease. Chaos case:
+          SIGKILL a worker mid-implementation; recovery via label rescan.
+        assign_to: loop-planner
+      - subject: Plan harness extension and chaos cases (advise-gated)
+        description: >-
+          Run athena:advise planning mode first. Decompose into child issues:
+          e2e launcher for N worker processes with per-role env; DRY_RUN
+          scripted ladder run across processes; crash-and-recover test;
+          Argus log panels for hi.logs.myrmidon. Respect host limits:
+          MaxAckPending 3 equals the three-heavy-agents budget on hermes.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for multi-process operation
+teardown: on_completion

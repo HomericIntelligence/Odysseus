@@ -1,0 +1,74 @@
+# Milestone workflow registry — mesh-distributed Hephaestus loop (ADR-020).
+#
+# Each file defines one milestone as requirements/goals/invariants/research
+# plus a planner sub-agent step that performs the epic decomposition
+# (athena:advise-gated). Telemachy executes the workflow; it never plans.
+#
+# Run from Odysseus root:
+#   WORKFLOWS_DIR=workflows pixi run telemachy run workflows/m0-contracts.yaml
+# or: just telemachy-run WORKFLOW=workflows/m0-contracts.yaml (after the
+# recipe gains WORKFLOWS_DIR passthrough — see M0 epic).
+#
+# Epics are registered PER REPO (epic_home in metadata); child issues are
+# the dispatchable units. Field names follow the canonical YAML contract:
+# subject / blocked_by / assign_to (never title / depends_on).
+
+apiVersion: telemachy/v1
+metadata:
+  name: m0-mesh-loop-contracts
+  description: >-
+    Milestone 0 — contracts: ADR-020 ratification, envelope/budget freeze,
+    lane-model pinning, Odyssey-hierarchy adoption, and authoring of the
+    M1-M6 milestone workflows.
+  adr: "020"
+  epic_home: Odysseus
+  lane_models: pinned-by-M0-issue-1
+agents:
+  - name: loop-planner
+    program: claude-code
+    working_dir: /tmp/m0-planner
+    runtime: local
+teams:
+  - name: m0-contracts
+    agents: [loop-planner]
+    tasks:
+      - subject: >-
+          Pin planning / implementation / review / mechanical lane model IDs
+        description: >-
+          Decide and record the four lane model IDs (planning, implementation,
+          review, mechanical) as config in Myrmidons manifest model fields.
+          Provider is opencode for the operator lane; Claude remains available
+          for other contributors. Output: a table in ADR-020 follow-up notes
+          plus updated manifests. Blocks everything downstream.
+        assign_to: loop-planner
+      - subject: Freeze dispatch envelope and budget-carriage fields
+        description: >-
+          Ratify the ADR-013 pointer envelope additions for stage chaining:
+          stage, attempt, budget counters, verdict, remediation payload.
+          Publish as a versioned schema snippet referenced by all workers.
+          blocked_by: lane pinning is independent; envelope freeze blocks
+          M1 implementation issues.
+        assign_to: loop-planner
+        blocked_by: []
+      - subject: Adopt Odyssey 6-level HMAS hierarchy as canonical structure
+        description: >-
+          Import research/Odyssey/agents/hierarchy.md structure (L0-L5,
+          30 agents, delegates_to/receives_from graph) into
+          provisioning/Myrmidons/agents/hierarchy/ as canonical definitions;
+          define the lint/sync gate; file the Agamemnon mesh_role_name()
+          6-level extension issue. blocked_by: none.
+        assign_to: loop-planner
+        blocked_by: []
+      - subject: Plan M1-M6 epics (advise-gated decomposition)
+        description: >-
+          Run athena:advise (planning mode) before decomposing. Produce the
+          per-repo epic breakdowns for milestones 1 through 6 with child
+          issues sized to single dispatchable tasks. Requirements, goals,
+          invariants, and research come from this workflow's sibling tasks
+          and ADR-020; the planner decides nothing without the advise gate.
+        assign_to: loop-planner
+        blocked_by:
+          - Pin planning / implementation / review / mechanical lane model IDs
+          - Freeze dispatch envelope and budget-carriage fields
+          - Adopt Odyssey 6-level HMAS hierarchy as canonical structure
+teardown: on_completion
