@@ -1,0 +1,46 @@
+# Milestone 1 — Hephaestus keystone: the mesh worker library.
+# Single host, multi-thread validation (one process, thread per role).
+# Epic home: shared/Hephaestus. See docs/adr/020-mesh-distributed-hephaestus-loop.md.
+
+apiVersion: telemachy/v1
+metadata:
+  name: m1-hephaestus-mesh-keystone
+  description: >-
+    Build hephaestus/mesh_worker behind the [mesh] extra: ADR-013 claim loop,
+    per-role stage executors, merger verifier, seeder CLI, dry-run mode.
+    Exit criterion: a DRY_RUN issue walks needs-plan to merged in one
+    multi-threaded process against local NATS.
+  adr: "020"
+  epic_home: Hephaestus
+agents:
+  - name: loop-planner
+    program: claude-code
+    working_dir: /tmp/m1-planner
+    runtime: local
+teams:
+  - name: m1-keystone
+    agents: [loop-planner]
+    tasks:
+      - subject: Requirements and invariants for the mesh worker package
+        description: >-
+          Capture: JetStream durable pull consumer per ADR-013 section 1
+          (AckExplicit, AckWait 900s, MaxDeliver 3, heartbeat every 5 min,
+          fetch(1)); envelope hi/v1 validation; idempotency preamble on
+          attempt greater than 1; exclusive state-label mutation with
+          readback; facts published to hi.tasks verbs with agent_id and
+          exec_host; logs to hi.logs.myrmidon. Invariant: only Hephaestus
+          automation writes state labels; GitHub stays the sole journal.
+        assign_to: loop-planner
+      - subject: Plan the keystone decomposition (advise-gated)
+        description: >-
+          Run athena:advise planning mode first. Decompose into child issues:
+          claim-loop module; stage executor entry points reusing prompts,
+          tool_scopes, claude_invoke/opencode runtime; next-dispatch
+          publisher; merger investigation module extracting merge_wait proof
+          logic for reuse by both single-device and mesh modes; seeder CLI;
+          [mesh] extra plus console scripts hephaestus-mesh-worker and
+          hephaestus-mesh-seed; unit tests and canned-response DRY_RUN.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for the mesh worker package
+teardown: on_completion

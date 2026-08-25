@@ -1,0 +1,42 @@
+# Milestone 4 — full pipeline dogfood across the ecosystem.
+# Epic home: Odysseus (coordination hub). See ADR-020 section 9 step M4.
+
+apiVersion: telemachy/v1
+metadata:
+  name: m4-full-pipeline-dogfood
+  description: >-
+    Mesh drives real HomericIntelligence backlog end to end. Proteus builds
+    and pushes both mesh vessel variants on Hephaestus merges; Hermes bridges
+    PR merged webhooks into hi.pipeline to trigger learn. Exit: at least one
+    real issue merged with the mesh only; single-device loop idle.
+  adr: "020"
+  epic_home: Odysseus
+agents:
+  - name: loop-planner
+    program: claude-code
+    working_dir: /tmp/m4-planner
+    runtime: local
+teams:
+  - name: m4-dogfood
+    agents: [loop-planner]
+    tasks:
+      - subject: Requirements and invariants for dogfooded operation
+        description: >-
+          Capture: every milestone epic from here on is worked BY the mesh
+          (fallback to single-device loop per issue is allowed and must be
+          recorded as a comment marker); CI evidence rules per ADR-014 apply
+          to all mesh-produced PRs; legacy claude-myrmidon harness migrates
+          or retires; cross-host hermes-hub to epimetheus check included.
+        assign_to: loop-planner
+      - subject: Plan rollout decomposition (advise-gated)
+        description: >-
+          Run athena:advise planning mode first. Decompose into child issues:
+          Proteus vessel CI plus agamemnon-apply dispatch; Hermes merged
+          webhook bridge publishing the learn trigger; Argus stage-latency,
+          budget-exhaustion, merger-bounce dashboards; runbook
+          operate-mesh-loop.md; deprecation note for the single-device entry
+          point; first real backlog issue selected as dogfood target.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for dogfooded operation
+teardown: on_completion

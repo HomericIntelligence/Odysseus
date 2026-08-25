@@ -1,0 +1,43 @@
+# Milestone 6 — idea watcher agent + web interview interface.
+# Epic home: Odysseus (user-facing hub). See ADR-020 stage map, M6.
+
+apiVersion: telemachy/v1
+metadata:
+  name: m6-idea-watcher-web-interview
+  description: >-
+    A watcher agent subscribes for new idea packets (web form or webhook
+    ingested by Hermes) and conducts the intake interview through a web
+    interface that supersedes the CLI console. Exit: submit an idea in the
+    browser, complete the interview, receive a registered epic with zero CLI
+    usage.
+  adr: "020"
+  epic_home: Odysseus
+agents:
+  - name: loop-planner
+    program: claude-code
+    working_dir: /tmp/m6-planner
+    runtime: local
+teams:
+  - name: m6-watcher
+    agents: [loop-planner]
+    tasks:
+      - subject: Requirements and invariants for watcher and web UI
+        description: >-
+          Capture: idea submission is untrusted input and must be fenced in
+          prompts; interview rides hi.pipeline.interview question/answer
+          subjects with the GitHub-comment fallback ladder; the web interface
+          evolves tools/odysseus-console.py into a browser app; authn via
+          Tailscale identity; every interview transcript lands on the intake
+          issue; handoff to M5 research lane unchanged.
+        assign_to: loop-planner
+      - subject: Plan watcher and web decomposition (advise-gated)
+        description: >-
+          Run athena:advise planning mode first. Decompose into child issues:
+          Hermes idea-submission ingestion endpoint publishing idea packets;
+          watcher agent manifest and claim loop role; web interview UI with
+          live NATS relay; transcript persistence to intake issues; E2E from
+          browser form to registered epic.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for watcher and web UI
+teardown: on_completion
