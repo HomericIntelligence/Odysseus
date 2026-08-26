@@ -1,0 +1,15 @@
+# Canonical lane model pin (ADR-020 §4) — issue #465, operator-confirmed.
+#
+# Single source of truth for the four automation-lane model IDs. Changing a
+# lane model is a one-line edit here; consumers (loop launch shells via
+# `just loop-env`, Myrmidons manifests' `model:` fields in M3) read from this
+# file. Never hardcode these IDs in code.
+#
+# Operator lane runs opencode; Claude remains available for other
+# contributors. Confirmed by @mvillmow in issue #465.
+
+lanes:
+  planning: opencode/x-preview-f-free-high         # chief-architect roles
+  implementation: opencode/x-preview-f-free-medium  # task-agent roles
+  review: opencode/x-preview-f-free-low            # plan-reviewer / pr-reviewer
+  mechanical: opencode/x-preview-f-free-low        # merger / seeder / learn / advise

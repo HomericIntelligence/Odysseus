@@ -322,6 +322,17 @@ validate-compose:
 test-justfile-recipes:
     bash tests/test-justfile-recipes.sh
     bash tests/test-config-validators.sh
+    bash tests/test-lane-models.sh
+
+# Print the pinned ADR-020 lane model IDs (issue #465) as a markdown table.
+# Validates the canonical pin file configs/lane-models.yaml first.
+lane-models:
+    pixi run python tools/lane_models.py
+
+# Emit source-able `export HEPH_*_MODEL=...` lines for loop launch shells:
+#   eval "$(just loop-env)"
+loop-env:
+    @pixi run python tools/lane_models.py --env
 
 # Lint test scripts for corrupted / non-runnable artifacts (guards #374)
 lint-test-scripts:
