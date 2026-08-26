@@ -35,6 +35,8 @@ EPIC_LABEL = "agamemnon-epic"
 NEEDS_PLAN_LABEL = "state:needs-plan"
 EPIC_LABEL_DESCRIPTION = "HMAS epic tracked by Agamemnon"
 EPIC_LABEL_COLOR = "0E8A16"
+NEEDS_PLAN_LABEL_DESCRIPTION = "Awaiting an advise-gated plan"
+NEEDS_PLAN_LABEL_COLOR = "FBCA04"
 
 KNOWN_REPOS = (
     "Odysseus",
@@ -237,21 +239,34 @@ def existing_open_epic(repo: str, title: str) -> int | None:
     return None
 
 
+def _ensure_label(repo: str, label: str, description: str, color: str) -> None:
+    """Best-effort label creation; already-exists failures are fine."""
+    subprocess.run(
+        [
+            "gh", "label", "create", "-R", f"{ORG}/{repo}", label,
+            "--description", description,
+            "--color", color,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def apply_plan(milestones: list[Milestone]) -> int:
     """Create labels, children, and epics via ``gh``. Idempotent per epic."""
     created_epics: list[tuple[Milestone, str]] = []
 
-    homes = sorted({m.epic_home for m in milestones})
-    for repo in homes:
-        subprocess.run(
-            [
-                "gh", "label", "create", "-R", f"{ORG}/{repo}", EPIC_LABEL,
-                "--description", EPIC_LABEL_DESCRIPTION,
-                "--color", EPIC_LABEL_COLOR,
-            ],
-            capture_output=True,
-            text=True,
-            check=False,  # already-exists failures are fine
+    # Pre-create BOTH labels in every repo touched by children or epic
+    # bodies, so `gh issue create --label ...` cannot fail mid-loop on a
+    # missing label after earlier children were already created.
+    repos = {m.epic_home for m in milestones}
+    repos.update(child.repo for m in milestones for child in m.children)
+    for repo in sorted(repos):
+        _ensure_label(repo, EPIC_LABEL, EPIC_LABEL_DESCRIPTION, EPIC_LABEL_COLOR)
+        _ensure_label(
+            repo, NEEDS_PLAN_LABEL, NEEDS_PLAN_LABEL_DESCRIPTION,
+            NEEDS_PLAN_LABEL_COLOR,
         )
 
     for m in milestones:
