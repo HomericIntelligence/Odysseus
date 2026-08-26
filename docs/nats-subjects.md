@@ -27,6 +27,8 @@ All NATS messages follow a standard envelope structure:
 
 The `timestamp` field is ISO-8601 formatted UTC. The `data` object contains event-specific fields; **note that `status` is nested inside `data`, not at the top level**.
 
+Pipeline dispatch packets (`hi.myrmidon.pipeline.*`) are governed by the versioned JSON Schema [`configs/schemas/dispatch-envelope.hi-v1.schema.json`](../configs/schemas/dispatch-envelope.hi-v1.schema.json) (`hi/v1`, per ADR-013 §3 and ADR-020 §6).
+
 ### Event-Specific Data Fields
 
 **task.created**

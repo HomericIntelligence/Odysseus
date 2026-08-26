@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://homericintelligence.github.io/Odysseus/schemas/dispatch-envelope.hi-v1.schema.json",
+  "title": "Hephaestus mesh dispatch envelope hi/v1",
+  "description": "Versioned dispatch packet for the Hephaestus automation loop on the HomericIntelligence mesh (ADR-013 §3 payload envelope + ADR-020 §6 pointer fields and M0 stage-chaining additions). Packets carry pointers only; workers read the full task from GitHub at claim time. New contract versions get a new schema file — never edit this one in place.",
+  "type": "object",
+  "required": ["schema", "ts", "msg_id", "repo", "issue", "branch", "stage", "attempt", "budgets"],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema": {
+      "const": "hi/v1",
+      "description": "Envelope version tag (ADR-013 §3)."
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 publish timestamp (ADR-013 §3)."
+    },
+    "msg_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Globally unique message id for idempotent handling (ADR-013 §3)."
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9.-]+/[A-Za-z0-9._-]+$",
+      "description": "GitHub repository the task belongs to, as {org}/{name} (ADR-020 §6)."
+    },
+    "issue": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "GitHub issue number that is the single source of truth for this task (ADR-020 §6)."
+    },
+    "branch": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Git branch holding code truth for this task (ADR-020 §6)."
+    },
+    "epic_key": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]+-[0-9]+$",
+      "description": "Epic key as {repo_slug}-{issue_number} (ADR-013 §6)."
+    },
+    "base_branch": {
+      "type": "string",
+      "description": "Branch to base work on; defaults to the repository trunk when absent."
+    },
+    "blocked_by": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 1 },
+      "description": "Issue numbers this task depends on (ADR-013 §3)."
+    },
+    "intake_id": {
+      "type": "string",
+      "description": "Intake record identifier (ADR-013 §3)."
+    },
+    "team_id": {
+      "type": "string",
+      "description": "HMAS team identifier (ADR-013 §3)."
+    },
+    "task_id": {
+      "type": "string",
+      "description": "Agamemnon HMAS task identifier (ADR-013 §3)."
+    },
+    "domain": {
+      "type": "string",
+      "description": "Dispatch domain; pipeline or research today (ADR-013 role-addressed dispatch), extensible to new domains without a schema bump.",
+      "examples": ["pipeline", "research"]
+    },
+    "role": {
+      "type": "string",
+      "description": "Role name addressed by the dispatch subject hi.myrmidon.{domain}.{role}.task.{task_id} (ADR-013 §2)."
+    },
+    "stage": {
+      "enum": ["planning", "plan_review", "implementation", "pr_review", "merge"],
+      "description": "Loop stage this dispatch targets (M0 ratification of ADR-020 §2 stage chain). The Learn stage is dispatched post-merge on an aux queue and has no first-class dispatch value."
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "1-based attempt counter for this stage dispatch; part of the idempotency preamble key (ADR-013 §4)."
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clone", "plan", "plan_review_iter", "plan_cycles", "implement",
+        "rebase_conflict", "test_fix", "pr_review_iter", "pr_review_hard", "merge"
+      ],
+      "properties": {
+        "clone": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 2,
+          "description": "Repository clone/retry attempts per task (default 2)."
+        },
+        "plan": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 2,
+          "description": "Planning-stage attempts (default 2)."
+        },
+        "plan_review_iter": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 3,
+          "description": "Plan-review iteration retries within plan_review (default 3)."
+        },
+        "plan_cycles": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 2,
+          "description": "Full plan -> plan-review cycles before exhaustion (default 2)."
+        },
+        "implement": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 2,
+          "description": "Implementation-stage attempts (default 2)."
+        },
+        "rebase_conflict": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 2,
+          "description": "Rebase-conflict retries before fail-back/exit (default 2)."
+        },
+        "test_fix": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 1,
+          "description": "Test-fix loop attempts inside implementation (default 1)."
+        },
+        "pr_review_iter": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 3,
+          "description": "PR-review iteration retries within pr_review (default 3)."
+        },
+        "pr_review_hard": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 6,
+          "description": "Hard ceiling across all PR-review retries for one item (default 6)."
+        },
+        "merge": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 5,
+          "description": "Merger-agent retry budget (ADR-020 §3, default 5)."
+        }
+      },
+      "description": "Per-stage retry budgets carried in the envelope (ADR-020 §6). Counters decrement only on same-stage retries; fail-back exits (leaving the stage) and terminal exits do not consume budget. Exhaustion drives state:skip (see ADR-020 follow-up notes)."
+    },
+    "verdict": {
+      "enum": ["go", "no_go", null],
+      "description": "Stage outcome carried forward so downstream stages can chain on it (e.g. merger reacts to implementation-go/no-go). Null while no verdict exists yet."
+    },
+    "remediation": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "description": "Human-readable cause of the no-go outcome."
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Verbatim failing evidence (log excerpts, check names, review threads) for the receiving agent."
+        }
+      },
+      "required": ["reason", "evidence"],
+      "additionalProperties": false,
+      "description": "Remediation payload attached by a reviewing/merging worker on a no-go outcome (ADR-020 §3): the merger publishes this back to the task-agent queue carrying the failing evidence. Present only on remediation packets; never on forward dispatches."
+    }
+  }
+}
