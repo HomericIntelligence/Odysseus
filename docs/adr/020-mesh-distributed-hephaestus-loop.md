@@ -169,6 +169,44 @@ both modes share labels and journal, so handoff is seamless.
 - Legacy `e2e/claude-myrmidon.py` subjects remain deprecated; the new worker
   is ADR-013-native and the old harness migrates or retires at M4.
 
+## Follow-up Notes (M0)
+
+Ratified by [M0-2](https://github.com/HomericIntelligence/Odysseus/issues/466)
+(`workflows/m0-contracts.yaml`): the stage-chaining fields added on top of the
+ADR-013 §3 pointer envelope, published as the versioned JSON Schema at
+[`configs/schemas/dispatch-envelope.hi-v1.schema.json`](../../configs/schemas/dispatch-envelope.hi-v1.schema.json).
+That file is **normative for all pipeline workers** from M1 onward; new contract
+versions get a new schema file, never an in-place edit.
+
+### Budget table → envelope counters
+
+The `budgets` object in the `hi/v1` envelope carries exactly these counters.
+A counter decrements only when a failure causes the work item to **re-enter the
+same stage** (retry); fail-back exits (leaving the stage to another stage) and
+terminal exits do not consume budget.
+
+| Counter | Default | Owning stage | Consumption rule |
+|---|---|---|---|
+| `clone` | 2 | any (pre-stage) | Clone/prefetch retry of the same task |
+| `plan` | 2 | planning | Retry within planning |
+| `plan_review_iter` | 3 | plan_review | Retry within plan review |
+| `plan_cycles` | 2 | planning ↔ plan_review | Full plan→review cycle re-entry |
+| `implement` | 2 | implementation | Retry within implementation |
+| `rebase_conflict` | 2 | implementation / merge | Rebase-conflict retry of same stage |
+| `test_fix` | 1 | implementation | Test-fix loop within implementation |
+| `pr_review_iter` | 3 | pr_review | Retry within PR review |
+| `pr_review_hard` | 6 | pr_review | Hard ceiling across all PR-review retries |
+| `merge` | 5 | merge | Merger retry budget (§3) |
+
+### Exhaustion semantics
+
+When a stage's counter reaches 0 on a retry-class failure, the worker stops
+retrying and exits the item to **`state:skip`** — there is no cross-stage
+escalation. Per the ADR-013 §2 ownership rule, only Hephaestus automation
+writes `state:*` labels; mesh workers write them exclusively through the
+existing Hephaestus mutation + readback path (§1). Merger exhaustion follows
+the same path (§3: bounded by the merge budget of 5; exhaustion → `state:skip`).
+
 ## References
 
 - [ADR 013](013-hmas-mesh-wire-contracts.md) — wire contracts this ADR builds on
