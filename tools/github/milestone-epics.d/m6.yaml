@@ -1,0 +1,63 @@
+# Milestone M6 epic registration payload (issue #468, ADR-020 sections 7 and 9).
+# Consumed by tools/github/register-milestone-epics.py. Field names follow the
+# canonical workflow contract: subject / blocked_by (never title / depends_on).
+# Cross-repo children are filed in their owning repo and cross-referenced from
+# the epic body (ADR-020 section 6 per-repo epics; dispatch packets carry repo).
+milestone: M6
+title: "M6 Epic: idea watcher + web interview (ADR-020)"
+epic_home: Odysseus
+workflow: workflows/m6-idea-watcher-web.yaml
+home_rationale: >-
+  Odysseus is the user-facing hub (tools/odysseus-console.py, workflows/);
+  the repo that owns most of the milestone's work hosts the epic.
+ordering_note: >-
+  Follows M4 per the ADR-020 section 9 ladder.
+children:
+  - id: M6.1
+    repo: Odysseus
+    subject: Requirements and invariants for watcher and web UI
+    description: >-
+      Capture: idea submission is untrusted input and must be fenced in
+      prompts; interview rides hi.pipeline.interview question/answer subjects
+      with the GitHub-comment fallback ladder; the web interface evolves
+      tools/odysseus-console.py into a browser app; authn via Tailscale
+      identity; every interview transcript lands on the intake issue; handoff
+      to the M5 research lane unchanged.
+    blocked_by: []
+  - id: M6.2
+    repo: Odysseus
+    subject: Web interview UI over hi.pipeline.interview subjects
+    description: >-
+      Browser app evolving tools/odysseus-console.py: live NATS relay over
+      hi.pipeline.interview.* question/answer subjects with the GitHub
+      comment fallback ladder.
+    blocked_by: [M6.1]
+  - id: M6.3
+    repo: Odysseus
+    subject: Interview transcript persistence to intake issues
+    description: >-
+      Every interview transcript lands on the intake issue for audit
+      (ADR-013 interview convention), from the web interview channel.
+    blocked_by: [M6.1]
+  - id: M6.4
+    repo: Odysseus
+    subject: E2E browser-form to registered epic with zero CLI usage
+    description: >-
+      End-to-end case: submit an idea in the browser, complete the interview,
+      receive a registered epic with zero CLI usage (M6 exit criterion).
+    blocked_by: [M6.2, M6.3, M6.5, M6.6]
+  - id: M6.5
+    repo: Hermes
+    subject: Idea-submission ingestion endpoint publishing idea packets
+    description: >-
+      Hermes endpoint ingesting web form/webhook idea submissions and
+      publishing idea packets for the watcher agent; submissions are untrusted
+      input downstream.
+    blocked_by: [M6.1]
+  - id: M6.6
+    repo: Myrmidons
+    subject: Watcher agent claim-loop manifest
+    description: >-
+      Manifest and claim-loop role for the watcher agent subscribing to new
+      idea packets and conducting intake interviews.
+    blocked_by: [M6.1]

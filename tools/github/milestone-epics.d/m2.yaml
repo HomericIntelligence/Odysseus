@@ -1,0 +1,54 @@
+# Milestone M2 epic registration payload (issue #468, ADR-020 sections 7 and 9).
+# Consumed by tools/github/register-milestone-epics.py. Field names follow the
+# canonical workflow contract: subject / blocked_by (never title / depends_on).
+milestone: M2
+title: "M2 Epic: single-host multi-process mesh (ADR-020)"
+epic_home: Odysseus
+workflow: workflows/m2-single-host-multiprocess.yaml
+home_rationale: >-
+  The e2e harness that this milestone extends lives in Odysseus; the repo that
+  owns most of the milestone's work hosts the epic (ADR-020 section 6).
+ordering_note: >-
+  Follows M1 (Hephaestus keystone) per the ADR-020 section 9 ladder.
+children:
+  - id: M2.1
+    repo: Odysseus
+    subject: Requirements and invariants for multi-process operation
+    description: >-
+      Capture: process-per-role supervision story (manual at this stage),
+      shared NATS/credentials config surface, lease handoff between processes
+      of the same role must stay safe (durable consumers), seeder must never
+      double-dispatch an in-flight lease. Chaos case: SIGKILL a worker
+      mid-implementation; recovery via label rescan.
+    blocked_by: []
+  - id: M2.2
+    repo: Odysseus
+    subject: e2e launcher for N per-role worker processes
+    description: >-
+      Extend the e2e harness to launch one mesh-worker process per role with
+      per-role environment on hermes (bare processes, local NATS), per the
+      requirements captured in the requirements child of this epic.
+    blocked_by: [M2.1]
+  - id: M2.3
+    repo: Odysseus
+    subject: DRY_RUN scripted label-ladder run across processes
+    description: >-
+      Run the DRY_RUN scripted needs-plan-to-merged ladder across separate
+      worker processes (one process per role) against local NATS.
+    blocked_by: [M2.1, M2.2]
+  - id: M2.4
+    repo: Odysseus
+    subject: Crash-and-recover chaos case (SIGKILL mid-stage)
+    description: >-
+      Chaos test: SIGKILL a worker mid-implementation and verify seeder
+      recovery via label rescan; restart = re-run holds across processes.
+      Respect host limits: MaxAckPending 3 equals the three-heavy-agents
+      budget on hermes (AGENTS.md resource limits).
+    blocked_by: [M2.1, M2.2]
+  - id: M2.5
+    repo: Odysseus
+    subject: Argus log panels for hi.logs.myrmidon
+    description: >-
+      Argus log panels surfacing hi.logs.myrmidon facts emitted by the mesh
+      workers during multi-process runs.
+    blocked_by: [M2.1]
