@@ -332,6 +332,11 @@ test-merge-queue-readiness:
     bash tests/github/merge-queue-readiness.test.sh
     bash tests/github/apply-repo-rulesets.test.sh
 
+# Validate M1-M6 epic registration payloads against ADR-020 conventions (#468)
+test-milestone-registry:
+    python3 tests/github/test_register_milestone_epics.py
+    python3 tools/github/register-milestone-epics.py --plan >/dev/null
+
 # Render Nomad config placeholders to a deploy-local dir (default /etc/nomad.d).
 # Nomad agent HCL does NOT expand OS env vars, so render before `nomad agent -config`.
 # Requires NOMAD_SERVER_IP and NOMAD_ADVERTISE_ADDR (e.g. export NOMAD_SERVER_IP=$(tailscale ip -4)).
@@ -349,7 +354,7 @@ render-nomad-configs OUT_DIR="/etc/nomad.d":
     if command -v nomad >/dev/null 2>&1; then nomad fmt -check "{{ OUT_DIR }}"/*.hcl; fi
 
 # Run all CI checks locally
-ci: lint validate-configs check-doc-field-drift test-merge-queue-readiness
+ci: lint validate-configs check-doc-field-drift test-merge-queue-readiness test-milestone-registry
     @echo "All checks passed"
 
 # Cut a release: validate tag↔pixi.toml↔CHANGELOG, create tag, push (triggers release.yml)

@@ -1,0 +1,64 @@
+# Milestone M5 epic registration payload (issue #468, ADR-020 sections 7 and 9).
+# Consumed by tools/github/register-milestone-epics.py. Field names follow the
+# canonical workflow contract: subject / blocked_by (never title / depends_on).
+# Cross-repo children are filed in their owning repo and cross-referenced from
+# the epic body (ADR-020 section 6 per-repo epics; dispatch packets carry repo).
+milestone: M5
+title: "M5 Epic: research domain (ADR-020)"
+epic_home: Nestor
+workflow: workflows/m5-research-domain.yaml
+home_rationale: >-
+  Nestor owns research intake and ideation; the repo that owns most of the
+  milestone's work hosts the epic.
+ordering_note: >-
+  Follows M4 per the ADR-020 section 9 ladder.
+children:
+  - id: M5.1
+    repo: Nestor
+    subject: Requirements and invariants for the research lane
+    description: >-
+      Capture: LLM work never runs inside C++ services (Nestor stays thin);
+      interview fallback ladder live console then GitHub comment marker
+      polling then assumptions recorded; research dispatch adds inline
+      idea/context fields; completion closes the Nestor store item; handoff
+      produces a researched brief consumed by the epic planner with a
+      athena:advise gate.
+    blocked_by: []
+  - id: M5.2
+    repo: Nestor
+    subject: POST /v1/research dispatch payload conformance plus store-item closure
+    description: >-
+      Dispatch payload conformance for POST /v1/research with inline idea and
+      context fields, and closure of the Nestor store item on completion,
+      per the requirements captured in the requirements child of this epic.
+    blocked_by: [M5.1]
+  - id: M5.3
+    repo: Myrmidons
+    subject: Research myrmidon manifest on achaean-mesh vessel
+    description: >-
+      Manifest for the research myrmidon role running on the achaean-mesh
+      vessel, subscribing to hi.myrmidon.research.chief-architect.
+    blocked_by: [M5.1]
+  - id: M5.4
+    repo: Odysseus
+    subject: Interview relay consumer in tools/odysseus-console.py
+    description: >-
+      Console-side consumer of the interview relay subjects so research
+      myrmidons can interview via live console with the GitHub comment
+      fallback ladder (ADR-013 interview conventions).
+    blocked_by: [M5.1]
+  - id: M5.5
+    repo: Odysseus
+    subject: Brief-to-Telemachy handoff workflow yaml in workflows/
+    description: >-
+      Workflow yaml that registers a researched brief as an epic with child
+      issues entering the loop (M4-style dogfood), consumed under the
+      athena:advise gate.
+    blocked_by: [M5.1]
+  - id: M5.6
+    repo: Odysseus
+    subject: E2E from submitted idea to registered epic
+    description: >-
+      End-to-end case: submitted idea to researched brief to registered epic
+      to merged work without manual steps (M5 exit criterion).
+    blocked_by: [M5.2, M5.3, M5.4, M5.5]

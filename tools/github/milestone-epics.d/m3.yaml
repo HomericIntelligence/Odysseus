@@ -1,0 +1,80 @@
+# Milestone M3 epic registration payload (issue #468, ADR-020 sections 7 and 9).
+# Consumed by tools/github/register-milestone-epics.py. Field names follow the
+# canonical workflow contract: subject / blocked_by (never title / depends_on).
+# Cross-repo children are filed in their owning repo and cross-referenced from
+# the epic body (ADR-020 section 6 per-repo epics; dispatch packets carry repo).
+milestone: M3
+title: "M3 Epic: containerized pipeline domain (ADR-020)"
+epic_home: Myrmidons
+workflow: workflows/m3-containerized-pipeline.yaml
+home_rationale: >-
+  The GitOps manifests and fleet definitions live in provisioning/Myrmidons;
+  the repo that owns most of the milestone's work hosts the epic.
+ordering_note: >-
+  Follows M1 then M2 per the ADR-020 section 9 ladder.
+children:
+  - id: M3.1
+    repo: Myrmidons
+    subject: Requirements and invariants for containerized mesh pools
+    description: >-
+      Capture: vessel must install hephaestus[mesh] plus the selected agent
+      CLI via ARG with pinned HEPHAESTUS_REF; credentials mounted read-only
+      per CLI; one container per (domain, role) queue; resources within
+      hermes budget (2 cpu / 4g each, max three concurrent); merger runs
+      least-scoped token (merge plus label write only). Invariant: manifests
+      stay GitOps source of truth; hierarchy definitions in Myrmidons
+      validate all per-repo copies.
+    blocked_by: []
+  - id: M3.2
+    repo: Myrmidons
+    subject: Role manifests plan-reviewer pr-reviewer merger learner
+    description: >-
+      New role manifests for plan-reviewer, pr-reviewer, merger, and learner,
+      with per-lane model fields pinned by M0 outcomes (#465).
+    blocked_by: [M3.1]
+  - id: M3.3
+    repo: Myrmidons
+    subject: Odyssey 6-level hierarchy import under agents/hierarchy/ with sync gate
+    description: >-
+      Port the research/Odyssey 6-level HMAS hierarchy into Myrmidons
+      agents/hierarchy/ as canonical definitions plus a lint/sync gate that
+      validates all per-repo copies.
+    blocked_by: [M3.1]
+  - id: M3.4
+    repo: Myrmidons
+    subject: dev-mesh fleet update for one container per domain-role queue
+    description: >-
+      Update the dev-mesh fleet so each (domain, role) queue gets its own
+      container within the hermes resource budget.
+    blocked_by: [M3.1, M3.2]
+  - id: M3.5
+    repo: Myrmidons
+    subject: opencode auth mounted read-only per CLI
+    description: >-
+      Credentials/auth for the selected agent CLI mounted read-only into the
+      vessel containers, per CLI lane.
+    blocked_by: [M3.1]
+  - id: M3.6
+    repo: AchaeanFleet
+    subject: achaean-mesh vessel agent-CLI build ARG with pinned HEPHAESTUS_REF
+    description: >-
+      Vessel Containerfile/build gains an agent-CLI ARG (opencode default
+      lane, claude variant retained) and installs hephaestus[mesh] at a
+      pinned HEPHAESTUS_REF.
+    blocked_by: [M3.1]
+  - id: M3.7
+    repo: Agamemnon
+    subject: Agamemnon payload-pointer verification
+    description: >-
+      Verify Agamemnon dispatch packets stay pointer-only per ADR-013
+      section 6 (repo, issue, epic_key, branch, attempt, budget counters);
+      workers read full task descriptions from GitHub at claim time.
+    blocked_by: [M3.1]
+  - id: M3.8
+    repo: Odysseus
+    subject: Compose T4 services plus just mesh-e2e recipe
+    description: >-
+      Compose T4 services wiring the containerized mesh and a justfile
+      mesh-e2e recipe; exit criterion just mesh-e2e green with Argus panels
+      live (ADR-020 section 9 M3 exit).
+    blocked_by: [M3.6]
