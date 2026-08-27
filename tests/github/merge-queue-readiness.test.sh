@@ -5,6 +5,13 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$REPO_ROOT"
 
+for required_command in git jq python3 rg; do
+  command -v "$required_command" >/dev/null || {
+    echo "ERROR: required test dependency is unavailable: $required_command" >&2
+    exit 2
+  }
+done
+
 checks=0
 failures=0
 
@@ -55,12 +62,121 @@ else
   fail "Release validation exposes write permission"
 fi
 
-expected_contexts='["lint","unit-tests","integration-tests","security/dependency-scan","security/secrets-scan","build","schema-validation","deps/version-sync","test","install","release"]'
+expected_contexts='["required-checks-gate"]'
 ruleset_files=(
   configs/github/repo-ruleset.json
   configs/github/repo-ruleset-active.json
   configs/github/repo-ruleset-evaluate.json
 )
+
+policy_file=configs/github/fleet-ruleset-policy.json
+
+expected_fleet=$(
+  {
+    echo Odysseus
+    git config -f .gitmodules --get-regexp '^submodule\..*\.url$' |
+      awk '{url=$2; sub(/^.*\//, "", url); sub(/\.git$/, "", url); print url}'
+  } | sort -u | jq -Rsc 'split("\n")[:-1]'
+)
+
+if [[ -f "$policy_file" ]] && jq -e --argjson expected "$expected_fleet" '
+    .schema_version == 1 and
+    .organization == "HomericIntelligence" and
+    (.repositories | sort) == $expected and
+    (.repositories | length) == 16 and
+    (.repositories | index("modular-community")) == null
+  ' "$policy_file" >/dev/null; then
+  pass "fleet policy inventory equals Odysseus plus the declared submodules"
+else
+  fail "fleet policy inventory must equal Odysseus plus the declared submodules"
+fi
+
+if jq -e '
+    .schema_version == 1 and
+    .organization == "HomericIntelligence" and
+    .repository_settings == {
+      allow_auto_merge: true,
+      allow_merge_commit: false,
+      allow_rebase_merge: false,
+      allow_squash_merge: true,
+      allow_update_branch: true,
+      delete_branch_on_merge: true,
+      web_commit_signoff_required: true
+    } and
+    .ruleset == {
+      name: "homeric-main-baseline",
+      target: "branch",
+      conditions: {
+        ref_name: {
+          include: ["~DEFAULT_BRANCH"],
+          exclude: []
+        }
+      },
+      bypass_actors: [],
+      rules: [
+        {type: "deletion"},
+        {type: "required_signatures"},
+        {
+          type: "pull_request",
+          parameters: {
+            allowed_merge_methods: ["squash"],
+            dismiss_stale_reviews_on_push: false,
+            dismissal_restriction: {
+              allowed_actors: [],
+              enabled: false
+            },
+            require_code_owner_review: false,
+            require_extra_approval_for_unattributed_changes: true,
+            require_last_push_approval: false,
+            required_approving_review_count: 0,
+            required_review_thread_resolution: true,
+            required_reviewers: []
+          }
+        },
+        {
+          type: "merge_queue",
+          parameters: {
+            check_response_timeout_minutes: 180,
+            grouping_strategy: "HEADGREEN",
+            max_entries_to_build: 10,
+            max_entries_to_merge: 5,
+            merge_method: "SQUASH",
+            min_entries_to_merge: 1,
+            min_entries_to_merge_wait_minutes: 5
+          }
+        },
+        {
+          type: "required_status_checks",
+          parameters: {
+            strict_required_status_checks_policy: false,
+            do_not_enforce_on_create: false,
+            required_status_checks: [{
+              context: "required-checks-gate",
+              integration_id: 15368
+            }]
+          }
+        },
+        {type: "required_linear_history"},
+        {type: "non_fast_forward"}
+      ]
+    }
+  ' "$policy_file" >/dev/null; then
+  pass "fleet policy equals the complete issue #475 final-policy oracle"
+else
+  fail "fleet policy has drifted from the complete issue #475 final-policy oracle"
+fi
+
+if python3 tools/github/render-fleet-ruleset.py --check; then
+  pass "tracked repository rulesets are derived from the versioned fleet policy"
+else
+  fail "tracked repository rulesets have drifted from the versioned fleet policy"
+fi
+
+if rg -n '"~ALL"' configs/github --glob 'org-ruleset*.json'; then
+  fail "deprecated organization-wide ruleset artifacts still target ~ALL"
+else
+  pass "no organization-wide ruleset artifact can target the excluded fork"
+fi
 
 declare -A expected_enforcement=(
   [configs/github/repo-ruleset.json]=active
@@ -71,12 +187,13 @@ declare -A expected_enforcement=(
 for ruleset in "${ruleset_files[@]}"; do
   if jq -e '
       .target == "branch" and
-      .conditions.ref_name.include == ["refs/heads/main"] and
-      .conditions.ref_name.exclude == []
+      .conditions.ref_name.include == ["~DEFAULT_BRANCH"] and
+      .conditions.ref_name.exclude == [] and
+      .bypass_actors == []
     ' "$ruleset" >/dev/null; then
-    pass "$ruleset targets only main"
+    pass "$ruleset targets only the default branch with no bypass actors"
   else
-    fail "$ruleset must target only main"
+    fail "$ruleset must target only the default branch with no bypass actors"
   fi
 
   if jq -e --arg expected "${expected_enforcement[$ruleset]}" \
@@ -90,15 +207,15 @@ for ruleset in "${ruleset_files[@]}"; do
       [.rules[] | select(.type == "required_status_checks")
         | .parameters.required_status_checks[].context] == $expected
     ' "$ruleset" >/dev/null; then
-    pass "$ruleset records all 11 Odysseus required checks"
+    pass "$ruleset records the sole fleet aggregate required check"
   else
-    fail "$ruleset does not record the Odysseus required-check contract"
+    fail "$ruleset must require only required-checks-gate"
   fi
 
   if jq -e '
       [.rules[] | select(.type == "merge_queue") | .parameters] == [{
-        "check_response_timeout_minutes": 60,
-        "grouping_strategy": "ALLGREEN",
+        "check_response_timeout_minutes": 180,
+        "grouping_strategy": "HEADGREEN",
         "max_entries_to_build": 10,
         "max_entries_to_merge": 5,
         "merge_method": "SQUASH",
@@ -110,7 +227,48 @@ for ruleset in "${ruleset_files[@]}"; do
   else
     fail "$ruleset merge-queue policy is absent or has drifted"
   fi
+
+  if jq -e '
+      ([.rules[].type] | sort) == ([
+        "deletion",
+        "merge_queue",
+        "non_fast_forward",
+        "pull_request",
+        "required_linear_history",
+        "required_signatures",
+        "required_status_checks"
+      ] | sort) and
+      ([.rules[] | select(.type == "pull_request") | .parameters] | length) == 1 and
+      ([.rules[] | select(.type == "pull_request") | .parameters][0] | {
+        required_approving_review_count,
+        dismiss_stale_reviews_on_push,
+        require_code_owner_review,
+        require_last_push_approval,
+        required_review_thread_resolution,
+        require_extra_approval_for_unattributed_changes,
+        allowed_merge_methods
+      }) == {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": false,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": true,
+        "require_extra_approval_for_unattributed_changes": true,
+        "allowed_merge_methods": ["squash"]
+      }
+    ' "$ruleset" >/dev/null; then
+    pass "$ruleset records the complete common branch-policy baseline"
+  else
+    fail "$ruleset common branch-policy baseline is incomplete or has drifted"
+  fi
 done
+
+if rg -n '"grouping_strategy"\s*:\s*"ALLGREEN"|"check_response_timeout_minutes"\s*:\s*60' \
+    configs/github --glob 'repo-ruleset*.json'; then
+  fail "stale queue parameters remain in repository ruleset artifacts"
+else
+  pass "repository ruleset artifacts contain no stale queue parameters"
+fi
 
 if rg -n 'Argus/(pull|issues)/551|Argus #550/#551|PR #551' \
     CONTRIBUTING.md configs/github docs tests tools justfile \

@@ -1,0 +1,814 @@
+{
+  "schema_version": 2,
+  "repository": "HomericIntelligence/Keystone",
+  "provenance": {
+    "capture_started_at": "2026-08-27T21:58:19Z",
+    "captured_at": "2026-08-27T21:59:08Z",
+    "capture_id": "fleet-policy-20260827T215908Z",
+    "api_version": "2022-11-28",
+    "main_sha": "c96b96aa65e7e4a16daca09b3868bc4b607a6884",
+    "repository_api": "https://api.github.com/repos/HomericIntelligence/Keystone",
+    "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Keystone/branches/main",
+    "ruleset_api": [
+      "https://api.github.com/repos/HomericIntelligence/Keystone/rulesets/19327385",
+      "https://api.github.com/repos/HomericIntelligence/Keystone/rulesets/15556488",
+      "https://api.github.com/repos/HomericIntelligence/Keystone/rulesets/18221122"
+    ],
+    "capture_source": "live GitHub REST readback",
+    "supplemental_capture": {
+      "capture_id": "fleet-policy-settings-20260827T231355Z",
+      "capture_started_at": "2026-08-27T23:13:55Z",
+      "captured_at": "2026-08-27T23:14:08Z",
+      "capture_source": "live GitHub REST response projections"
+    }
+  },
+  "repository_settings": {
+    "allow_auto_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "allow_squash_merge": true,
+    "allow_update_branch": true,
+    "default_branch": "main",
+    "delete_branch_on_merge": true,
+    "full_name": "HomericIntelligence/Keystone",
+    "web_commit_signoff_required": true
+  },
+  "rulesets": [
+    {
+      "id": 19327385,
+      "name": "Code Quality Copilot review for default branch",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Keystone",
+      "enforcement": "disabled",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "~DEFAULT_BRANCH"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "copilot_code_review",
+          "parameters": {
+            "review_on_push": true,
+            "review_draft_pull_requests": true
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5BegY5zgEm6Zk",
+      "created_at": "2026-07-20T20:41:18.468-07:00",
+      "updated_at": "2026-08-06T06:18:20.895-07:00",
+      "bypass_actors": [],
+      "current_user_can_bypass": "never",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Keystone/rulesets/19327385"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Keystone/rules/19327385"
+        }
+      }
+    },
+    {
+      "id": 15556488,
+      "name": "homeric-main-baseline",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Keystone",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "refs/heads/main"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "lint",
+                "integration_id": 15368
+              },
+              {
+                "context": "unit-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "integration-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/dependency-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/secrets-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "build",
+                "integration_id": 15368
+              },
+              {
+                "context": "schema-validation",
+                "integration_id": 15368
+              },
+              {
+                "context": "deps/version-sync",
+                "integration_id": 15368
+              },
+              {
+                "context": "test",
+                "integration_id": 15368
+              },
+              {
+                "context": "package",
+                "integration_id": 15368
+              },
+              {
+                "context": "release",
+                "integration_id": 15368
+              },
+              {
+                "context": "install",
+                "integration_id": 15368
+              }
+            ]
+          }
+        },
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": false,
+            "required_reviewers": [],
+            "require_code_owner_review": false,
+            "dismissal_restriction": {
+              "enabled": false,
+              "allowed_actors": []
+            },
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": true,
+            "require_extra_approval_for_unattributed_changes": true,
+            "allowed_merge_methods": [
+              "squash"
+            ]
+          }
+        },
+        {
+          "type": "required_signatures"
+        },
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "required_linear_history"
+        },
+        {
+          "type": "non_fast_forward"
+        },
+        {
+          "type": "merge_queue",
+          "parameters": {
+            "merge_method": "SQUASH",
+            "max_entries_to_build": 10,
+            "min_entries_to_merge": 1,
+            "max_entries_to_merge": 5,
+            "min_entries_to_merge_wait_minutes": 5,
+            "grouping_strategy": "HEADGREEN",
+            "check_response_timeout_minutes": 60
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5BegY5zgDtX4g",
+      "created_at": "2026-04-25T17:15:29.325-07:00",
+      "updated_at": "2026-08-19T19:21:24.617-07:00",
+      "bypass_actors": [
+        {
+          "actor_id": 5,
+          "actor_type": "RepositoryRole",
+          "bypass_mode": "pull_request"
+        }
+      ],
+      "current_user_can_bypass": "pull_requests_only",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Keystone/rulesets/15556488"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Keystone/rules/15556488"
+        }
+      }
+    },
+    {
+      "id": 18221122,
+      "name": "homeric-main-extras",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Keystone",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "refs/heads/main"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "coverage",
+                "integration_id": 15368
+              }
+            ]
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5BegY5zgEWCEI",
+      "created_at": "2026-06-27T23:41:25.178-07:00",
+      "updated_at": "2026-06-27T23:41:25.213-07:00",
+      "bypass_actors": [],
+      "current_user_can_bypass": "never",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Keystone/rulesets/18221122"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Keystone/rules/18221122"
+        }
+      }
+    }
+  ],
+  "api_captures": {
+    "rulesets_including_parents": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Keystone/rulesets?includes_parents=true&per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:43Z",
+          "etag": "W/\"a793c9ef408f51bbe431438dc9995fc01e64ada578a2042f366fedb5c35c5923\"",
+          "request_id": "93F5:1CB60F:2C1EB18:2DCD5A8:6A90B313",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "id": 19327385,
+              "name": "Code Quality Copilot review for default branch",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Keystone",
+              "enforcement": "disabled",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5BegY5zgEm6Zk",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Keystone/rulesets/19327385"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Keystone/rules/19327385"
+                }
+              },
+              "created_at": "2026-07-20T20:41:18.468-07:00",
+              "updated_at": "2026-08-06T06:18:20.895-07:00"
+            },
+            {
+              "id": 15556488,
+              "name": "homeric-main-baseline",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Keystone",
+              "enforcement": "active",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5BegY5zgDtX4g",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Keystone/rulesets/15556488"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Keystone/rules/15556488"
+                }
+              },
+              "created_at": "2026-04-25T17:15:29.325-07:00",
+              "updated_at": "2026-08-19T19:21:24.617-07:00"
+            },
+            {
+              "id": 18221122,
+              "name": "homeric-main-extras",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Keystone",
+              "enforcement": "active",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5BegY5zgEWCEI",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Keystone/rulesets/18221122"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Keystone/rules/18221122"
+                }
+              },
+              "created_at": "2026-06-27T23:41:25.178-07:00",
+              "updated_at": "2026-06-27T23:41:25.213-07:00"
+            }
+          ]
+        }
+      ]
+    },
+    "ruleset_details": {
+      "method": "GET",
+      "responses": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Keystone/rulesets/19327385",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:43Z",
+          "etag": "W/\"7dbd1efd71d4965c524c145002877cbb703766ce4f93f77a24e1b2cf68dc5330\"",
+          "request_id": "707B:B1D6F:2AB4D3C:2C633F9:6A90B313",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 19327385,
+            "name": "Code Quality Copilot review for default branch",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Keystone",
+            "enforcement": "disabled",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "~DEFAULT_BRANCH"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "copilot_code_review",
+                "parameters": {
+                  "review_on_push": true,
+                  "review_draft_pull_requests": true
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5BegY5zgEm6Zk",
+            "created_at": "2026-07-20T20:41:18.468-07:00",
+            "updated_at": "2026-08-06T06:18:20.895-07:00",
+            "bypass_actors": [],
+            "current_user_can_bypass": "never",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Keystone/rulesets/19327385"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Keystone/rules/19327385"
+              }
+            }
+          }
+        },
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Keystone/rulesets/15556488",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:44Z",
+          "etag": "W/\"1e4585f37f804a247e942efe9286c5c7532e2ec9a8cac0db135598778e154135\"",
+          "request_id": "AD75:25F6D4:2BBA146:2D68883:6A90B313",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 15556488,
+            "name": "homeric-main-baseline",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Keystone",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "refs/heads/main"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "do_not_enforce_on_create": false,
+                  "required_status_checks": [
+                    {
+                      "context": "lint",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "unit-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "integration-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/dependency-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/secrets-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "build",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "schema-validation",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "deps/version-sync",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "test",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "package",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "release",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "install",
+                      "integration_id": 15368
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "pull_request",
+                "parameters": {
+                  "required_approving_review_count": 0,
+                  "dismiss_stale_reviews_on_push": false,
+                  "required_reviewers": [],
+                  "require_code_owner_review": false,
+                  "dismissal_restriction": {
+                    "enabled": false,
+                    "allowed_actors": []
+                  },
+                  "require_last_push_approval": false,
+                  "required_review_thread_resolution": true,
+                  "require_extra_approval_for_unattributed_changes": true,
+                  "allowed_merge_methods": [
+                    "squash"
+                  ]
+                }
+              },
+              {
+                "type": "required_signatures"
+              },
+              {
+                "type": "deletion"
+              },
+              {
+                "type": "required_linear_history"
+              },
+              {
+                "type": "non_fast_forward"
+              },
+              {
+                "type": "merge_queue",
+                "parameters": {
+                  "merge_method": "SQUASH",
+                  "max_entries_to_build": 10,
+                  "min_entries_to_merge": 1,
+                  "max_entries_to_merge": 5,
+                  "min_entries_to_merge_wait_minutes": 5,
+                  "grouping_strategy": "HEADGREEN",
+                  "check_response_timeout_minutes": 60
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5BegY5zgDtX4g",
+            "created_at": "2026-04-25T17:15:29.325-07:00",
+            "updated_at": "2026-08-19T19:21:24.617-07:00",
+            "bypass_actors": [
+              {
+                "actor_id": 5,
+                "actor_type": "RepositoryRole",
+                "bypass_mode": "pull_request"
+              }
+            ],
+            "current_user_can_bypass": "pull_requests_only",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Keystone/rulesets/15556488"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Keystone/rules/15556488"
+              }
+            }
+          }
+        },
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Keystone/rulesets/18221122",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:44Z",
+          "etag": "W/\"7896e2e496673019d64e33862150bae1312826bcd7f3dc20a2314d0cb6e3efef\"",
+          "request_id": "AED2:EA9C:2B7F968:2D2E97D:6A90B314",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 18221122,
+            "name": "homeric-main-extras",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Keystone",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "refs/heads/main"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "do_not_enforce_on_create": false,
+                  "required_status_checks": [
+                    {
+                      "context": "coverage",
+                      "integration_id": 15368
+                    }
+                  ]
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5BegY5zgEWCEI",
+            "created_at": "2026-06-27T23:41:25.178-07:00",
+            "updated_at": "2026-06-27T23:41:25.213-07:00",
+            "bypass_actors": [],
+            "current_user_can_bypass": "never",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Keystone/rulesets/18221122"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Keystone/rules/18221122"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "effective_default_branch_rules": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Keystone/rules/branches/main?per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:44Z",
+          "etag": "W/\"e00a49fe08c0ec13c213b3411013d26dbb05b18ae7869e99b0518f6ea07e9d6e\"",
+          "request_id": "DFA2:1EEAA3:296EFCE:2B1EBAB:6A90B314",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "type": "required_status_checks",
+              "parameters": {
+                "strict_required_status_checks_policy": false,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [
+                  {
+                    "context": "lint",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "unit-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "integration-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/dependency-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/secrets-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "build",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "schema-validation",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "deps/version-sync",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "test",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "package",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "release",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "install",
+                    "integration_id": 15368
+                  }
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Keystone",
+              "ruleset_id": 15556488
+            },
+            {
+              "type": "pull_request",
+              "parameters": {
+                "required_approving_review_count": 0,
+                "dismiss_stale_reviews_on_push": false,
+                "required_reviewers": [],
+                "require_code_owner_review": false,
+                "dismissal_restriction": {
+                  "enabled": false,
+                  "allowed_actors": []
+                },
+                "require_last_push_approval": false,
+                "required_review_thread_resolution": true,
+                "require_extra_approval_for_unattributed_changes": true,
+                "allowed_merge_methods": [
+                  "squash"
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Keystone",
+              "ruleset_id": 15556488
+            },
+            {
+              "type": "required_signatures",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Keystone",
+              "ruleset_id": 15556488
+            },
+            {
+              "type": "deletion",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Keystone",
+              "ruleset_id": 15556488
+            },
+            {
+              "type": "required_linear_history",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Keystone",
+              "ruleset_id": 15556488
+            },
+            {
+              "type": "non_fast_forward",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Keystone",
+              "ruleset_id": 15556488
+            },
+            {
+              "type": "merge_queue",
+              "parameters": {
+                "merge_method": "SQUASH",
+                "max_entries_to_build": 10,
+                "min_entries_to_merge": 1,
+                "max_entries_to_merge": 5,
+                "min_entries_to_merge_wait_minutes": 5,
+                "grouping_strategy": "HEADGREEN",
+                "check_response_timeout_minutes": 60
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Keystone",
+              "ruleset_id": 15556488
+            },
+            {
+              "type": "required_status_checks",
+              "parameters": {
+                "strict_required_status_checks_policy": false,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [
+                  {
+                    "context": "coverage",
+                    "integration_id": 15368
+                  }
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Keystone",
+              "ruleset_id": 18221122
+            }
+          ]
+        }
+      ]
+    },
+    "classic_branch_protection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Keystone/branches/main/protection",
+      "status": 200,
+      "captured_at": "2026-08-27T21:58:45Z",
+      "etag": "W/\"3a9be2ece297374169bfcf9939f6dd83f0acc6a525827b2c5287136578312463\"",
+      "request_id": "6A25:30A70D:D3BCDDF:DA82F21:6A90B315",
+      "api_version": "2022-11-28",
+      "response": {
+        "url": "https://api.github.com/repos/HomericIntelligence/Keystone/branches/main/protection",
+        "required_pull_request_reviews": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Keystone/branches/main/protection/required_pull_request_reviews",
+          "dismiss_stale_reviews": false,
+          "require_code_owner_reviews": false,
+          "require_last_push_approval": false,
+          "required_approving_review_count": 0
+        },
+        "required_signatures": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Keystone/branches/main/protection/required_signatures",
+          "enabled": false
+        },
+        "enforce_admins": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Keystone/branches/main/protection/enforce_admins",
+          "enabled": false
+        },
+        "required_linear_history": {
+          "enabled": false
+        },
+        "allow_force_pushes": {
+          "enabled": false
+        },
+        "allow_deletions": {
+          "enabled": false
+        },
+        "block_creations": {
+          "enabled": false
+        },
+        "required_conversation_resolution": {
+          "enabled": true
+        },
+        "lock_branch": {
+          "enabled": false
+        },
+        "allow_fork_syncing": {
+          "enabled": false
+        }
+      }
+    },
+    "repository_policy_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Keystone",
+      "status": 200,
+      "captured_at": "2026-08-27T23:14:01Z",
+      "etag": "W/\"90a1caa981eabb5c94b892b47a95c5f00c49da5d9868d4457bd0355dfdeb4046\"",
+      "request_id": "D53E:3DE3DD:934BD7:AEC14C:6A90C4B8",
+      "api_version": "2022-11-28",
+      "response": {
+        "allow_auto_merge": true,
+        "allow_merge_commit": false,
+        "allow_rebase_merge": false,
+        "allow_squash_merge": true,
+        "allow_update_branch": true,
+        "default_branch": "main",
+        "delete_branch_on_merge": true,
+        "full_name": "HomericIntelligence/Keystone",
+        "web_commit_signoff_required": true
+      }
+    },
+    "default_branch_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Keystone/branches/main",
+      "status": 200,
+      "captured_at": "2026-08-27T23:14:01Z",
+      "etag": "W/\"ead00675ebc40bbfa2c7285a07c842c36002df96793818306380d80c650e9ec0\"",
+      "request_id": "E718:3DD243:8F716D:AAEA71:6A90C4B9",
+      "api_version": "2022-11-28",
+      "response": {
+        "commit": {
+          "sha": "c96b96aa65e7e4a16daca09b3868bc4b607a6884"
+        },
+        "name": "main"
+      }
+    }
+  }
+}

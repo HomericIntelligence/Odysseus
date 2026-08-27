@@ -1,0 +1,770 @@
+{
+  "schema_version": 2,
+  "repository": "HomericIntelligence/Agamemnon",
+  "provenance": {
+    "capture_started_at": "2026-08-27T21:58:19Z",
+    "captured_at": "2026-08-27T21:59:08Z",
+    "capture_id": "fleet-policy-20260827T215908Z",
+    "api_version": "2022-11-28",
+    "main_sha": "bb17afd828a8c164930a30d5095e6b90241f8564",
+    "repository_api": "https://api.github.com/repos/HomericIntelligence/Agamemnon",
+    "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Agamemnon/branches/main",
+    "ruleset_api": [
+      "https://api.github.com/repos/HomericIntelligence/Agamemnon/rulesets/15556495",
+      "https://api.github.com/repos/HomericIntelligence/Agamemnon/rulesets/18221118"
+    ],
+    "capture_source": "live GitHub REST readback",
+    "supplemental_capture": {
+      "capture_id": "fleet-policy-settings-20260827T231355Z",
+      "capture_started_at": "2026-08-27T23:13:55Z",
+      "captured_at": "2026-08-27T23:14:08Z",
+      "capture_source": "live GitHub REST response projections"
+    }
+  },
+  "repository_settings": {
+    "allow_auto_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "allow_squash_merge": true,
+    "allow_update_branch": true,
+    "default_branch": "main",
+    "delete_branch_on_merge": true,
+    "full_name": "HomericIntelligence/Agamemnon",
+    "web_commit_signoff_required": true
+  },
+  "rulesets": [
+    {
+      "id": 15556495,
+      "name": "homeric-main-baseline",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Agamemnon",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "refs/heads/main"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "required_signatures"
+        },
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": false,
+            "required_reviewers": [],
+            "require_code_owner_review": false,
+            "dismissal_restriction": {
+              "enabled": false,
+              "allowed_actors": []
+            },
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": true,
+            "require_extra_approval_for_unattributed_changes": true,
+            "allowed_merge_methods": [
+              "squash"
+            ]
+          }
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "lint",
+                "integration_id": 15368
+              },
+              {
+                "context": "unit-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "integration-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/dependency-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/secrets-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "build",
+                "integration_id": 15368
+              },
+              {
+                "context": "schema-validation",
+                "integration_id": 15368
+              },
+              {
+                "context": "deps/version-sync",
+                "integration_id": 15368
+              },
+              {
+                "context": "test",
+                "integration_id": 15368
+              },
+              {
+                "context": "package",
+                "integration_id": 15368
+              },
+              {
+                "context": "install",
+                "integration_id": 15368
+              },
+              {
+                "context": "release",
+                "integration_id": 15368
+              }
+            ]
+          }
+        },
+        {
+          "type": "required_linear_history"
+        },
+        {
+          "type": "non_fast_forward"
+        },
+        {
+          "type": "merge_queue",
+          "parameters": {
+            "merge_method": "SQUASH",
+            "max_entries_to_build": 10,
+            "min_entries_to_merge": 1,
+            "max_entries_to_merge": 5,
+            "min_entries_to_merge_wait_minutes": 5,
+            "grouping_strategy": "HEADGREEN",
+            "check_response_timeout_minutes": 60
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8UzgDtX48",
+      "created_at": "2026-04-25T17:15:35.610-07:00",
+      "updated_at": "2026-08-19T19:21:09.199-07:00",
+      "bypass_actors": [
+        {
+          "actor_id": 5,
+          "actor_type": "RepositoryRole",
+          "bypass_mode": "pull_request"
+        }
+      ],
+      "current_user_can_bypass": "pull_requests_only",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Agamemnon/rulesets/15556495"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Agamemnon/rules/15556495"
+        }
+      }
+    },
+    {
+      "id": 18221118,
+      "name": "homeric-main-extras",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Agamemnon",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "refs/heads/main"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "All Build/Test Checks",
+                "integration_id": 15368
+              },
+              {
+                "context": "All Static Analysis Checks",
+                "integration_id": 15368
+              },
+              {
+                "context": "ubuntu-24.04-clang-release",
+                "integration_id": 15368
+              },
+              {
+                "context": "ubuntu-24.04-clang-debug",
+                "integration_id": 15368
+              },
+              {
+                "context": "ubuntu-24.04-gcc-debug",
+                "integration_id": 15368
+              },
+              {
+                "context": "ubuntu-24.04-gcc-release",
+                "integration_id": 15368
+              }
+            ]
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8UzgEWCD4",
+      "created_at": "2026-06-27T23:41:13.660-07:00",
+      "updated_at": "2026-06-27T23:41:13.706-07:00",
+      "bypass_actors": [],
+      "current_user_can_bypass": "never",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Agamemnon/rulesets/18221118"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Agamemnon/rules/18221118"
+        }
+      }
+    }
+  ],
+  "api_captures": {
+    "rulesets_including_parents": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Agamemnon/rulesets?includes_parents=true&per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:29Z",
+          "etag": "W/\"29403a33bcda50c98940b7d8c7c315bfcf7c044e6b30c5cf51d96b79fe443b71\"",
+          "request_id": "693F:1362FE:2A4DE00:2BFD0E2:6A90B305",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "id": 15556495,
+              "name": "homeric-main-baseline",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Agamemnon",
+              "enforcement": "active",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8UzgDtX48",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Agamemnon/rulesets/15556495"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Agamemnon/rules/15556495"
+                }
+              },
+              "created_at": "2026-04-25T17:15:35.610-07:00",
+              "updated_at": "2026-08-19T19:21:09.199-07:00"
+            },
+            {
+              "id": 18221118,
+              "name": "homeric-main-extras",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Agamemnon",
+              "enforcement": "active",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8UzgEWCD4",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Agamemnon/rulesets/18221118"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Agamemnon/rules/18221118"
+                }
+              },
+              "created_at": "2026-06-27T23:41:13.660-07:00",
+              "updated_at": "2026-06-27T23:41:13.706-07:00"
+            }
+          ]
+        }
+      ]
+    },
+    "ruleset_details": {
+      "method": "GET",
+      "responses": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Agamemnon/rulesets/15556495",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:29Z",
+          "etag": "W/\"e7a9902c1f98754d0922688d381b5377343093720fb31f2b06ce9aeb00d4cde7\"",
+          "request_id": "C4EC:25F6D4:2BB71FE:2D65762:6A90B305",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 15556495,
+            "name": "homeric-main-baseline",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Agamemnon",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "refs/heads/main"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "deletion"
+              },
+              {
+                "type": "required_signatures"
+              },
+              {
+                "type": "pull_request",
+                "parameters": {
+                  "required_approving_review_count": 0,
+                  "dismiss_stale_reviews_on_push": false,
+                  "required_reviewers": [],
+                  "require_code_owner_review": false,
+                  "dismissal_restriction": {
+                    "enabled": false,
+                    "allowed_actors": []
+                  },
+                  "require_last_push_approval": false,
+                  "required_review_thread_resolution": true,
+                  "require_extra_approval_for_unattributed_changes": true,
+                  "allowed_merge_methods": [
+                    "squash"
+                  ]
+                }
+              },
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "do_not_enforce_on_create": false,
+                  "required_status_checks": [
+                    {
+                      "context": "lint",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "unit-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "integration-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/dependency-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/secrets-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "build",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "schema-validation",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "deps/version-sync",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "test",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "package",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "install",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "release",
+                      "integration_id": 15368
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "required_linear_history"
+              },
+              {
+                "type": "non_fast_forward"
+              },
+              {
+                "type": "merge_queue",
+                "parameters": {
+                  "merge_method": "SQUASH",
+                  "max_entries_to_build": 10,
+                  "min_entries_to_merge": 1,
+                  "max_entries_to_merge": 5,
+                  "min_entries_to_merge_wait_minutes": 5,
+                  "grouping_strategy": "HEADGREEN",
+                  "check_response_timeout_minutes": 60
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8UzgDtX48",
+            "created_at": "2026-04-25T17:15:35.610-07:00",
+            "updated_at": "2026-08-19T19:21:09.199-07:00",
+            "bypass_actors": [
+              {
+                "actor_id": 5,
+                "actor_type": "RepositoryRole",
+                "bypass_mode": "pull_request"
+              }
+            ],
+            "current_user_can_bypass": "pull_requests_only",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Agamemnon/rulesets/15556495"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Agamemnon/rules/15556495"
+              }
+            }
+          }
+        },
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Agamemnon/rulesets/18221118",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:30Z",
+          "etag": "W/\"8f34ba03e7a771fa33d3613e1eb40df6e537a21e8787f06f39f325ec6e9c6567\"",
+          "request_id": "5C41:1FE865:31248FB:32D3071:6A90B305",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 18221118,
+            "name": "homeric-main-extras",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Agamemnon",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "refs/heads/main"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "do_not_enforce_on_create": false,
+                  "required_status_checks": [
+                    {
+                      "context": "All Build/Test Checks",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "All Static Analysis Checks",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "ubuntu-24.04-clang-release",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "ubuntu-24.04-clang-debug",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "ubuntu-24.04-gcc-debug",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "ubuntu-24.04-gcc-release",
+                      "integration_id": 15368
+                    }
+                  ]
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8UzgEWCD4",
+            "created_at": "2026-06-27T23:41:13.660-07:00",
+            "updated_at": "2026-06-27T23:41:13.706-07:00",
+            "bypass_actors": [],
+            "current_user_can_bypass": "never",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Agamemnon/rulesets/18221118"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Agamemnon/rules/18221118"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "effective_default_branch_rules": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Agamemnon/rules/branches/main?per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:30Z",
+          "etag": "W/\"8bfab865b63a250c7e3658a1fa26385f57c4b958a2f6b1047d897d718aad2b4a\"",
+          "request_id": "B2AD:1330A7:2C8E2DB:2E3D376:6A90B306",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "type": "deletion",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Agamemnon",
+              "ruleset_id": 15556495
+            },
+            {
+              "type": "required_signatures",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Agamemnon",
+              "ruleset_id": 15556495
+            },
+            {
+              "type": "pull_request",
+              "parameters": {
+                "required_approving_review_count": 0,
+                "dismiss_stale_reviews_on_push": false,
+                "required_reviewers": [],
+                "require_code_owner_review": false,
+                "dismissal_restriction": {
+                  "enabled": false,
+                  "allowed_actors": []
+                },
+                "require_last_push_approval": false,
+                "required_review_thread_resolution": true,
+                "require_extra_approval_for_unattributed_changes": true,
+                "allowed_merge_methods": [
+                  "squash"
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Agamemnon",
+              "ruleset_id": 15556495
+            },
+            {
+              "type": "required_status_checks",
+              "parameters": {
+                "strict_required_status_checks_policy": false,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [
+                  {
+                    "context": "lint",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "unit-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "integration-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/dependency-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/secrets-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "build",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "schema-validation",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "deps/version-sync",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "test",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "package",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "install",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "release",
+                    "integration_id": 15368
+                  }
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Agamemnon",
+              "ruleset_id": 15556495
+            },
+            {
+              "type": "required_linear_history",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Agamemnon",
+              "ruleset_id": 15556495
+            },
+            {
+              "type": "non_fast_forward",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Agamemnon",
+              "ruleset_id": 15556495
+            },
+            {
+              "type": "merge_queue",
+              "parameters": {
+                "merge_method": "SQUASH",
+                "max_entries_to_build": 10,
+                "min_entries_to_merge": 1,
+                "max_entries_to_merge": 5,
+                "min_entries_to_merge_wait_minutes": 5,
+                "grouping_strategy": "HEADGREEN",
+                "check_response_timeout_minutes": 60
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Agamemnon",
+              "ruleset_id": 15556495
+            },
+            {
+              "type": "required_status_checks",
+              "parameters": {
+                "strict_required_status_checks_policy": false,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [
+                  {
+                    "context": "All Build/Test Checks",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "All Static Analysis Checks",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "ubuntu-24.04-clang-release",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "ubuntu-24.04-clang-debug",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "ubuntu-24.04-gcc-debug",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "ubuntu-24.04-gcc-release",
+                    "integration_id": 15368
+                  }
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Agamemnon",
+              "ruleset_id": 18221118
+            }
+          ]
+        }
+      ]
+    },
+    "classic_branch_protection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Agamemnon/branches/main/protection",
+      "status": 200,
+      "captured_at": "2026-08-27T21:58:30Z",
+      "etag": "W/\"73b7e24c4ccff30f4b4ee38778983bacfd0950331650943512836545d2c79bd3\"",
+      "request_id": "40EA:1330A7:2C8E3E2:2E3D494:6A90B306",
+      "api_version": "2022-11-28",
+      "response": {
+        "url": "https://api.github.com/repos/HomericIntelligence/Agamemnon/branches/main/protection",
+        "required_pull_request_reviews": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Agamemnon/branches/main/protection/required_pull_request_reviews",
+          "dismiss_stale_reviews": false,
+          "require_code_owner_reviews": false,
+          "require_last_push_approval": false,
+          "required_approving_review_count": 0
+        },
+        "required_signatures": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Agamemnon/branches/main/protection/required_signatures",
+          "enabled": false
+        },
+        "enforce_admins": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Agamemnon/branches/main/protection/enforce_admins",
+          "enabled": false
+        },
+        "required_linear_history": {
+          "enabled": false
+        },
+        "allow_force_pushes": {
+          "enabled": false
+        },
+        "allow_deletions": {
+          "enabled": false
+        },
+        "block_creations": {
+          "enabled": false
+        },
+        "required_conversation_resolution": {
+          "enabled": true
+        },
+        "lock_branch": {
+          "enabled": false
+        },
+        "allow_fork_syncing": {
+          "enabled": false
+        }
+      }
+    },
+    "repository_policy_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Agamemnon",
+      "status": 200,
+      "captured_at": "2026-08-27T23:13:56Z",
+      "etag": "W/\"46dfcd5531862ff9f6b642165f28e159e9e5a0cfb4a5014063473f6fd11d665f\"",
+      "request_id": "3C7C:3E1FC9:9046DB:ABB4B3:6A90C4B4",
+      "api_version": "2022-11-28",
+      "response": {
+        "allow_auto_merge": true,
+        "allow_merge_commit": false,
+        "allow_rebase_merge": false,
+        "allow_squash_merge": true,
+        "allow_update_branch": true,
+        "default_branch": "main",
+        "delete_branch_on_merge": true,
+        "full_name": "HomericIntelligence/Agamemnon",
+        "web_commit_signoff_required": true
+      }
+    },
+    "default_branch_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Agamemnon/branches/main",
+      "status": 200,
+      "captured_at": "2026-08-27T23:13:56Z",
+      "etag": "W/\"e473d5624c412c6892b9106c37551bce137d0ba39cb65a05997f1384d4944a18\"",
+      "request_id": "F951:3DFB98:8C45E3:A7BCCE:6A90C4B4",
+      "api_version": "2022-11-28",
+      "response": {
+        "commit": {
+          "sha": "bb17afd828a8c164930a30d5095e6b90241f8564"
+        },
+        "name": "main"
+      }
+    }
+  }
+}

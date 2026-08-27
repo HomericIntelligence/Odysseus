@@ -475,10 +475,9 @@ cat <<'EOF'
 Phase 6 — manual housekeeping checklist
 ────────────────────────────────────────────────────────────────────────────
 [ ] Re-apply branch protection / rulesets on the new repo
-      gh CLI does NOT migrate them. Two scripts in this repo handle the
-      HomericIntelligence-wide set:
-        tools/github/snapshot-protection.sh
-        tools/github/remove-classic-protection.sh
+      gh CLI does NOT migrate them. Use the reviewed repository-ruleset
+      activation flow in docs/runbooks/branch-protection-rollout.md; the old
+      snapshot/remove helpers are intentionally retired.
 [ ] Re-paste secrets / environments / deploy keys / variables
       They live on the OLD repo; the new one starts blank.
 [ ] Verify Renovate / Dependabot pickup the new repo

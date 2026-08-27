@@ -51,9 +51,8 @@ issue and write a new runbook.
 The natural assumption that "branch rulesets" is where Code Quality lives is
 worth checking explicitly:
 
-- **`configs/github/org-ruleset.json`** & **`configs/github/org-ruleset-active.json`**
-  — both the canonical org-level rulesets. Verified **not** to include the
-  `Require code quality results` rule type. ✓ (correct)
+- The former organization-level ruleset templates are retired; first-party
+  governance is repository-owned so the active fork remains excluded.
 - **`configs/github/repo-ruleset.json`** & **`configs/github/repo-ruleset-active.json`**
   & **`configs/github/repo-ruleset-evaluate.json`** — the per-repo canonical
   rulesets. Same: NOT included. ✓ (correct)
@@ -214,12 +213,11 @@ trying to avoid.
 
 ## Appendix — related canonical config files
 
-- **`configs/github/canonical-checks.md`** — the 8 (or 11 per-repo) required
-  status checks enforced by the `homeric-main-baseline` ruleset. The Code Quality
-  toggle is orthogonal to this list.
-- **`configs/github/org-ruleset.json`** + **`org-ruleset-active.json`** — org-level
-  ruleset. NOT modified by this runbook. `Require code quality results` is
-  intentionally not present. See `just ruleset-enforcement-check`.
+- **`configs/github/canonical-checks.md`** — the authoritative validators behind
+  the sole `required-checks-gate` context. The Code Quality toggle is
+  orthogonal to this contract.
+- **`configs/github/fleet-ruleset-policy.json`** — the repository-owned fleet
+  baseline. `Require code quality results` is intentionally not present.
 - **`configs/github/repo-ruleset.json`** + **`active.json`** + **`evaluate.json`** —
   per-repo rulesets. Same: NOT modified by this runbook.
 - **`configs/github/backups/branch-protection-pre-ruleset.json`** — historical

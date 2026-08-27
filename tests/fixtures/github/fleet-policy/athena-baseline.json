@@ -1,0 +1,504 @@
+{
+  "schema_version": 2,
+  "repository": "HomericIntelligence/Athena",
+  "provenance": {
+    "capture_started_at": "2026-08-27T21:58:19Z",
+    "captured_at": "2026-08-27T21:59:08Z",
+    "capture_id": "fleet-policy-20260827T215908Z",
+    "api_version": "2022-11-28",
+    "main_sha": "234bd95fa5f30f386ee92458b8177eb6c88269f6",
+    "repository_api": "https://api.github.com/repos/HomericIntelligence/Athena",
+    "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Athena/branches/main",
+    "ruleset_api": [
+      "https://api.github.com/repos/HomericIntelligence/Athena/rulesets/19358525",
+      "https://api.github.com/repos/HomericIntelligence/Athena/rulesets/18952228"
+    ],
+    "capture_source": "live GitHub REST readback",
+    "supplemental_capture": {
+      "capture_id": "fleet-policy-settings-20260827T231355Z",
+      "capture_started_at": "2026-08-27T23:13:55Z",
+      "captured_at": "2026-08-27T23:14:08Z",
+      "capture_source": "live GitHub REST response projections"
+    }
+  },
+  "repository_settings": {
+    "allow_auto_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "allow_squash_merge": true,
+    "allow_update_branch": true,
+    "default_branch": "main",
+    "delete_branch_on_merge": true,
+    "full_name": "HomericIntelligence/Athena",
+    "web_commit_signoff_required": true
+  },
+  "rulesets": [
+    {
+      "id": 19358525,
+      "name": "Code Quality Copilot review for default branch",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Athena",
+      "enforcement": "disabled",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "~DEFAULT_BRANCH"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "copilot_code_review",
+          "parameters": {
+            "review_on_push": true,
+            "review_draft_pull_requests": true
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5NUXZqzgEnYz0",
+      "created_at": "2026-07-21T00:20:24.857-07:00",
+      "updated_at": "2026-08-06T08:23:48.286-07:00",
+      "bypass_actors": [],
+      "current_user_can_bypass": "never",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Athena/rulesets/19358525"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Athena/rules/19358525"
+        }
+      }
+    },
+    {
+      "id": 18952228,
+      "name": "homeric-main-baseline",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Athena",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "~DEFAULT_BRANCH"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "non_fast_forward"
+        },
+        {
+          "type": "required_linear_history"
+        },
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": false,
+            "required_reviewers": [],
+            "require_code_owner_review": false,
+            "dismissal_restriction": {
+              "enabled": false,
+              "allowed_actors": []
+            },
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": true,
+            "require_extra_approval_for_unattributed_changes": true,
+            "allowed_merge_methods": [
+              "squash"
+            ]
+          }
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "required-checks-gate",
+                "integration_id": 15368
+              }
+            ]
+          }
+        },
+        {
+          "type": "required_signatures"
+        },
+        {
+          "type": "merge_queue",
+          "parameters": {
+            "merge_method": "SQUASH",
+            "max_entries_to_build": 10,
+            "min_entries_to_merge": 1,
+            "max_entries_to_merge": 5,
+            "min_entries_to_merge_wait_minutes": 5,
+            "grouping_strategy": "HEADGREEN",
+            "check_response_timeout_minutes": 180
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5NUXZqzgEhMCQ",
+      "created_at": "2026-07-14T13:36:43.283-07:00",
+      "updated_at": "2026-08-24T13:25:40.140-07:00",
+      "bypass_actors": [],
+      "current_user_can_bypass": "never",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Athena/rulesets/18952228"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Athena/rules/18952228"
+        }
+      }
+    }
+  ],
+  "api_captures": {
+    "rulesets_including_parents": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Athena/rulesets?includes_parents=true&per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:33Z",
+          "etag": "W/\"1e85e820c681492c7e912538de45a39c16f3dcfbe0babda526ec98397d087924\"",
+          "request_id": "D7C4:30A70D:D3BA59D:DA80586:6A90B309",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "id": 19358525,
+              "name": "Code Quality Copilot review for default branch",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Athena",
+              "enforcement": "disabled",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5NUXZqzgEnYz0",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Athena/rulesets/19358525"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Athena/rules/19358525"
+                }
+              },
+              "created_at": "2026-07-21T00:20:24.857-07:00",
+              "updated_at": "2026-08-06T08:23:48.286-07:00"
+            },
+            {
+              "id": 18952228,
+              "name": "homeric-main-baseline",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Athena",
+              "enforcement": "active",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5NUXZqzgEhMCQ",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Athena/rulesets/18952228"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Athena/rules/18952228"
+                }
+              },
+              "created_at": "2026-07-14T13:36:43.283-07:00",
+              "updated_at": "2026-08-24T13:25:40.140-07:00"
+            }
+          ]
+        }
+      ]
+    },
+    "ruleset_details": {
+      "method": "GET",
+      "responses": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Athena/rulesets/19358525",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:34Z",
+          "etag": "W/\"d6c2c0e631276fbab6202d8c7350ae847b63588127bcea41d56000022457ed53\"",
+          "request_id": "AD1C:25F6D4:2BB80CC:2D666C9:6A90B30A",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 19358525,
+            "name": "Code Quality Copilot review for default branch",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Athena",
+            "enforcement": "disabled",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "~DEFAULT_BRANCH"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "copilot_code_review",
+                "parameters": {
+                  "review_on_push": true,
+                  "review_draft_pull_requests": true
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5NUXZqzgEnYz0",
+            "created_at": "2026-07-21T00:20:24.857-07:00",
+            "updated_at": "2026-08-06T08:23:48.286-07:00",
+            "bypass_actors": [],
+            "current_user_can_bypass": "never",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Athena/rulesets/19358525"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Athena/rules/19358525"
+              }
+            }
+          }
+        },
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Athena/rulesets/18952228",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:34Z",
+          "etag": "W/\"d51767548856f7f8235f4d5ae80aca945eccfd520bc9e29886e8c7822016b411\"",
+          "request_id": "2106:25F6D4:2BB821B:2D6680D:6A90B30A",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 18952228,
+            "name": "homeric-main-baseline",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Athena",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "~DEFAULT_BRANCH"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "deletion"
+              },
+              {
+                "type": "non_fast_forward"
+              },
+              {
+                "type": "required_linear_history"
+              },
+              {
+                "type": "pull_request",
+                "parameters": {
+                  "required_approving_review_count": 0,
+                  "dismiss_stale_reviews_on_push": false,
+                  "required_reviewers": [],
+                  "require_code_owner_review": false,
+                  "dismissal_restriction": {
+                    "enabled": false,
+                    "allowed_actors": []
+                  },
+                  "require_last_push_approval": false,
+                  "required_review_thread_resolution": true,
+                  "require_extra_approval_for_unattributed_changes": true,
+                  "allowed_merge_methods": [
+                    "squash"
+                  ]
+                }
+              },
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "do_not_enforce_on_create": false,
+                  "required_status_checks": [
+                    {
+                      "context": "required-checks-gate",
+                      "integration_id": 15368
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "required_signatures"
+              },
+              {
+                "type": "merge_queue",
+                "parameters": {
+                  "merge_method": "SQUASH",
+                  "max_entries_to_build": 10,
+                  "min_entries_to_merge": 1,
+                  "max_entries_to_merge": 5,
+                  "min_entries_to_merge_wait_minutes": 5,
+                  "grouping_strategy": "HEADGREEN",
+                  "check_response_timeout_minutes": 180
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5NUXZqzgEhMCQ",
+            "created_at": "2026-07-14T13:36:43.283-07:00",
+            "updated_at": "2026-08-24T13:25:40.140-07:00",
+            "bypass_actors": [],
+            "current_user_can_bypass": "never",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Athena/rulesets/18952228"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Athena/rules/18952228"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "effective_default_branch_rules": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Athena/rules/branches/main?per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:35Z",
+          "etag": "W/\"c95a1524dbd0a15a4f029d1eb19e8aac3604adf34d4ca5d2406e1910cd6462a3\"",
+          "request_id": "7677:36BA76:2ABB9E2:2C6AEAE:6A90B30A",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "type": "deletion",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Athena",
+              "ruleset_id": 18952228
+            },
+            {
+              "type": "non_fast_forward",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Athena",
+              "ruleset_id": 18952228
+            },
+            {
+              "type": "required_linear_history",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Athena",
+              "ruleset_id": 18952228
+            },
+            {
+              "type": "pull_request",
+              "parameters": {
+                "required_approving_review_count": 0,
+                "dismiss_stale_reviews_on_push": false,
+                "required_reviewers": [],
+                "require_code_owner_review": false,
+                "dismissal_restriction": {
+                  "enabled": false,
+                  "allowed_actors": []
+                },
+                "require_last_push_approval": false,
+                "required_review_thread_resolution": true,
+                "require_extra_approval_for_unattributed_changes": true,
+                "allowed_merge_methods": [
+                  "squash"
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Athena",
+              "ruleset_id": 18952228
+            },
+            {
+              "type": "required_status_checks",
+              "parameters": {
+                "strict_required_status_checks_policy": false,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [
+                  {
+                    "context": "required-checks-gate",
+                    "integration_id": 15368
+                  }
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Athena",
+              "ruleset_id": 18952228
+            },
+            {
+              "type": "required_signatures",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Athena",
+              "ruleset_id": 18952228
+            },
+            {
+              "type": "merge_queue",
+              "parameters": {
+                "merge_method": "SQUASH",
+                "max_entries_to_build": 10,
+                "min_entries_to_merge": 1,
+                "max_entries_to_merge": 5,
+                "min_entries_to_merge_wait_minutes": 5,
+                "grouping_strategy": "HEADGREEN",
+                "check_response_timeout_minutes": 180
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Athena",
+              "ruleset_id": 18952228
+            }
+          ]
+        }
+      ]
+    },
+    "classic_branch_protection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Athena/branches/main/protection",
+      "status": 404,
+      "captured_at": "2026-08-27T21:58:35Z",
+      "etag": null,
+      "request_id": "EB80:36BA76:2ABBB43:2C6B004:6A90B30B",
+      "api_version": "2022-11-28",
+      "response": {
+        "message": "Branch not protected",
+        "documentation_url": "https://docs.github.com/rest/branches/branch-protection#get-branch-protection",
+        "status": "404"
+      }
+    },
+    "repository_policy_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Athena",
+      "status": 200,
+      "captured_at": "2026-08-27T23:13:57Z",
+      "etag": "W/\"a28b24619e6fef7b649023bd959122ead2a22d599457476887c5c3e2a3f62842\"",
+      "request_id": "C560:150B17:92992B:AE0CA7:6A90C4B5",
+      "api_version": "2022-11-28",
+      "response": {
+        "allow_auto_merge": true,
+        "allow_merge_commit": false,
+        "allow_rebase_merge": false,
+        "allow_squash_merge": true,
+        "allow_update_branch": true,
+        "default_branch": "main",
+        "delete_branch_on_merge": true,
+        "full_name": "HomericIntelligence/Athena",
+        "web_commit_signoff_required": true
+      }
+    },
+    "default_branch_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Athena/branches/main",
+      "status": 200,
+      "captured_at": "2026-08-27T23:13:58Z",
+      "etag": "W/\"48bde53a5a3af1fb6a5feb635092a74961a8c7735f50b449cbf0b0fbafbcb269\"",
+      "request_id": "7BDE:153A20:893726:A4AE8F:6A90C4B6",
+      "api_version": "2022-11-28",
+      "response": {
+        "commit": {
+          "sha": "234bd95fa5f30f386ee92458b8177eb6c88269f6"
+        },
+        "name": "main"
+      }
+    }
+  }
+}

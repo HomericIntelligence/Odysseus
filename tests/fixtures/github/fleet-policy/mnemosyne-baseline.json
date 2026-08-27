@@ -1,0 +1,640 @@
+{
+  "schema_version": 2,
+  "repository": "HomericIntelligence/Mnemosyne",
+  "provenance": {
+    "capture_started_at": "2026-08-27T21:58:19Z",
+    "captured_at": "2026-08-27T21:59:08Z",
+    "capture_id": "fleet-policy-20260827T215908Z",
+    "api_version": "2022-11-28",
+    "main_sha": "f111efa8c796bf8e9a0db65701798645ef24b53f",
+    "repository_api": "https://api.github.com/repos/HomericIntelligence/Mnemosyne",
+    "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Mnemosyne/branches/main",
+    "ruleset_api": [
+      "https://api.github.com/repos/HomericIntelligence/Mnemosyne/rulesets/17852368",
+      "https://api.github.com/repos/HomericIntelligence/Mnemosyne/rulesets/18221133"
+    ],
+    "capture_source": "live GitHub REST readback",
+    "supplemental_capture": {
+      "capture_id": "fleet-policy-settings-20260827T231355Z",
+      "capture_started_at": "2026-08-27T23:13:55Z",
+      "captured_at": "2026-08-27T23:14:08Z",
+      "capture_source": "live GitHub REST response projections"
+    }
+  },
+  "repository_settings": {
+    "allow_auto_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "allow_squash_merge": true,
+    "allow_update_branch": true,
+    "default_branch": "main",
+    "delete_branch_on_merge": true,
+    "full_name": "HomericIntelligence/Mnemosyne",
+    "web_commit_signoff_required": true
+  },
+  "rulesets": [
+    {
+      "id": 17852368,
+      "name": "homeric-main-baseline",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Mnemosyne",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "~DEFAULT_BRANCH"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "non_fast_forward"
+        },
+        {
+          "type": "required_linear_history"
+        },
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": false,
+            "required_reviewers": [],
+            "require_code_owner_review": false,
+            "dismissal_restriction": {
+              "enabled": false,
+              "allowed_actors": []
+            },
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": true,
+            "require_extra_approval_for_unattributed_changes": true,
+            "allowed_merge_methods": [
+              "squash"
+            ]
+          }
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "lint",
+                "integration_id": 15368
+              },
+              {
+                "context": "unit-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "integration-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/dependency-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/secrets-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "build",
+                "integration_id": 15368
+              },
+              {
+                "context": "schema-validation",
+                "integration_id": 15368
+              },
+              {
+                "context": "deps/version-sync",
+                "integration_id": 15368
+              },
+              {
+                "context": "test",
+                "integration_id": 15368
+              }
+            ]
+          }
+        },
+        {
+          "type": "required_signatures"
+        },
+        {
+          "type": "merge_queue",
+          "parameters": {
+            "merge_method": "SQUASH",
+            "max_entries_to_build": 10,
+            "min_entries_to_merge": 1,
+            "max_entries_to_merge": 5,
+            "min_entries_to_merge_wait_minutes": 5,
+            "grouping_strategy": "HEADGREEN",
+            "check_response_timeout_minutes": 60
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5CfXE0zgEQZ9A",
+      "created_at": "2026-06-18T10:05:26.422-07:00",
+      "updated_at": "2026-08-20T10:28:56.360-07:00",
+      "bypass_actors": [],
+      "current_user_can_bypass": "never",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Mnemosyne/rulesets/17852368"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Mnemosyne/rules/17852368"
+        }
+      }
+    },
+    {
+      "id": 18221133,
+      "name": "homeric-main-extras",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Mnemosyne",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "refs/heads/main"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "symlink-check",
+                "integration_id": 15368
+              },
+              {
+                "context": "pixi-check",
+                "integration_id": 15368
+              }
+            ]
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5CfXE0zgEWCE0",
+      "created_at": "2026-06-27T23:42:07.005-07:00",
+      "updated_at": "2026-08-20T10:28:56.936-07:00",
+      "bypass_actors": [],
+      "current_user_can_bypass": "never",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Mnemosyne/rulesets/18221133"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Mnemosyne/rules/18221133"
+        }
+      }
+    }
+  ],
+  "api_captures": {
+    "rulesets_including_parents": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Mnemosyne/rulesets?includes_parents=true&per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:46Z",
+          "etag": "W/\"ab8f7a4f0cb767d6c67c11829a519060a2d71ef0801b8d99289d9dcf596b89bc\"",
+          "request_id": "984F:1EEAA3:296F40A:2B1F00D:6A90B316",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "id": 17852368,
+              "name": "homeric-main-baseline",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Mnemosyne",
+              "enforcement": "active",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5CfXE0zgEQZ9A",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Mnemosyne/rulesets/17852368"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Mnemosyne/rules/17852368"
+                }
+              },
+              "created_at": "2026-06-18T10:05:26.422-07:00",
+              "updated_at": "2026-08-20T10:28:56.360-07:00"
+            },
+            {
+              "id": 18221133,
+              "name": "homeric-main-extras",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Mnemosyne",
+              "enforcement": "active",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5CfXE0zgEWCE0",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Mnemosyne/rulesets/18221133"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Mnemosyne/rules/18221133"
+                }
+              },
+              "created_at": "2026-06-27T23:42:07.005-07:00",
+              "updated_at": "2026-08-20T10:28:56.936-07:00"
+            }
+          ]
+        }
+      ]
+    },
+    "ruleset_details": {
+      "method": "GET",
+      "responses": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Mnemosyne/rulesets/17852368",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:46Z",
+          "etag": "W/\"cc957827d6e6d93d49332c5fbc23c2323e151f3e64af23f0e2d59455cd178fd4\"",
+          "request_id": "8309:1EEAA3:296F525:2B1F120:6A90B316",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 17852368,
+            "name": "homeric-main-baseline",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Mnemosyne",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "~DEFAULT_BRANCH"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "deletion"
+              },
+              {
+                "type": "non_fast_forward"
+              },
+              {
+                "type": "required_linear_history"
+              },
+              {
+                "type": "pull_request",
+                "parameters": {
+                  "required_approving_review_count": 0,
+                  "dismiss_stale_reviews_on_push": false,
+                  "required_reviewers": [],
+                  "require_code_owner_review": false,
+                  "dismissal_restriction": {
+                    "enabled": false,
+                    "allowed_actors": []
+                  },
+                  "require_last_push_approval": false,
+                  "required_review_thread_resolution": true,
+                  "require_extra_approval_for_unattributed_changes": true,
+                  "allowed_merge_methods": [
+                    "squash"
+                  ]
+                }
+              },
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "do_not_enforce_on_create": false,
+                  "required_status_checks": [
+                    {
+                      "context": "lint",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "unit-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "integration-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/dependency-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/secrets-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "build",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "schema-validation",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "deps/version-sync",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "test",
+                      "integration_id": 15368
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "required_signatures"
+              },
+              {
+                "type": "merge_queue",
+                "parameters": {
+                  "merge_method": "SQUASH",
+                  "max_entries_to_build": 10,
+                  "min_entries_to_merge": 1,
+                  "max_entries_to_merge": 5,
+                  "min_entries_to_merge_wait_minutes": 5,
+                  "grouping_strategy": "HEADGREEN",
+                  "check_response_timeout_minutes": 60
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5CfXE0zgEQZ9A",
+            "created_at": "2026-06-18T10:05:26.422-07:00",
+            "updated_at": "2026-08-20T10:28:56.360-07:00",
+            "bypass_actors": [],
+            "current_user_can_bypass": "never",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Mnemosyne/rulesets/17852368"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Mnemosyne/rules/17852368"
+              }
+            }
+          }
+        },
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Mnemosyne/rulesets/18221133",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:47Z",
+          "etag": "W/\"9d4b47dda9d200c9366f4d0497507685ee594baa8ecfc82e52c12d8652c6992b\"",
+          "request_id": "FE43:EA9C:2B80279:2D2F2D4:6A90B316",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 18221133,
+            "name": "homeric-main-extras",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Mnemosyne",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "refs/heads/main"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "do_not_enforce_on_create": false,
+                  "required_status_checks": [
+                    {
+                      "context": "symlink-check",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "pixi-check",
+                      "integration_id": 15368
+                    }
+                  ]
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5CfXE0zgEWCE0",
+            "created_at": "2026-06-27T23:42:07.005-07:00",
+            "updated_at": "2026-08-20T10:28:56.936-07:00",
+            "bypass_actors": [],
+            "current_user_can_bypass": "never",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Mnemosyne/rulesets/18221133"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Mnemosyne/rules/18221133"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "effective_default_branch_rules": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Mnemosyne/rules/branches/main?per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:47Z",
+          "etag": "W/\"e7cb78d989d6d5096328122fcbb812f2625a73bb2de6da4c6b690ea31981a9da\"",
+          "request_id": "E01B:1330A7:2C91620:2E408E3:6A90B317",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "type": "deletion",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Mnemosyne",
+              "ruleset_id": 17852368
+            },
+            {
+              "type": "non_fast_forward",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Mnemosyne",
+              "ruleset_id": 17852368
+            },
+            {
+              "type": "required_linear_history",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Mnemosyne",
+              "ruleset_id": 17852368
+            },
+            {
+              "type": "pull_request",
+              "parameters": {
+                "required_approving_review_count": 0,
+                "dismiss_stale_reviews_on_push": false,
+                "required_reviewers": [],
+                "require_code_owner_review": false,
+                "dismissal_restriction": {
+                  "enabled": false,
+                  "allowed_actors": []
+                },
+                "require_last_push_approval": false,
+                "required_review_thread_resolution": true,
+                "require_extra_approval_for_unattributed_changes": true,
+                "allowed_merge_methods": [
+                  "squash"
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Mnemosyne",
+              "ruleset_id": 17852368
+            },
+            {
+              "type": "required_status_checks",
+              "parameters": {
+                "strict_required_status_checks_policy": false,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [
+                  {
+                    "context": "lint",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "unit-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "integration-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/dependency-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/secrets-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "build",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "schema-validation",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "deps/version-sync",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "test",
+                    "integration_id": 15368
+                  }
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Mnemosyne",
+              "ruleset_id": 17852368
+            },
+            {
+              "type": "required_signatures",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Mnemosyne",
+              "ruleset_id": 17852368
+            },
+            {
+              "type": "merge_queue",
+              "parameters": {
+                "merge_method": "SQUASH",
+                "max_entries_to_build": 10,
+                "min_entries_to_merge": 1,
+                "max_entries_to_merge": 5,
+                "min_entries_to_merge_wait_minutes": 5,
+                "grouping_strategy": "HEADGREEN",
+                "check_response_timeout_minutes": 60
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Mnemosyne",
+              "ruleset_id": 17852368
+            },
+            {
+              "type": "required_status_checks",
+              "parameters": {
+                "strict_required_status_checks_policy": false,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [
+                  {
+                    "context": "symlink-check",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "pixi-check",
+                    "integration_id": 15368
+                  }
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Mnemosyne",
+              "ruleset_id": 18221133
+            }
+          ]
+        }
+      ]
+    },
+    "classic_branch_protection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Mnemosyne/branches/main/protection",
+      "status": 404,
+      "captured_at": "2026-08-27T21:58:47Z",
+      "etag": null,
+      "request_id": "5695:1FE865:3128793:32D7111:6A90B317",
+      "api_version": "2022-11-28",
+      "response": {
+        "message": "Branch not protected",
+        "documentation_url": "https://docs.github.com/rest/branches/branch-protection#get-branch-protection",
+        "status": "404"
+      }
+    },
+    "repository_policy_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Mnemosyne",
+      "status": 200,
+      "captured_at": "2026-08-27T23:14:02Z",
+      "etag": "W/\"9a35b99e2c38aec70a5cd85d8a72742c7b575618a23d1e599f8ad14c3bd63ea7\"",
+      "request_id": "EE85:153A21:96CBEE:B24403:6A90C4B9",
+      "api_version": "2022-11-28",
+      "response": {
+        "allow_auto_merge": true,
+        "allow_merge_commit": false,
+        "allow_rebase_merge": false,
+        "allow_squash_merge": true,
+        "allow_update_branch": true,
+        "default_branch": "main",
+        "delete_branch_on_merge": true,
+        "full_name": "HomericIntelligence/Mnemosyne",
+        "web_commit_signoff_required": true
+      }
+    },
+    "default_branch_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Mnemosyne/branches/main",
+      "status": 200,
+      "captured_at": "2026-08-27T23:14:02Z",
+      "etag": "W/\"9faab3abca57f792db0d1ae827a433645cd549442f6891d7ade8789a541385d2\"",
+      "request_id": "15AA:3DC3FC:8B0B7C:A67D3F:6A90C4BA",
+      "api_version": "2022-11-28",
+      "response": {
+        "commit": {
+          "sha": "f111efa8c796bf8e9a0db65701798645ef24b53f"
+        },
+        "name": "main"
+      }
+    }
+  }
+}
