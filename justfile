@@ -329,6 +329,7 @@ lint-test-scripts:
 
 # Validate required-check workflows and repository-owned ruleset preservation (#386)
 test-merge-queue-readiness:
+    bash tests/github/merge-queue-readiness-portability.test.sh
     bash tests/github/merge-queue-readiness.test.sh
     bash tests/github/apply-repo-rulesets.test.sh
 

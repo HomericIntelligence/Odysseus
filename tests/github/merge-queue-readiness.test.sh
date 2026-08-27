@@ -5,7 +5,7 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$REPO_ROOT"
 
-for required_command in git jq python3 rg; do
+for required_command in find git grep jq python3; do
   command -v "$required_command" >/dev/null || {
     echo "ERROR: required test dependency is unavailable: $required_command" >&2
     exit 2
@@ -172,7 +172,8 @@ else
   fail "tracked repository rulesets have drifted from the versioned fleet policy"
 fi
 
-if rg -n '"~ALL"' configs/github --glob 'org-ruleset*.json'; then
+if compgen -G 'configs/github/org-ruleset*.json' >/dev/null &&
+    grep -nE '"~ALL"' configs/github/org-ruleset*.json; then
   fail "deprecated organization-wide ruleset artifacts still target ~ALL"
 else
   pass "no organization-wide ruleset artifact can target the excluded fork"
@@ -263,16 +264,22 @@ for ruleset in "${ruleset_files[@]}"; do
   fi
 done
 
-if rg -n '"grouping_strategy"\s*:\s*"ALLGREEN"|"check_response_timeout_minutes"\s*:\s*60' \
-    configs/github --glob 'repo-ruleset*.json'; then
+if grep -nE \
+    '"grouping_strategy"[[:space:]]*:[[:space:]]*"ALLGREEN"|"check_response_timeout_minutes"[[:space:]]*:[[:space:]]*60' \
+    configs/github/repo-ruleset*.json; then
   fail "stale queue parameters remain in repository ruleset artifacts"
 else
   pass "repository ruleset artifacts contain no stale queue parameters"
 fi
 
-if rg -n 'Argus/(pull|issues)/551|Argus #550/#551|PR #551' \
-    CONTRIBUTING.md configs/github docs tests tools justfile \
-    --glob '!tests/github/merge-queue-readiness.test.sh'; then
+stale_reference_files=(CONTRIBUTING.md justfile)
+while IFS= read -r -d '' candidate; do
+  [[ "$candidate" == tests/github/merge-queue-readiness.test.sh ]] ||
+    stale_reference_files+=("$candidate")
+done < <(find configs/github docs tests tools -type f -print0)
+
+if grep -nE 'Argus/(pull|issues)/551|Argus #550/#551|PR #551' \
+    "${stale_reference_files[@]}"; then
   fail "stale Argus replacement PR #551 reference remains"
 else
   pass "all Argus replacement references use current PR #552"
