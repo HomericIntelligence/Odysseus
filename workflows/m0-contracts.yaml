@@ -23,7 +23,7 @@ metadata:
     M1-M6 milestone workflows.
   adr: "020"
   epic_home: Odysseus
-  lane_models: pinned-by-M0-issue-1
+  lane_models: configs/lane-models.yaml
 agents:
   - name: loop-planner
     program: claude-code

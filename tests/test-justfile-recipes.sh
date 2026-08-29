@@ -16,7 +16,8 @@ info "canonical recipes documented in AGENTS.md exist"
 mapfile -t recipes < <(just --summary | tr ' ' '\n' | sort -u)
 for r in bootstrap status update-submodules apply-all hermes-start \
          argus-start telemachy-run validate-configs ci \
-         validate-nats validate-compose test-justfile-recipes; do
+         validate-nats validate-compose test-justfile-recipes \
+         lane-models loop-env; do
     if printf '%s\n' "${recipes[@]}" | grep -qx "$r"; then
         pass "recipe present: $r"
     else
