@@ -1,0 +1,218 @@
+{
+  "schema_version": 2,
+  "capture_id": "fleet-policy-20260827T215908Z",
+  "capture_started_at": "2026-08-27T21:58:19Z",
+  "captured_at": "2026-08-27T21:59:08Z",
+  "api_version": "2022-11-28",
+  "organization": "HomericIntelligence",
+  "policy_binding": {
+    "source": "configs/github/fleet-ruleset-policy.json",
+    "canonical_json_sha256": "170272d54728c9f88399b8491be3137a771f0a25e17252b760bb76447e788fa9",
+    "active_ruleset_sha256": "a7d4bd4b3adeb1fe1a32ae65a9eb6bdf5326bdee14d842a8c66f6e54526994fc",
+    "repository_settings_sha256": "67181cfde1db1a7618ffdbc4fd8b4ea6f0986ef07709c4dd31b59380e66d91a3"
+  },
+  "repositories": [
+    {
+      "name": "AchaeanFleet",
+      "main_sha": "c90441359c9439b5646ff55b95872134dfb7b39f",
+      "fixture": "tests/fixtures/github/fleet-policy/achaeanfleet-baseline.json",
+      "fixture_canonical_json_sha256": "c42d89e749594429cf3aad42169ebbc0a068bf04eae68a839c3be8de27572fc0",
+      "repository_api": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet",
+      "default_branch_api": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/branches/main",
+      "rulesets_api": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/rulesets?includes_parents=true&per_page=100",
+      "effective_rules_api": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/rules/branches/main?per_page=100",
+      "classic_protection_api": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/branches/main/protection",
+      "capture_source": "live GitHub REST readback"
+    },
+    {
+      "name": "Agamemnon",
+      "main_sha": "bb17afd828a8c164930a30d5095e6b90241f8564",
+      "fixture": "tests/fixtures/github/fleet-policy/agamemnon-baseline.json",
+      "fixture_canonical_json_sha256": "61efda4ae991e1dc92282487121b7937f245f1f6ba52213828b13d425d8d3c98",
+      "repository_api": "https://api.github.com/repos/HomericIntelligence/Agamemnon",
+      "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Agamemnon/branches/main",
+      "rulesets_api": "https://api.github.com/repos/HomericIntelligence/Agamemnon/rulesets?includes_parents=true&per_page=100",
+      "effective_rules_api": "https://api.github.com/repos/HomericIntelligence/Agamemnon/rules/branches/main?per_page=100",
+      "classic_protection_api": "https://api.github.com/repos/HomericIntelligence/Agamemnon/branches/main/protection",
+      "capture_source": "live GitHub REST readback"
+    },
+    {
+      "name": "Argus",
+      "main_sha": "59727bb5c86ae7340bc694a3ccd35c055c8df7f8",
+      "fixture": "tests/fixtures/github/fleet-policy/argus-baseline.json",
+      "fixture_canonical_json_sha256": "06c0f62fbb61e80942e1b13117c1a370a0b6c1a0462c5d180b36bd7813173d18",
+      "repository_api": "https://api.github.com/repos/HomericIntelligence/Argus",
+      "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Argus/branches/main",
+      "rulesets_api": "https://api.github.com/repos/HomericIntelligence/Argus/rulesets?includes_parents=true&per_page=100",
+      "effective_rules_api": "https://api.github.com/repos/HomericIntelligence/Argus/rules/branches/main?per_page=100",
+      "classic_protection_api": "https://api.github.com/repos/HomericIntelligence/Argus/branches/main/protection",
+      "capture_source": "live GitHub REST readback"
+    },
+    {
+      "name": "Athena",
+      "main_sha": "234bd95fa5f30f386ee92458b8177eb6c88269f6",
+      "fixture": "tests/fixtures/github/fleet-policy/athena-baseline.json",
+      "fixture_canonical_json_sha256": "b43e8d532bb673708586419827003a66b238287e3c19e6787c03f557e4b9be99",
+      "repository_api": "https://api.github.com/repos/HomericIntelligence/Athena",
+      "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Athena/branches/main",
+      "rulesets_api": "https://api.github.com/repos/HomericIntelligence/Athena/rulesets?includes_parents=true&per_page=100",
+      "effective_rules_api": "https://api.github.com/repos/HomericIntelligence/Athena/rules/branches/main?per_page=100",
+      "classic_protection_api": "https://api.github.com/repos/HomericIntelligence/Athena/branches/main/protection",
+      "capture_source": "live GitHub REST readback"
+    },
+    {
+      "name": "Charybdis",
+      "main_sha": "1fe0457a6f74e302d5e34ea5c15f1d72135238cf",
+      "fixture": "tests/fixtures/github/fleet-policy/charybdis-baseline.json",
+      "fixture_canonical_json_sha256": "01a81adb4436ff0f36568356520fedf6d401facab52226c389214a95c790e3dd",
+      "repository_api": "https://api.github.com/repos/HomericIntelligence/Charybdis",
+      "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Charybdis/branches/main",
+      "rulesets_api": "https://api.github.com/repos/HomericIntelligence/Charybdis/rulesets?includes_parents=true&per_page=100",
+      "effective_rules_api": "https://api.github.com/repos/HomericIntelligence/Charybdis/rules/branches/main?per_page=100",
+      "classic_protection_api": "https://api.github.com/repos/HomericIntelligence/Charybdis/branches/main/protection",
+      "capture_source": "live GitHub REST readback"
+    },
+    {
+      "name": "Hephaestus",
+      "main_sha": "10da5b23a60377c84ccc40fd474358248ce50bd2",
+      "fixture": "tests/fixtures/github/fleet-policy/hephaestus-baseline.json",
+      "fixture_canonical_json_sha256": "18a700af624d9ee0f1d5001d8be0f75c76f9fd12e703ae5f9f7f14f530479ec9",
+      "repository_api": "https://api.github.com/repos/HomericIntelligence/Hephaestus",
+      "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Hephaestus/branches/main",
+      "rulesets_api": "https://api.github.com/repos/HomericIntelligence/Hephaestus/rulesets?includes_parents=true&per_page=100",
+      "effective_rules_api": "https://api.github.com/repos/HomericIntelligence/Hephaestus/rules/branches/main?per_page=100",
+      "classic_protection_api": "https://api.github.com/repos/HomericIntelligence/Hephaestus/branches/main/protection",
+      "capture_source": "live GitHub REST readback"
+    },
+    {
+      "name": "Hermes",
+      "main_sha": "c89b52ae41f69ce485d616927fd3ad32f78b8332",
+      "fixture": "tests/fixtures/github/fleet-policy/hermes-baseline.json",
+      "fixture_canonical_json_sha256": "233c2cc3c1b2f295753b54ef87c7c04f15dd2baf2bae97f2cf084100d1e68ffe",
+      "repository_api": "https://api.github.com/repos/HomericIntelligence/Hermes",
+      "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Hermes/branches/main",
+      "rulesets_api": "https://api.github.com/repos/HomericIntelligence/Hermes/rulesets?includes_parents=true&per_page=100",
+      "effective_rules_api": "https://api.github.com/repos/HomericIntelligence/Hermes/rules/branches/main?per_page=100",
+      "classic_protection_api": "https://api.github.com/repos/HomericIntelligence/Hermes/branches/main/protection",
+      "capture_source": "live GitHub REST readback"
+    },
+    {
+      "name": "Keystone",
+      "main_sha": "c96b96aa65e7e4a16daca09b3868bc4b607a6884",
+      "fixture": "tests/fixtures/github/fleet-policy/keystone-baseline.json",
+      "fixture_canonical_json_sha256": "165ec4f00946caa6afc67012206b09cc4918f62181b6eddef07a7d151b825cce",
+      "repository_api": "https://api.github.com/repos/HomericIntelligence/Keystone",
+      "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Keystone/branches/main",
+      "rulesets_api": "https://api.github.com/repos/HomericIntelligence/Keystone/rulesets?includes_parents=true&per_page=100",
+      "effective_rules_api": "https://api.github.com/repos/HomericIntelligence/Keystone/rules/branches/main?per_page=100",
+      "classic_protection_api": "https://api.github.com/repos/HomericIntelligence/Keystone/branches/main/protection",
+      "capture_source": "live GitHub REST readback"
+    },
+    {
+      "name": "Mnemosyne",
+      "main_sha": "f111efa8c796bf8e9a0db65701798645ef24b53f",
+      "fixture": "tests/fixtures/github/fleet-policy/mnemosyne-baseline.json",
+      "fixture_canonical_json_sha256": "04c3404b7ae5fe525c9542ae7401ae6026f18c26739db9cf344b5794572896ad",
+      "repository_api": "https://api.github.com/repos/HomericIntelligence/Mnemosyne",
+      "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Mnemosyne/branches/main",
+      "rulesets_api": "https://api.github.com/repos/HomericIntelligence/Mnemosyne/rulesets?includes_parents=true&per_page=100",
+      "effective_rules_api": "https://api.github.com/repos/HomericIntelligence/Mnemosyne/rules/branches/main?per_page=100",
+      "classic_protection_api": "https://api.github.com/repos/HomericIntelligence/Mnemosyne/branches/main/protection",
+      "capture_source": "live GitHub REST readback"
+    },
+    {
+      "name": "Myrmidons",
+      "main_sha": "16a7ed57bff18af737c0a07f50ddcfd9e163e4f4",
+      "fixture": "tests/fixtures/github/fleet-policy/myrmidons-baseline.json",
+      "fixture_canonical_json_sha256": "9986cb72b47ce130b5bace744105a93eab8ce82e1c1de96e701d85e68eb06653",
+      "repository_api": "https://api.github.com/repos/HomericIntelligence/Myrmidons",
+      "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Myrmidons/branches/main",
+      "rulesets_api": "https://api.github.com/repos/HomericIntelligence/Myrmidons/rulesets?includes_parents=true&per_page=100",
+      "effective_rules_api": "https://api.github.com/repos/HomericIntelligence/Myrmidons/rules/branches/main?per_page=100",
+      "classic_protection_api": "https://api.github.com/repos/HomericIntelligence/Myrmidons/branches/main/protection",
+      "capture_source": "live GitHub REST readback"
+    },
+    {
+      "name": "Nestor",
+      "main_sha": "6445688c1c27e3d984bde074cb7168a02856f6fa",
+      "fixture": "tests/fixtures/github/fleet-policy/nestor-baseline.json",
+      "fixture_canonical_json_sha256": "dcd5a95128bd089b39d28fac887062e52d3c686e5f9454ef43bfdd52fab98402",
+      "repository_api": "https://api.github.com/repos/HomericIntelligence/Nestor",
+      "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Nestor/branches/main",
+      "rulesets_api": "https://api.github.com/repos/HomericIntelligence/Nestor/rulesets?includes_parents=true&per_page=100",
+      "effective_rules_api": "https://api.github.com/repos/HomericIntelligence/Nestor/rules/branches/main?per_page=100",
+      "classic_protection_api": "https://api.github.com/repos/HomericIntelligence/Nestor/branches/main/protection",
+      "capture_source": "live GitHub REST readback"
+    },
+    {
+      "name": "Odysseus",
+      "main_sha": "9af8e1b205b3f68e3c5a928c0f3b671de02991ec",
+      "fixture": "tests/fixtures/github/fleet-policy/odysseus-baseline.json",
+      "fixture_canonical_json_sha256": "5c06255d5175fbd28edd93cd57303a6b525cb3246ff589bd95a616a4fd924af1",
+      "repository_api": "https://api.github.com/repos/HomericIntelligence/Odysseus",
+      "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Odysseus/branches/main",
+      "rulesets_api": "https://api.github.com/repos/HomericIntelligence/Odysseus/rulesets?includes_parents=true&per_page=100",
+      "effective_rules_api": "https://api.github.com/repos/HomericIntelligence/Odysseus/rules/branches/main?per_page=100",
+      "classic_protection_api": "https://api.github.com/repos/HomericIntelligence/Odysseus/branches/main/protection",
+      "capture_source": "live GitHub REST readback"
+    },
+    {
+      "name": "Odyssey",
+      "main_sha": "d47074e8ee4eec06c6085315cc22ba4128b07b90",
+      "fixture": "tests/fixtures/github/fleet-policy/odyssey-baseline.json",
+      "fixture_canonical_json_sha256": "e2c1e4cdf81719a2db9bfea73f75a6049a3637c3c87627facdd77bdd5fd660f6",
+      "repository_api": "https://api.github.com/repos/HomericIntelligence/Odyssey",
+      "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Odyssey/branches/main",
+      "rulesets_api": "https://api.github.com/repos/HomericIntelligence/Odyssey/rulesets?includes_parents=true&per_page=100",
+      "effective_rules_api": "https://api.github.com/repos/HomericIntelligence/Odyssey/rules/branches/main?per_page=100",
+      "classic_protection_api": "https://api.github.com/repos/HomericIntelligence/Odyssey/branches/main/protection",
+      "capture_source": "live GitHub REST readback"
+    },
+    {
+      "name": "Proteus",
+      "main_sha": "de60daceedd387ef7e6907c6f24bce494bc92b71",
+      "fixture": "tests/fixtures/github/fleet-policy/proteus-baseline.json",
+      "fixture_canonical_json_sha256": "eef251fd64c78e0859f94113647eda1d1c912bb91228f27a9a276fb15b07e1d8",
+      "repository_api": "https://api.github.com/repos/HomericIntelligence/Proteus",
+      "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Proteus/branches/main",
+      "rulesets_api": "https://api.github.com/repos/HomericIntelligence/Proteus/rulesets?includes_parents=true&per_page=100",
+      "effective_rules_api": "https://api.github.com/repos/HomericIntelligence/Proteus/rules/branches/main?per_page=100",
+      "classic_protection_api": "https://api.github.com/repos/HomericIntelligence/Proteus/branches/main/protection",
+      "capture_source": "live GitHub REST readback"
+    },
+    {
+      "name": "Scylla",
+      "main_sha": "68427e6ec68ab9baf290db583039345ca18a0668",
+      "fixture": "tests/fixtures/github/fleet-policy/scylla-baseline.json",
+      "fixture_canonical_json_sha256": "dd0cd334db24272c91c324eaf4c2000e77c14c7e9521eaa44778551a21ece94d",
+      "repository_api": "https://api.github.com/repos/HomericIntelligence/Scylla",
+      "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Scylla/branches/main",
+      "rulesets_api": "https://api.github.com/repos/HomericIntelligence/Scylla/rulesets?includes_parents=true&per_page=100",
+      "effective_rules_api": "https://api.github.com/repos/HomericIntelligence/Scylla/rules/branches/main?per_page=100",
+      "classic_protection_api": "https://api.github.com/repos/HomericIntelligence/Scylla/branches/main/protection",
+      "capture_source": "live GitHub REST readback"
+    },
+    {
+      "name": "Telemachy",
+      "main_sha": "4702a17f4be69b232ead7944b552f85fcc183b41",
+      "fixture": "tests/fixtures/github/fleet-policy/telemachy-baseline.json",
+      "fixture_canonical_json_sha256": "952fda931bec1c9a2d0af9c2d08dd7d305ef960495744691e83feb12ece3cc14",
+      "repository_api": "https://api.github.com/repos/HomericIntelligence/Telemachy",
+      "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Telemachy/branches/main",
+      "rulesets_api": "https://api.github.com/repos/HomericIntelligence/Telemachy/rulesets?includes_parents=true&per_page=100",
+      "effective_rules_api": "https://api.github.com/repos/HomericIntelligence/Telemachy/rules/branches/main?per_page=100",
+      "classic_protection_api": "https://api.github.com/repos/HomericIntelligence/Telemachy/branches/main/protection",
+      "capture_source": "live GitHub REST readback"
+    }
+  ],
+  "supplemental_capture": {
+    "capture_id": "fleet-policy-settings-20260827T231355Z",
+    "capture_started_at": "2026-08-27T23:13:55Z",
+    "captured_at": "2026-08-27T23:14:08Z",
+    "capture_source": "live GitHub REST response projections",
+    "scope": [
+      "repository_policy_projection",
+      "default_branch_projection"
+    ]
+  }
+}

@@ -1,0 +1,590 @@
+{
+  "schema_version": 2,
+  "repository": "HomericIntelligence/Telemachy",
+  "provenance": {
+    "capture_started_at": "2026-08-27T21:58:19Z",
+    "captured_at": "2026-08-27T21:59:08Z",
+    "capture_id": "fleet-policy-20260827T215908Z",
+    "api_version": "2022-11-28",
+    "main_sha": "4702a17f4be69b232ead7944b552f85fcc183b41",
+    "repository_api": "https://api.github.com/repos/HomericIntelligence/Telemachy",
+    "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Telemachy/branches/main",
+    "ruleset_api": [
+      "https://api.github.com/repos/HomericIntelligence/Telemachy/rulesets/15556487"
+    ],
+    "capture_source": "live GitHub REST readback",
+    "supplemental_capture": {
+      "capture_id": "fleet-policy-settings-20260827T231355Z",
+      "capture_started_at": "2026-08-27T23:13:55Z",
+      "captured_at": "2026-08-27T23:14:08Z",
+      "capture_source": "live GitHub REST response projections"
+    }
+  },
+  "repository_settings": {
+    "allow_auto_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "allow_squash_merge": true,
+    "allow_update_branch": true,
+    "default_branch": "main",
+    "delete_branch_on_merge": true,
+    "full_name": "HomericIntelligence/Telemachy",
+    "web_commit_signoff_required": true
+  },
+  "rulesets": [
+    {
+      "id": 15556487,
+      "name": "homeric-main-baseline",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Telemachy",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "refs/heads/main"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "required_signatures"
+        },
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": false,
+            "required_reviewers": [],
+            "require_code_owner_review": false,
+            "dismissal_restriction": {
+              "enabled": false,
+              "allowed_actors": []
+            },
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": true,
+            "require_extra_approval_for_unattributed_changes": true,
+            "allowed_merge_methods": [
+              "squash"
+            ]
+          }
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "lint",
+                "integration_id": 15368
+              },
+              {
+                "context": "unit-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "integration-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/dependency-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/secrets-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "build",
+                "integration_id": 15368
+              },
+              {
+                "context": "schema-validation",
+                "integration_id": 15368
+              },
+              {
+                "context": "deps/version-sync",
+                "integration_id": 15368
+              },
+              {
+                "context": "test",
+                "integration_id": 15368
+              },
+              {
+                "context": "package",
+                "integration_id": 15368
+              },
+              {
+                "context": "install",
+                "integration_id": 15368
+              },
+              {
+                "context": "release",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/sast-scan",
+                "integration_id": 15368
+              }
+            ]
+          }
+        },
+        {
+          "type": "required_linear_history"
+        },
+        {
+          "type": "non_fast_forward"
+        },
+        {
+          "type": "merge_queue",
+          "parameters": {
+            "merge_method": "SQUASH",
+            "max_entries_to_build": 10,
+            "min_entries_to_merge": 1,
+            "max_entries_to_merge": 5,
+            "min_entries_to_merge_wait_minutes": 5,
+            "grouping_strategy": "HEADGREEN",
+            "check_response_timeout_minutes": 60
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5GgCq9zgDtX4c",
+      "created_at": "2026-04-25T17:15:28.425-07:00",
+      "updated_at": "2026-08-19T19:21:41.291-07:00",
+      "bypass_actors": [
+        {
+          "actor_id": 5,
+          "actor_type": "RepositoryRole",
+          "bypass_mode": "pull_request"
+        }
+      ],
+      "current_user_can_bypass": "pull_requests_only",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Telemachy/rulesets/15556487"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Telemachy/rules/15556487"
+        }
+      }
+    }
+  ],
+  "api_captures": {
+    "rulesets_including_parents": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Telemachy/rulesets?includes_parents=true&per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:59:01Z",
+          "etag": "W/\"34260eb1c1df2d83780901cadc5f661152ee163b65616c2a0150acc68b727027\"",
+          "request_id": "B370:153E39:7D719E:96D24C:6A90B325",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "id": 15556487,
+              "name": "homeric-main-baseline",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Telemachy",
+              "enforcement": "active",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5GgCq9zgDtX4c",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Telemachy/rulesets/15556487"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Telemachy/rules/15556487"
+                }
+              },
+              "created_at": "2026-04-25T17:15:28.425-07:00",
+              "updated_at": "2026-08-19T19:21:41.291-07:00"
+            }
+          ]
+        }
+      ]
+    },
+    "ruleset_details": {
+      "method": "GET",
+      "responses": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Telemachy/rulesets/15556487",
+          "status": 200,
+          "captured_at": "2026-08-27T21:59:01Z",
+          "etag": "W/\"ae659fdaa24e9f60ac710162a5cb78eb3156d2cb3c5abe2969de97ced81d79ab\"",
+          "request_id": "63E8:151DEC:853745:9E9586:6A90B325",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 15556487,
+            "name": "homeric-main-baseline",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Telemachy",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "refs/heads/main"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "deletion"
+              },
+              {
+                "type": "required_signatures"
+              },
+              {
+                "type": "pull_request",
+                "parameters": {
+                  "required_approving_review_count": 0,
+                  "dismiss_stale_reviews_on_push": false,
+                  "required_reviewers": [],
+                  "require_code_owner_review": false,
+                  "dismissal_restriction": {
+                    "enabled": false,
+                    "allowed_actors": []
+                  },
+                  "require_last_push_approval": false,
+                  "required_review_thread_resolution": true,
+                  "require_extra_approval_for_unattributed_changes": true,
+                  "allowed_merge_methods": [
+                    "squash"
+                  ]
+                }
+              },
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "do_not_enforce_on_create": false,
+                  "required_status_checks": [
+                    {
+                      "context": "lint",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "unit-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "integration-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/dependency-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/secrets-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "build",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "schema-validation",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "deps/version-sync",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "test",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "package",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "install",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "release",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/sast-scan",
+                      "integration_id": 15368
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "required_linear_history"
+              },
+              {
+                "type": "non_fast_forward"
+              },
+              {
+                "type": "merge_queue",
+                "parameters": {
+                  "merge_method": "SQUASH",
+                  "max_entries_to_build": 10,
+                  "min_entries_to_merge": 1,
+                  "max_entries_to_merge": 5,
+                  "min_entries_to_merge_wait_minutes": 5,
+                  "grouping_strategy": "HEADGREEN",
+                  "check_response_timeout_minutes": 60
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5GgCq9zgDtX4c",
+            "created_at": "2026-04-25T17:15:28.425-07:00",
+            "updated_at": "2026-08-19T19:21:41.291-07:00",
+            "bypass_actors": [
+              {
+                "actor_id": 5,
+                "actor_type": "RepositoryRole",
+                "bypass_mode": "pull_request"
+              }
+            ],
+            "current_user_can_bypass": "pull_requests_only",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Telemachy/rulesets/15556487"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Telemachy/rules/15556487"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "effective_default_branch_rules": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Telemachy/rules/branches/main?per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:59:02Z",
+          "etag": "W/\"2b177bb4f97ab17432449754629ecea74b08c2b4033e978955753da35f7545c9\"",
+          "request_id": "682A:F596B:8C06E9:A567C2:6A90B325",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "type": "deletion",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Telemachy",
+              "ruleset_id": 15556487
+            },
+            {
+              "type": "required_signatures",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Telemachy",
+              "ruleset_id": 15556487
+            },
+            {
+              "type": "pull_request",
+              "parameters": {
+                "required_approving_review_count": 0,
+                "dismiss_stale_reviews_on_push": false,
+                "required_reviewers": [],
+                "require_code_owner_review": false,
+                "dismissal_restriction": {
+                  "enabled": false,
+                  "allowed_actors": []
+                },
+                "require_last_push_approval": false,
+                "required_review_thread_resolution": true,
+                "require_extra_approval_for_unattributed_changes": true,
+                "allowed_merge_methods": [
+                  "squash"
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Telemachy",
+              "ruleset_id": 15556487
+            },
+            {
+              "type": "required_status_checks",
+              "parameters": {
+                "strict_required_status_checks_policy": false,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [
+                  {
+                    "context": "lint",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "unit-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "integration-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/dependency-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/secrets-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "build",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "schema-validation",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "deps/version-sync",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "test",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "package",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "install",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "release",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/sast-scan",
+                    "integration_id": 15368
+                  }
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Telemachy",
+              "ruleset_id": 15556487
+            },
+            {
+              "type": "required_linear_history",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Telemachy",
+              "ruleset_id": 15556487
+            },
+            {
+              "type": "non_fast_forward",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Telemachy",
+              "ruleset_id": 15556487
+            },
+            {
+              "type": "merge_queue",
+              "parameters": {
+                "merge_method": "SQUASH",
+                "max_entries_to_build": 10,
+                "min_entries_to_merge": 1,
+                "max_entries_to_merge": 5,
+                "min_entries_to_merge_wait_minutes": 5,
+                "grouping_strategy": "HEADGREEN",
+                "check_response_timeout_minutes": 60
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Telemachy",
+              "ruleset_id": 15556487
+            }
+          ]
+        }
+      ]
+    },
+    "classic_branch_protection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Telemachy/branches/main/protection",
+      "status": 200,
+      "captured_at": "2026-08-27T21:59:02Z",
+      "etag": "W/\"eff389157eb33cc415124fb3b15a1f58a301a8199e6ccc67a8f8b0ba2f5a3fd3\"",
+      "request_id": "BD80:152016:8AAC56:A40869:6A90B326",
+      "api_version": "2022-11-28",
+      "response": {
+        "url": "https://api.github.com/repos/HomericIntelligence/Telemachy/branches/main/protection",
+        "required_pull_request_reviews": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Telemachy/branches/main/protection/required_pull_request_reviews",
+          "dismiss_stale_reviews": false,
+          "require_code_owner_reviews": false,
+          "require_last_push_approval": false,
+          "required_approving_review_count": 0
+        },
+        "required_signatures": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Telemachy/branches/main/protection/required_signatures",
+          "enabled": false
+        },
+        "enforce_admins": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Telemachy/branches/main/protection/enforce_admins",
+          "enabled": false
+        },
+        "required_linear_history": {
+          "enabled": false
+        },
+        "allow_force_pushes": {
+          "enabled": false
+        },
+        "allow_deletions": {
+          "enabled": false
+        },
+        "block_creations": {
+          "enabled": false
+        },
+        "required_conversation_resolution": {
+          "enabled": true
+        },
+        "lock_branch": {
+          "enabled": false
+        },
+        "allow_fork_syncing": {
+          "enabled": false
+        }
+      }
+    },
+    "repository_policy_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Telemachy",
+      "status": 200,
+      "captured_at": "2026-08-27T23:14:07Z",
+      "etag": "W/\"36c0b41c72c6293987c9aa47ed5064c3736d37d4c57f80372a2341465a7089fe\"",
+      "request_id": "070A:3DE612:92827C:ADF992:6A90C4BF",
+      "api_version": "2022-11-28",
+      "response": {
+        "allow_auto_merge": true,
+        "allow_merge_commit": false,
+        "allow_rebase_merge": false,
+        "allow_squash_merge": true,
+        "allow_update_branch": true,
+        "default_branch": "main",
+        "delete_branch_on_merge": true,
+        "full_name": "HomericIntelligence/Telemachy",
+        "web_commit_signoff_required": true
+      }
+    },
+    "default_branch_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Telemachy/branches/main",
+      "status": 200,
+      "captured_at": "2026-08-27T23:14:08Z",
+      "etag": "W/\"1fbbdedf362f583f2c4e70a1d3de097d6e1fd2306c8b1c2b6c79d84c7f40185d\"",
+      "request_id": "C86A:154204:8A8C1D:A6053C:6A90C4BF",
+      "api_version": "2022-11-28",
+      "response": {
+        "commit": {
+          "sha": "4702a17f4be69b232ead7944b552f85fcc183b41"
+        },
+        "name": "main"
+      }
+    }
+  }
+}

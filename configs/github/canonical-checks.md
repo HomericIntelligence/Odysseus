@@ -1,10 +1,11 @@
-# HomericIntelligence — Canonical Required CI Check Names
+# HomericIntelligence — Canonical CI Validator Names
 
-All 16 first-party repositories must emit these exact GitHub Actions status
-check names.
-Each check must run a **real validator** — no echo-true placeholders.
+This catalog reserves exact GitHub Actions job names for validator categories.
+A repository emits the entries that apply to its implementation; it is not
+required to fabricate every catalog entry. Every emitted entry must run a
+**real validator** — no echo-true placeholders.
 
-## Required checks (block merge if failing)
+## Authoritative validator jobs
 
 | Context name | Category | Validator examples |
 |---|---|---|
@@ -17,24 +18,26 @@ Each check must run a **real validator** — no echo-true placeholders.
 | `schema-validation` | Validation | check-jsonschema against workflow YAMLs / pixi.toml / NATS schemas |
 | `deps/version-sync` | Validation | verify VERSION/pyproject.toml/pixi.toml/Conanfile parity |
 
-## Additional Odysseus required checks
+Each repository retains the authoritative validators appropriate to that
+repository. They are inputs to the local `required-checks-gate`; they are not
+listed individually in the live ruleset.
 
-Odysseus's live repository ruleset also requires `test`, `install`, and
-`release`, for 11 contexts total. The repository ruleset input artifacts retain
-those exact names, and each supplying workflow handles
-`merge_group: checks_requested` before queue activation.
+## Sole ruleset-required check
 
-Repository context lists are not interchangeable. The current regression
-fixtures preserve these live unions:
+Every first-party repository ruleset requires exactly
+`required-checks-gate`, scoped to the GitHub Actions app (integration ID
+`15368`) with non-strict status-check policy. The aggregate fails closed over
+all authoritative validators. It must emit successfully on pull-request,
+merge-group, and exact default-branch commits before the ruleset is cut over.
 
-- Argus: 14 contexts across two rulesets; its dedicated rollout is
-  [replacement PR #552](https://github.com/HomericIntelligence/Argus/pull/552).
-- Proteus: 13 contexts across two rulesets.
-- Myrmidons: 7 contexts in its baseline ruleset.
+Repository validator lists are not interchangeable. Each `_required.yml`
+defines its own aggregate dependency closure, while the cross-repository
+ruleset interface remains the single stable gate name.
 
-The generic updater derives its candidate from each complete live baseline and
-never replaces a repository's required contexts from this document or a fixed
-JSON payload.
+The authoritative repository-by-repository rollout index is the
+[Odysseus #386 revision-2 activation ledger](https://github.com/HomericIntelligence/Odysseus/issues/386#issuecomment-5444607661).
+Keep closure evidence on those activation issues; do not duplicate the ledger
+into another manifest.
 
 ## Informational checks (report but do not block merge)
 
@@ -45,13 +48,13 @@ JSON payload.
 
 ## Naming convention
 
-All canonical jobs MUST be defined in `.github/workflows/_required.yml` in each repo.
-The GitHub status check name is `<workflow.name> / <job.name>`.
+All emitted canonical jobs MUST be defined in `.github/workflows/_required.yml`.
+The ruleset status-check context is the job's explicit `name:` value.
 The `_required.yml` workflow is named `Required Checks` and each job's `name:` field
 is set to the canonical context string exactly (e.g. `name: lint`).
 
-The ruleset JSON context strings are **bare job names** (e.g. `lint`, `unit-tests`),
-with `"integration_id": 15368` (GitHub Actions app) to scope the match to Actions only.
+The ruleset JSON context is the bare job name `required-checks-gate`, with
+`"integration_id": 15368` (GitHub Actions app) to scope the match to Actions only.
 
 **Verified** (2026-04-26): GitHub reports check names as bare job `name:` values when
 the job has an explicit `name:` field — the workflow name prefix does NOT appear in
@@ -72,10 +75,6 @@ and the filename is organizational, not load-bearing:
   fleet-wide.
 - **The filename is NOT the enforcement contract.** Renaming the file would only
   require updating doc/tooling references; it would not change any required
-  status check. The load-bearing artifact is each job's `name:` field — GitHub
-  derives the status-check context from it. Renaming or removing a *job* without
-  updating the ruleset contexts (and re-applying the ruleset) is what breaks
-  enforcement. Note the two ruleset forms in this repo:
-  `org-ruleset*.json` pin `"Required Checks / <job>"`, while `repo-ruleset*.json`
-  pin the bare `"<job>"` with `integration_id: 15368`. Treat the job names — not
-  the filename — as the API.
+  status check. The load-bearing artifact is the aggregate job's exact `name:`
+  field and its complete dependency closure. Renaming or removing that job
+  without updating the repository ruleset breaks enforcement.

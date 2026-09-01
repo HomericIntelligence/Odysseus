@@ -1,0 +1,746 @@
+{
+  "schema_version": 2,
+  "repository": "HomericIntelligence/Nestor",
+  "provenance": {
+    "capture_started_at": "2026-08-27T21:58:19Z",
+    "captured_at": "2026-08-27T21:59:08Z",
+    "capture_id": "fleet-policy-20260827T215908Z",
+    "api_version": "2022-11-28",
+    "main_sha": "6445688c1c27e3d984bde074cb7168a02856f6fa",
+    "repository_api": "https://api.github.com/repos/HomericIntelligence/Nestor",
+    "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Nestor/branches/main",
+    "ruleset_api": [
+      "https://api.github.com/repos/HomericIntelligence/Nestor/rulesets/15556496",
+      "https://api.github.com/repos/HomericIntelligence/Nestor/rulesets/18221119"
+    ],
+    "capture_source": "live GitHub REST readback",
+    "supplemental_capture": {
+      "capture_id": "fleet-policy-settings-20260827T231355Z",
+      "capture_started_at": "2026-08-27T23:13:55Z",
+      "captured_at": "2026-08-27T23:14:08Z",
+      "capture_source": "live GitHub REST response projections"
+    }
+  },
+  "repository_settings": {
+    "allow_auto_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "allow_squash_merge": true,
+    "allow_update_branch": true,
+    "default_branch": "main",
+    "delete_branch_on_merge": true,
+    "full_name": "HomericIntelligence/Nestor",
+    "web_commit_signoff_required": true
+  },
+  "rulesets": [
+    {
+      "id": 15556496,
+      "name": "homeric-main-baseline",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Nestor",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "refs/heads/main"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "required_signatures"
+        },
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": false,
+            "required_reviewers": [],
+            "require_code_owner_review": false,
+            "dismissal_restriction": {
+              "enabled": false,
+              "allowed_actors": []
+            },
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": true,
+            "require_extra_approval_for_unattributed_changes": true,
+            "allowed_merge_methods": [
+              "squash"
+            ]
+          }
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "lint",
+                "integration_id": 15368
+              },
+              {
+                "context": "unit-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "integration-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/dependency-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/secrets-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "build",
+                "integration_id": 15368
+              },
+              {
+                "context": "schema-validation",
+                "integration_id": 15368
+              },
+              {
+                "context": "deps/version-sync",
+                "integration_id": 15368
+              },
+              {
+                "context": "test",
+                "integration_id": 15368
+              },
+              {
+                "context": "package",
+                "integration_id": 15368
+              },
+              {
+                "context": "install",
+                "integration_id": 15368
+              },
+              {
+                "context": "release",
+                "integration_id": 15368
+              }
+            ]
+          }
+        },
+        {
+          "type": "required_linear_history"
+        },
+        {
+          "type": "non_fast_forward"
+        },
+        {
+          "type": "merge_queue",
+          "parameters": {
+            "merge_method": "SQUASH",
+            "max_entries_to_build": 10,
+            "min_entries_to_merge": 1,
+            "max_entries_to_merge": 5,
+            "min_entries_to_merge_wait_minutes": 5,
+            "grouping_strategy": "HEADGREEN",
+            "check_response_timeout_minutes": 60
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8hzgDtX5A",
+      "created_at": "2026-04-25T17:15:36.605-07:00",
+      "updated_at": "2026-08-19T19:21:32.166-07:00",
+      "bypass_actors": [
+        {
+          "actor_id": 5,
+          "actor_type": "RepositoryRole",
+          "bypass_mode": "pull_request"
+        }
+      ],
+      "current_user_can_bypass": "pull_requests_only",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Nestor/rulesets/15556496"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Nestor/rules/15556496"
+        }
+      }
+    },
+    {
+      "id": 18221119,
+      "name": "homeric-main-extras",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Nestor",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "refs/heads/main"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "All Build/Test Checks",
+                "integration_id": 15368
+              },
+              {
+                "context": "All Static Analysis Checks",
+                "integration_id": 15368
+              },
+              {
+                "context": "All Coverage Checks",
+                "integration_id": 15368
+              },
+              {
+                "context": "branch-protection-drift",
+                "integration_id": 15368
+              }
+            ]
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8hzgEWCD8",
+      "created_at": "2026-06-27T23:41:14.708-07:00",
+      "updated_at": "2026-06-27T23:41:14.744-07:00",
+      "bypass_actors": [],
+      "current_user_can_bypass": "never",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Nestor/rulesets/18221119"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Nestor/rules/18221119"
+        }
+      }
+    }
+  ],
+  "api_captures": {
+    "rulesets_including_parents": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Nestor/rulesets?includes_parents=true&per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:50Z",
+          "etag": "W/\"7ece2937b1df62c402eda5147f6b58203ada16424da2c67fb028d2033e150401\"",
+          "request_id": "C0A8:1362FE:2A52175:2C016B4:6A90B31A",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "id": 15556496,
+              "name": "homeric-main-baseline",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Nestor",
+              "enforcement": "active",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8hzgDtX5A",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Nestor/rulesets/15556496"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Nestor/rules/15556496"
+                }
+              },
+              "created_at": "2026-04-25T17:15:36.605-07:00",
+              "updated_at": "2026-08-19T19:21:32.166-07:00"
+            },
+            {
+              "id": 18221119,
+              "name": "homeric-main-extras",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Nestor",
+              "enforcement": "active",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8hzgEWCD8",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Nestor/rulesets/18221119"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Nestor/rules/18221119"
+                }
+              },
+              "created_at": "2026-06-27T23:41:14.708-07:00",
+              "updated_at": "2026-06-27T23:41:14.744-07:00"
+            }
+          ]
+        }
+      ]
+    },
+    "ruleset_details": {
+      "method": "GET",
+      "responses": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Nestor/rulesets/15556496",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:50Z",
+          "etag": "W/\"abc7150bd3773ab349f466b27adce66e1a9e6ab1fa0956db126d8bfb6fbcf4d0\"",
+          "request_id": "1ABA:EA9C:2B80E96:2D2FF41:6A90B31A",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 15556496,
+            "name": "homeric-main-baseline",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Nestor",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "refs/heads/main"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "deletion"
+              },
+              {
+                "type": "required_signatures"
+              },
+              {
+                "type": "pull_request",
+                "parameters": {
+                  "required_approving_review_count": 0,
+                  "dismiss_stale_reviews_on_push": false,
+                  "required_reviewers": [],
+                  "require_code_owner_review": false,
+                  "dismissal_restriction": {
+                    "enabled": false,
+                    "allowed_actors": []
+                  },
+                  "require_last_push_approval": false,
+                  "required_review_thread_resolution": true,
+                  "require_extra_approval_for_unattributed_changes": true,
+                  "allowed_merge_methods": [
+                    "squash"
+                  ]
+                }
+              },
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "do_not_enforce_on_create": false,
+                  "required_status_checks": [
+                    {
+                      "context": "lint",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "unit-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "integration-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/dependency-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/secrets-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "build",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "schema-validation",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "deps/version-sync",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "test",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "package",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "install",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "release",
+                      "integration_id": 15368
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "required_linear_history"
+              },
+              {
+                "type": "non_fast_forward"
+              },
+              {
+                "type": "merge_queue",
+                "parameters": {
+                  "merge_method": "SQUASH",
+                  "max_entries_to_build": 10,
+                  "min_entries_to_merge": 1,
+                  "max_entries_to_merge": 5,
+                  "min_entries_to_merge_wait_minutes": 5,
+                  "grouping_strategy": "HEADGREEN",
+                  "check_response_timeout_minutes": 60
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8hzgDtX5A",
+            "created_at": "2026-04-25T17:15:36.605-07:00",
+            "updated_at": "2026-08-19T19:21:32.166-07:00",
+            "bypass_actors": [
+              {
+                "actor_id": 5,
+                "actor_type": "RepositoryRole",
+                "bypass_mode": "pull_request"
+              }
+            ],
+            "current_user_can_bypass": "pull_requests_only",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Nestor/rulesets/15556496"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Nestor/rules/15556496"
+              }
+            }
+          }
+        },
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Nestor/rulesets/18221119",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:51Z",
+          "etag": "W/\"3b548b84e38b3337e54ae487297316b5504f42cea582c487dfb3ff6212063b9e\"",
+          "request_id": "71E1:B1D6F:2AB6511:2C64CA7:6A90B31B",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 18221119,
+            "name": "homeric-main-extras",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Nestor",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "refs/heads/main"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "do_not_enforce_on_create": false,
+                  "required_status_checks": [
+                    {
+                      "context": "All Build/Test Checks",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "All Static Analysis Checks",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "All Coverage Checks",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "branch-protection-drift",
+                      "integration_id": 15368
+                    }
+                  ]
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8hzgEWCD8",
+            "created_at": "2026-06-27T23:41:14.708-07:00",
+            "updated_at": "2026-06-27T23:41:14.744-07:00",
+            "bypass_actors": [],
+            "current_user_can_bypass": "never",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Nestor/rulesets/18221119"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Nestor/rules/18221119"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "effective_default_branch_rules": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Nestor/rules/branches/main?per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:51Z",
+          "etag": "W/\"72c0ee9edde4e84b8ad799caeadc95afd7d198a6ab662097dd9bb3fdde24746b\"",
+          "request_id": "D0EA:B1D6F:2AB665B:2C64DF4:6A90B31B",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "type": "deletion",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Nestor",
+              "ruleset_id": 15556496
+            },
+            {
+              "type": "required_signatures",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Nestor",
+              "ruleset_id": 15556496
+            },
+            {
+              "type": "pull_request",
+              "parameters": {
+                "required_approving_review_count": 0,
+                "dismiss_stale_reviews_on_push": false,
+                "required_reviewers": [],
+                "require_code_owner_review": false,
+                "dismissal_restriction": {
+                  "enabled": false,
+                  "allowed_actors": []
+                },
+                "require_last_push_approval": false,
+                "required_review_thread_resolution": true,
+                "require_extra_approval_for_unattributed_changes": true,
+                "allowed_merge_methods": [
+                  "squash"
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Nestor",
+              "ruleset_id": 15556496
+            },
+            {
+              "type": "required_status_checks",
+              "parameters": {
+                "strict_required_status_checks_policy": false,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [
+                  {
+                    "context": "lint",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "unit-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "integration-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/dependency-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/secrets-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "build",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "schema-validation",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "deps/version-sync",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "test",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "package",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "install",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "release",
+                    "integration_id": 15368
+                  }
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Nestor",
+              "ruleset_id": 15556496
+            },
+            {
+              "type": "required_linear_history",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Nestor",
+              "ruleset_id": 15556496
+            },
+            {
+              "type": "non_fast_forward",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Nestor",
+              "ruleset_id": 15556496
+            },
+            {
+              "type": "merge_queue",
+              "parameters": {
+                "merge_method": "SQUASH",
+                "max_entries_to_build": 10,
+                "min_entries_to_merge": 1,
+                "max_entries_to_merge": 5,
+                "min_entries_to_merge_wait_minutes": 5,
+                "grouping_strategy": "HEADGREEN",
+                "check_response_timeout_minutes": 60
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Nestor",
+              "ruleset_id": 15556496
+            },
+            {
+              "type": "required_status_checks",
+              "parameters": {
+                "strict_required_status_checks_policy": false,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [
+                  {
+                    "context": "All Build/Test Checks",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "All Static Analysis Checks",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "All Coverage Checks",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "branch-protection-drift",
+                    "integration_id": 15368
+                  }
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Nestor",
+              "ruleset_id": 18221119
+            }
+          ]
+        }
+      ]
+    },
+    "classic_branch_protection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Nestor/branches/main/protection",
+      "status": 200,
+      "captured_at": "2026-08-27T21:58:52Z",
+      "etag": "W/\"a0cdc1a4b5f6791a88ab2bd8659396b50ac031348f5729241f1c9939ea21d52b\"",
+      "request_id": "1632:2C8ED:2A70F36:2C1FE33:6A90B31B",
+      "api_version": "2022-11-28",
+      "response": {
+        "url": "https://api.github.com/repos/HomericIntelligence/Nestor/branches/main/protection",
+        "required_pull_request_reviews": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Nestor/branches/main/protection/required_pull_request_reviews",
+          "dismiss_stale_reviews": false,
+          "require_code_owner_reviews": false,
+          "require_last_push_approval": false,
+          "required_approving_review_count": 0
+        },
+        "required_signatures": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Nestor/branches/main/protection/required_signatures",
+          "enabled": false
+        },
+        "enforce_admins": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Nestor/branches/main/protection/enforce_admins",
+          "enabled": false
+        },
+        "required_linear_history": {
+          "enabled": false
+        },
+        "allow_force_pushes": {
+          "enabled": false
+        },
+        "allow_deletions": {
+          "enabled": false
+        },
+        "block_creations": {
+          "enabled": false
+        },
+        "required_conversation_resolution": {
+          "enabled": false
+        },
+        "lock_branch": {
+          "enabled": false
+        },
+        "allow_fork_syncing": {
+          "enabled": false
+        }
+      }
+    },
+    "repository_policy_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Nestor",
+      "status": 200,
+      "captured_at": "2026-08-27T23:14:03Z",
+      "etag": "W/\"3749b9b268d82c617cb4efc5d3e2a52413938171ce1e9107615f2a585bc1ecd0\"",
+      "request_id": "2A70:1515BB:8CD664:A845F6:6A90C4BB",
+      "api_version": "2022-11-28",
+      "response": {
+        "allow_auto_merge": true,
+        "allow_merge_commit": false,
+        "allow_rebase_merge": false,
+        "allow_squash_merge": true,
+        "allow_update_branch": true,
+        "default_branch": "main",
+        "delete_branch_on_merge": true,
+        "full_name": "HomericIntelligence/Nestor",
+        "web_commit_signoff_required": true
+      }
+    },
+    "default_branch_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Nestor/branches/main",
+      "status": 200,
+      "captured_at": "2026-08-27T23:14:04Z",
+      "etag": "W/\"5ae85bcb89f68e72ee56ef7b9700cf4d488a0ea15f09b52abc49539b892504a9\"",
+      "request_id": "B55C:152D21:8ACD31:A649A2:6A90C4BB",
+      "api_version": "2022-11-28",
+      "response": {
+        "commit": {
+          "sha": "6445688c1c27e3d984bde074cb7168a02856f6fa"
+        },
+        "name": "main"
+      }
+    }
+  }
+}

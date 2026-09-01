@@ -1,0 +1,746 @@
+{
+  "schema_version": 2,
+  "repository": "HomericIntelligence/Charybdis",
+  "provenance": {
+    "capture_started_at": "2026-08-27T21:58:19Z",
+    "captured_at": "2026-08-27T21:59:08Z",
+    "capture_id": "fleet-policy-20260827T215908Z",
+    "api_version": "2022-11-28",
+    "main_sha": "1fe0457a6f74e302d5e34ea5c15f1d72135238cf",
+    "repository_api": "https://api.github.com/repos/HomericIntelligence/Charybdis",
+    "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Charybdis/branches/main",
+    "ruleset_api": [
+      "https://api.github.com/repos/HomericIntelligence/Charybdis/rulesets/15556497",
+      "https://api.github.com/repos/HomericIntelligence/Charybdis/rulesets/18221123"
+    ],
+    "capture_source": "live GitHub REST readback",
+    "supplemental_capture": {
+      "capture_id": "fleet-policy-settings-20260827T231355Z",
+      "capture_started_at": "2026-08-27T23:13:55Z",
+      "captured_at": "2026-08-27T23:14:08Z",
+      "capture_source": "live GitHub REST response projections"
+    }
+  },
+  "repository_settings": {
+    "allow_auto_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "allow_squash_merge": true,
+    "allow_update_branch": true,
+    "default_branch": "main",
+    "delete_branch_on_merge": true,
+    "full_name": "HomericIntelligence/Charybdis",
+    "web_commit_signoff_required": true
+  },
+  "rulesets": [
+    {
+      "id": 15556497,
+      "name": "homeric-main-baseline",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Charybdis",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "refs/heads/main"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "required_signatures"
+        },
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": false,
+            "required_reviewers": [],
+            "require_code_owner_review": false,
+            "dismissal_restriction": {
+              "enabled": false,
+              "allowed_actors": []
+            },
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": true,
+            "require_extra_approval_for_unattributed_changes": true,
+            "allowed_merge_methods": [
+              "squash"
+            ]
+          }
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "lint",
+                "integration_id": 15368
+              },
+              {
+                "context": "unit-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "integration-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/dependency-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/secrets-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "build",
+                "integration_id": 15368
+              },
+              {
+                "context": "schema-validation",
+                "integration_id": 15368
+              },
+              {
+                "context": "deps/version-sync",
+                "integration_id": 15368
+              },
+              {
+                "context": "test",
+                "integration_id": 15368
+              },
+              {
+                "context": "package",
+                "integration_id": 15368
+              },
+              {
+                "context": "install",
+                "integration_id": 15368
+              },
+              {
+                "context": "release",
+                "integration_id": 15368
+              }
+            ]
+          }
+        },
+        {
+          "type": "required_linear_history"
+        },
+        {
+          "type": "non_fast_forward"
+        },
+        {
+          "type": "merge_queue",
+          "parameters": {
+            "merge_method": "SQUASH",
+            "max_entries_to_build": 10,
+            "min_entries_to_merge": 1,
+            "max_entries_to_merge": 5,
+            "min_entries_to_merge_wait_minutes": 5,
+            "grouping_strategy": "HEADGREEN",
+            "check_response_timeout_minutes": 60
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8qzgDtX5E",
+      "created_at": "2026-04-25T17:15:37.476-07:00",
+      "updated_at": "2026-08-19T19:21:13.259-07:00",
+      "bypass_actors": [
+        {
+          "actor_id": 5,
+          "actor_type": "RepositoryRole",
+          "bypass_mode": "pull_request"
+        }
+      ],
+      "current_user_can_bypass": "pull_requests_only",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Charybdis/rulesets/15556497"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Charybdis/rules/15556497"
+        }
+      }
+    },
+    {
+      "id": 18221123,
+      "name": "homeric-main-extras",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Charybdis",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "refs/heads/main"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "typecheck",
+                "integration_id": 15368
+              },
+              {
+                "context": "All Build/Test Checks",
+                "integration_id": 15368
+              },
+              {
+                "context": "All Static Analysis Checks",
+                "integration_id": 15368
+              },
+              {
+                "context": "All Coverage Checks",
+                "integration_id": 15368
+              }
+            ]
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8qzgEWCEM",
+      "created_at": "2026-06-27T23:41:26.266-07:00",
+      "updated_at": "2026-06-27T23:41:26.305-07:00",
+      "bypass_actors": [],
+      "current_user_can_bypass": "never",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Charybdis/rulesets/18221123"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Charybdis/rules/18221123"
+        }
+      }
+    }
+  ],
+  "api_captures": {
+    "rulesets_including_parents": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Charybdis/rulesets?includes_parents=true&per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:36Z",
+          "etag": "W/\"755b4c0615aad01342288adea857751b6534f6bba7188e95741432d34e00275c\"",
+          "request_id": "FB15:B1D6F:2AB34DA:2C61AAE:6A90B30C",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "id": 15556497,
+              "name": "homeric-main-baseline",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Charybdis",
+              "enforcement": "active",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8qzgDtX5E",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Charybdis/rulesets/15556497"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Charybdis/rules/15556497"
+                }
+              },
+              "created_at": "2026-04-25T17:15:37.476-07:00",
+              "updated_at": "2026-08-19T19:21:13.259-07:00"
+            },
+            {
+              "id": 18221123,
+              "name": "homeric-main-extras",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Charybdis",
+              "enforcement": "active",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8qzgEWCEM",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Charybdis/rulesets/18221123"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Charybdis/rules/18221123"
+                }
+              },
+              "created_at": "2026-06-27T23:41:26.266-07:00",
+              "updated_at": "2026-06-27T23:41:26.305-07:00"
+            }
+          ]
+        }
+      ]
+    },
+    "ruleset_details": {
+      "method": "GET",
+      "responses": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Charybdis/rulesets/15556497",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:36Z",
+          "etag": "W/\"f959a41e69ae34b3069049b888defcb0f817b188a7080dac603ae050a0c8b9c3\"",
+          "request_id": "828E:360044:2AB1CDC:2C6043F:6A90B30C",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 15556497,
+            "name": "homeric-main-baseline",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Charybdis",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "refs/heads/main"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "deletion"
+              },
+              {
+                "type": "required_signatures"
+              },
+              {
+                "type": "pull_request",
+                "parameters": {
+                  "required_approving_review_count": 0,
+                  "dismiss_stale_reviews_on_push": false,
+                  "required_reviewers": [],
+                  "require_code_owner_review": false,
+                  "dismissal_restriction": {
+                    "enabled": false,
+                    "allowed_actors": []
+                  },
+                  "require_last_push_approval": false,
+                  "required_review_thread_resolution": true,
+                  "require_extra_approval_for_unattributed_changes": true,
+                  "allowed_merge_methods": [
+                    "squash"
+                  ]
+                }
+              },
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "do_not_enforce_on_create": false,
+                  "required_status_checks": [
+                    {
+                      "context": "lint",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "unit-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "integration-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/dependency-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/secrets-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "build",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "schema-validation",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "deps/version-sync",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "test",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "package",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "install",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "release",
+                      "integration_id": 15368
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "required_linear_history"
+              },
+              {
+                "type": "non_fast_forward"
+              },
+              {
+                "type": "merge_queue",
+                "parameters": {
+                  "merge_method": "SQUASH",
+                  "max_entries_to_build": 10,
+                  "min_entries_to_merge": 1,
+                  "max_entries_to_merge": 5,
+                  "min_entries_to_merge_wait_minutes": 5,
+                  "grouping_strategy": "HEADGREEN",
+                  "check_response_timeout_minutes": 60
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8qzgDtX5E",
+            "created_at": "2026-04-25T17:15:37.476-07:00",
+            "updated_at": "2026-08-19T19:21:13.259-07:00",
+            "bypass_actors": [
+              {
+                "actor_id": 5,
+                "actor_type": "RepositoryRole",
+                "bypass_mode": "pull_request"
+              }
+            ],
+            "current_user_can_bypass": "pull_requests_only",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Charybdis/rulesets/15556497"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Charybdis/rules/15556497"
+              }
+            }
+          }
+        },
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Charybdis/rulesets/18221123",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:37Z",
+          "etag": "W/\"8854679b7e5e15c4feb6ad914b4ffc8903298732be16888634d784bbd55f8951\"",
+          "request_id": "2963:1362FE:2A4F70E:2BFEACC:6A90B30C",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 18221123,
+            "name": "homeric-main-extras",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Charybdis",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "refs/heads/main"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "do_not_enforce_on_create": false,
+                  "required_status_checks": [
+                    {
+                      "context": "typecheck",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "All Build/Test Checks",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "All Static Analysis Checks",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "All Coverage Checks",
+                      "integration_id": 15368
+                    }
+                  ]
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5HOR8qzgEWCEM",
+            "created_at": "2026-06-27T23:41:26.266-07:00",
+            "updated_at": "2026-06-27T23:41:26.305-07:00",
+            "bypass_actors": [],
+            "current_user_can_bypass": "never",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Charybdis/rulesets/18221123"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Charybdis/rules/18221123"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "effective_default_branch_rules": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Charybdis/rules/branches/main?per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:37Z",
+          "etag": "W/\"faaff014657fe00d74f419480f4de4205b92d6f9ecf631296791d63952b4fee6\"",
+          "request_id": "14BC:25F6D4:2BB8B4D:2D67198:6A90B30D",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "type": "deletion",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Charybdis",
+              "ruleset_id": 15556497
+            },
+            {
+              "type": "required_signatures",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Charybdis",
+              "ruleset_id": 15556497
+            },
+            {
+              "type": "pull_request",
+              "parameters": {
+                "required_approving_review_count": 0,
+                "dismiss_stale_reviews_on_push": false,
+                "required_reviewers": [],
+                "require_code_owner_review": false,
+                "dismissal_restriction": {
+                  "enabled": false,
+                  "allowed_actors": []
+                },
+                "require_last_push_approval": false,
+                "required_review_thread_resolution": true,
+                "require_extra_approval_for_unattributed_changes": true,
+                "allowed_merge_methods": [
+                  "squash"
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Charybdis",
+              "ruleset_id": 15556497
+            },
+            {
+              "type": "required_status_checks",
+              "parameters": {
+                "strict_required_status_checks_policy": false,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [
+                  {
+                    "context": "lint",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "unit-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "integration-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/dependency-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/secrets-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "build",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "schema-validation",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "deps/version-sync",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "test",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "package",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "install",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "release",
+                    "integration_id": 15368
+                  }
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Charybdis",
+              "ruleset_id": 15556497
+            },
+            {
+              "type": "required_linear_history",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Charybdis",
+              "ruleset_id": 15556497
+            },
+            {
+              "type": "non_fast_forward",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Charybdis",
+              "ruleset_id": 15556497
+            },
+            {
+              "type": "merge_queue",
+              "parameters": {
+                "merge_method": "SQUASH",
+                "max_entries_to_build": 10,
+                "min_entries_to_merge": 1,
+                "max_entries_to_merge": 5,
+                "min_entries_to_merge_wait_minutes": 5,
+                "grouping_strategy": "HEADGREEN",
+                "check_response_timeout_minutes": 60
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Charybdis",
+              "ruleset_id": 15556497
+            },
+            {
+              "type": "required_status_checks",
+              "parameters": {
+                "strict_required_status_checks_policy": false,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [
+                  {
+                    "context": "typecheck",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "All Build/Test Checks",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "All Static Analysis Checks",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "All Coverage Checks",
+                    "integration_id": 15368
+                  }
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Charybdis",
+              "ruleset_id": 18221123
+            }
+          ]
+        }
+      ]
+    },
+    "classic_branch_protection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Charybdis/branches/main/protection",
+      "status": 200,
+      "captured_at": "2026-08-27T21:58:37Z",
+      "etag": "W/\"0f834555fa824f2f74c8bf722acb592c9458f7d8c10396cc82c0a0eab8c58138\"",
+      "request_id": "744D:EA9C:2B7E290:2D2D1E9:6A90B30D",
+      "api_version": "2022-11-28",
+      "response": {
+        "url": "https://api.github.com/repos/HomericIntelligence/Charybdis/branches/main/protection",
+        "required_pull_request_reviews": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Charybdis/branches/main/protection/required_pull_request_reviews",
+          "dismiss_stale_reviews": false,
+          "require_code_owner_reviews": false,
+          "require_last_push_approval": false,
+          "required_approving_review_count": 0
+        },
+        "required_signatures": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Charybdis/branches/main/protection/required_signatures",
+          "enabled": false
+        },
+        "enforce_admins": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Charybdis/branches/main/protection/enforce_admins",
+          "enabled": false
+        },
+        "required_linear_history": {
+          "enabled": false
+        },
+        "allow_force_pushes": {
+          "enabled": false
+        },
+        "allow_deletions": {
+          "enabled": false
+        },
+        "block_creations": {
+          "enabled": false
+        },
+        "required_conversation_resolution": {
+          "enabled": true
+        },
+        "lock_branch": {
+          "enabled": false
+        },
+        "allow_fork_syncing": {
+          "enabled": false
+        }
+      }
+    },
+    "repository_policy_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Charybdis",
+      "status": 200,
+      "captured_at": "2026-08-27T23:13:58Z",
+      "etag": "W/\"3d7da7db66c8509b7255bf9060cb644ea67c26d530ea2aba2e532bb84b278543\"",
+      "request_id": "56A9:153E39:8855D4:A3CC43:6A90C4B6",
+      "api_version": "2022-11-28",
+      "response": {
+        "allow_auto_merge": true,
+        "allow_merge_commit": false,
+        "allow_rebase_merge": false,
+        "allow_squash_merge": true,
+        "allow_update_branch": true,
+        "default_branch": "main",
+        "delete_branch_on_merge": true,
+        "full_name": "HomericIntelligence/Charybdis",
+        "web_commit_signoff_required": true
+      }
+    },
+    "default_branch_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Charybdis/branches/main",
+      "status": 200,
+      "captured_at": "2026-08-27T23:13:59Z",
+      "etag": "W/\"e1a593c7445d74f69fa4c457b4d01c8282ea4527054c772897fd3e3f0dda5f9c\"",
+      "request_id": "097B:154204:8A868E:A5FE84:6A90C4B6",
+      "api_version": "2022-11-28",
+      "response": {
+        "commit": {
+          "sha": "1fe0457a6f74e302d5e34ea5c15f1d72135238cf"
+        },
+        "name": "main"
+      }
+    }
+  }
+}

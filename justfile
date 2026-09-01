@@ -340,7 +340,12 @@ lint-test-scripts:
 
 # Validate required-check workflows and repository-owned ruleset preservation (#386)
 test-merge-queue-readiness:
+    bash tests/github/merge-queue-readiness-portability.test.sh
     bash tests/github/merge-queue-readiness.test.sh
+    bash tests/github/apply-repo-rulesets.test.sh
+
+# Run only the repository-ruleset reconciliation safety contract (#475)
+test-repo-ruleset-apply:
     bash tests/github/apply-repo-rulesets.test.sh
 
 # Validate M1-M6 epic registration payloads against ADR-020 conventions (#468)
@@ -837,46 +842,25 @@ hermes-hub-logs SERVICE="":
 # GitHub Org Ruleset Management
 # ===========================================================================
 
-# Snapshot all first-party repos' current classic branch protection
-ruleset-backup:
-    mkdir -p configs/github/backups
-    ./tools/github/snapshot-protection.sh > "configs/github/backups/rulesets-$(date +%Y%m%d-%H%M%S).json"
-    @echo "Backup written."
+# Regenerate all tracked repository-ruleset payloads from the sole policy source
+repo-rulesets-render:
+    python3 tools/github/render-fleet-ruleset.py --write
 
-# Snapshot all first-party repos' classic protection to the canonical backup
-protection-snapshot:
-    mkdir -p configs/github/backups
-    ./tools/github/snapshot-protection.sh > configs/github/backups/branch-protection-pre-ruleset.json
-    @echo "Snapshot written to configs/github/backups/branch-protection-pre-ruleset.json"
-
-# Create or update the org-level ruleset (default: evaluate mode JSON)
-ruleset-apply FILE="configs/github/org-ruleset.json":
-    ./tools/github/apply-org-ruleset.sh "{{FILE}}"
-
-# Read-only eligible-fleet evaluate preview; Argus is audited and skipped
+# Read-only exact-fleet evaluate preview
 repo-rulesets-apply:
     ./tools/github/apply-repo-rulesets.sh --evaluate --all --dry-run
 
-# Explicit eligible-fleet activation; Argus is audited and skipped
-repo-rulesets-activate:
-    ./tools/github/apply-repo-rulesets.sh --active --all
+# Read-only exact active preview for a reviewed comma-separated pilot set
+repo-rulesets-preview REPOS:
+    ./tools/github/apply-repo-rulesets.sh --active --repos "{{REPOS}}" --dry-run
 
-# Validate the live org ruleset against the canonical JSON and print current enforcement + checks
-ruleset-validate:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    ORG=HomericIntelligence
-    NAME=homeric-main-baseline
-    live=$(gh api "orgs/$ORG/rulesets" --paginate --jq ".[] | select(.name == \"$NAME\")" 2>/dev/null || echo "null")
-    if [[ "$live" == "null" ]]; then
-      echo "ERROR: Ruleset '$NAME' not found in org." >&2
-      exit 1
-    fi
-    echo "Live ruleset enforcement: $(echo "$live" | jq -r '.enforcement')"
-    echo "Live required checks:"
-    echo "$live" | jq -r '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' 2>/dev/null || echo "  (none)"
-    echo "Canonical required checks (from file):"
-    jq -r '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' configs/github/org-ruleset.json
+# Pilot activation with fresh GitHub-verified proof and an operator-owned snapshot path
+repo-rulesets-activate-repos REPOS EVIDENCE SNAPSHOT:
+    RULESET_SNAPSHOT_DIR="{{SNAPSHOT}}" ./tools/github/apply-repo-rulesets.sh --active --repos "{{REPOS}}" --evidence-file "{{EVIDENCE}}"
+
+# Explicit exact-fleet activation after PR/merge-group/main gate proof
+repo-rulesets-activate EVIDENCE:
+    ./tools/github/apply-repo-rulesets.sh --active --all --evidence-file "{{EVIDENCE}}"
 
 # Assert each on-disk ruleset config keeps its intended enforcement value (offline check).
 #
@@ -896,8 +880,6 @@ ruleset-enforcement-check:
       [configs/github/repo-ruleset.json]=active
       [configs/github/repo-ruleset-active.json]=active
       [configs/github/repo-ruleset-evaluate.json]=evaluate
-      [configs/github/org-ruleset.json]=active
-      [configs/github/org-ruleset-active.json]=active
     )
     fail=0
     for f in "${!expected[@]}"; do
@@ -911,10 +893,6 @@ ruleset-enforcement-check:
     done
     [ "$fail" -eq 0 ] || { echo "FAILED: ruleset enforcement drift detected" >&2; exit 1; }
     echo "PASSED: all ruleset configs hold their intended enforcement"
-
-# Remove classic protection fleet-wide (requires confirmation and active rulesets)
-protection-remove-all:
-    ./tools/github/remove-classic-protection.sh --all
 
 # ===========================================================================
 # Code Quality audit (GitHub Code Quality preview → paid after GA 2026-07-20)

@@ -1,0 +1,670 @@
+{
+  "schema_version": 2,
+  "repository": "HomericIntelligence/Hephaestus",
+  "provenance": {
+    "capture_started_at": "2026-08-27T21:58:19Z",
+    "captured_at": "2026-08-27T21:59:08Z",
+    "capture_id": "fleet-policy-20260827T215908Z",
+    "api_version": "2022-11-28",
+    "main_sha": "10da5b23a60377c84ccc40fd474358248ce50bd2",
+    "repository_api": "https://api.github.com/repos/HomericIntelligence/Hephaestus",
+    "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Hephaestus/branches/main",
+    "ruleset_api": [
+      "https://api.github.com/repos/HomericIntelligence/Hephaestus/rulesets/19355873",
+      "https://api.github.com/repos/HomericIntelligence/Hephaestus/rulesets/15556494"
+    ],
+    "capture_source": "live GitHub REST readback",
+    "supplemental_capture": {
+      "capture_id": "fleet-policy-settings-20260827T231355Z",
+      "capture_started_at": "2026-08-27T23:13:55Z",
+      "captured_at": "2026-08-27T23:14:08Z",
+      "capture_source": "live GitHub REST response projections"
+    }
+  },
+  "repository_settings": {
+    "allow_auto_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "allow_squash_merge": true,
+    "allow_update_branch": true,
+    "default_branch": "main",
+    "delete_branch_on_merge": true,
+    "full_name": "HomericIntelligence/Hephaestus",
+    "web_commit_signoff_required": true
+  },
+  "rulesets": [
+    {
+      "id": 19355873,
+      "name": "Code Quality Copilot review for default branch",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Hephaestus",
+      "enforcement": "disabled",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "~DEFAULT_BRANCH"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "copilot_code_review",
+          "parameters": {
+            "review_on_push": true,
+            "review_draft_pull_requests": true
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5DDDRqzgEnWOE",
+      "created_at": "2026-07-21T00:01:44.624-07:00",
+      "updated_at": "2026-08-06T08:14:29.366-07:00",
+      "bypass_actors": [],
+      "current_user_can_bypass": "never",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Hephaestus/rulesets/19355873"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Hephaestus/rules/19355873"
+        }
+      }
+    },
+    {
+      "id": 15556494,
+      "name": "homeric-main-baseline",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Hephaestus",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "refs/heads/main"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "required_signatures"
+        },
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": false,
+            "required_reviewers": [],
+            "require_code_owner_review": false,
+            "dismissal_restriction": {
+              "enabled": false,
+              "allowed_actors": []
+            },
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": true,
+            "require_extra_approval_for_unattributed_changes": true,
+            "allowed_merge_methods": [
+              "squash"
+            ]
+          }
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "lint",
+                "integration_id": 15368
+              },
+              {
+                "context": "unit-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "integration-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/dependency-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/secrets-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "build",
+                "integration_id": 15368
+              },
+              {
+                "context": "schema-validation",
+                "integration_id": 15368
+              },
+              {
+                "context": "deps/version-sync",
+                "integration_id": 15368
+              },
+              {
+                "context": "pr-policy",
+                "integration_id": 15368
+              }
+            ]
+          }
+        },
+        {
+          "type": "required_linear_history"
+        },
+        {
+          "type": "non_fast_forward"
+        },
+        {
+          "type": "merge_queue",
+          "parameters": {
+            "merge_method": "SQUASH",
+            "max_entries_to_build": 10,
+            "min_entries_to_merge": 1,
+            "max_entries_to_merge": 5,
+            "min_entries_to_merge_wait_minutes": 5,
+            "grouping_strategy": "HEADGREEN",
+            "check_response_timeout_minutes": 180
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5DDDRqzgDtX44",
+      "created_at": "2026-04-25T17:15:34.681-07:00",
+      "updated_at": "2026-08-24T13:25:12.852-07:00",
+      "bypass_actors": [
+        {
+          "actor_id": 5,
+          "actor_type": "RepositoryRole",
+          "bypass_mode": "pull_request"
+        }
+      ],
+      "current_user_can_bypass": "pull_requests_only",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Hephaestus/rulesets/15556494"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Hephaestus/rules/15556494"
+        }
+      }
+    }
+  ],
+  "api_captures": {
+    "rulesets_including_parents": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Hephaestus/rulesets?includes_parents=true&per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:38Z",
+          "etag": "W/\"750c9803f2e5a8bade9c2e7104f23173e9087f623f17470856e74a77cffe2511\"",
+          "request_id": "899E:2C8ED:2A6E50F:2C1D265:6A90B30E",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "id": 19355873,
+              "name": "Code Quality Copilot review for default branch",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Hephaestus",
+              "enforcement": "disabled",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5DDDRqzgEnWOE",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Hephaestus/rulesets/19355873"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Hephaestus/rules/19355873"
+                }
+              },
+              "created_at": "2026-07-21T00:01:44.624-07:00",
+              "updated_at": "2026-08-06T08:14:29.366-07:00"
+            },
+            {
+              "id": 15556494,
+              "name": "homeric-main-baseline",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Hephaestus",
+              "enforcement": "active",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5DDDRqzgDtX44",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Hephaestus/rulesets/15556494"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Hephaestus/rules/15556494"
+                }
+              },
+              "created_at": "2026-04-25T17:15:34.681-07:00",
+              "updated_at": "2026-08-24T13:25:12.852-07:00"
+            }
+          ]
+        }
+      ]
+    },
+    "ruleset_details": {
+      "method": "GET",
+      "responses": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Hephaestus/rulesets/19355873",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:39Z",
+          "etag": "W/\"23261619a79909cd263eb41d52d44ff7a9f14aa59762961f1181baf7e416590f\"",
+          "request_id": "7FCA:360044:2AB2486:2C60C41:6A90B30E",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 19355873,
+            "name": "Code Quality Copilot review for default branch",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Hephaestus",
+            "enforcement": "disabled",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "~DEFAULT_BRANCH"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "copilot_code_review",
+                "parameters": {
+                  "review_on_push": true,
+                  "review_draft_pull_requests": true
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5DDDRqzgEnWOE",
+            "created_at": "2026-07-21T00:01:44.624-07:00",
+            "updated_at": "2026-08-06T08:14:29.366-07:00",
+            "bypass_actors": [],
+            "current_user_can_bypass": "never",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Hephaestus/rulesets/19355873"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Hephaestus/rules/19355873"
+              }
+            }
+          }
+        },
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Hephaestus/rulesets/15556494",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:39Z",
+          "etag": "W/\"f1578c58d98007eb549fd5ce9cb5910813be4331fa0acf5c8ac55050d81a8344\"",
+          "request_id": "1F7A:D653E:2BCA611:2D79408:6A90B30F",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 15556494,
+            "name": "homeric-main-baseline",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Hephaestus",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "refs/heads/main"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "deletion"
+              },
+              {
+                "type": "required_signatures"
+              },
+              {
+                "type": "pull_request",
+                "parameters": {
+                  "required_approving_review_count": 0,
+                  "dismiss_stale_reviews_on_push": false,
+                  "required_reviewers": [],
+                  "require_code_owner_review": false,
+                  "dismissal_restriction": {
+                    "enabled": false,
+                    "allowed_actors": []
+                  },
+                  "require_last_push_approval": false,
+                  "required_review_thread_resolution": true,
+                  "require_extra_approval_for_unattributed_changes": true,
+                  "allowed_merge_methods": [
+                    "squash"
+                  ]
+                }
+              },
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "do_not_enforce_on_create": false,
+                  "required_status_checks": [
+                    {
+                      "context": "lint",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "unit-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "integration-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/dependency-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/secrets-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "build",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "schema-validation",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "deps/version-sync",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "pr-policy",
+                      "integration_id": 15368
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "required_linear_history"
+              },
+              {
+                "type": "non_fast_forward"
+              },
+              {
+                "type": "merge_queue",
+                "parameters": {
+                  "merge_method": "SQUASH",
+                  "max_entries_to_build": 10,
+                  "min_entries_to_merge": 1,
+                  "max_entries_to_merge": 5,
+                  "min_entries_to_merge_wait_minutes": 5,
+                  "grouping_strategy": "HEADGREEN",
+                  "check_response_timeout_minutes": 180
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5DDDRqzgDtX44",
+            "created_at": "2026-04-25T17:15:34.681-07:00",
+            "updated_at": "2026-08-24T13:25:12.852-07:00",
+            "bypass_actors": [
+              {
+                "actor_id": 5,
+                "actor_type": "RepositoryRole",
+                "bypass_mode": "pull_request"
+              }
+            ],
+            "current_user_can_bypass": "pull_requests_only",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Hephaestus/rulesets/15556494"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Hephaestus/rules/15556494"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "effective_default_branch_rules": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Hephaestus/rules/branches/main?per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:39Z",
+          "etag": "W/\"f7532bb36d16d11446669073a20f46da32629b12fa9eac6ede62f55068d869e0\"",
+          "request_id": "79EF:2C8ED:2A6E88D:2C1D602:6A90B30F",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "type": "deletion",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Hephaestus",
+              "ruleset_id": 15556494
+            },
+            {
+              "type": "required_signatures",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Hephaestus",
+              "ruleset_id": 15556494
+            },
+            {
+              "type": "pull_request",
+              "parameters": {
+                "required_approving_review_count": 0,
+                "dismiss_stale_reviews_on_push": false,
+                "required_reviewers": [],
+                "require_code_owner_review": false,
+                "dismissal_restriction": {
+                  "enabled": false,
+                  "allowed_actors": []
+                },
+                "require_last_push_approval": false,
+                "required_review_thread_resolution": true,
+                "require_extra_approval_for_unattributed_changes": true,
+                "allowed_merge_methods": [
+                  "squash"
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Hephaestus",
+              "ruleset_id": 15556494
+            },
+            {
+              "type": "required_status_checks",
+              "parameters": {
+                "strict_required_status_checks_policy": false,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [
+                  {
+                    "context": "lint",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "unit-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "integration-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/dependency-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/secrets-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "build",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "schema-validation",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "deps/version-sync",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "pr-policy",
+                    "integration_id": 15368
+                  }
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Hephaestus",
+              "ruleset_id": 15556494
+            },
+            {
+              "type": "required_linear_history",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Hephaestus",
+              "ruleset_id": 15556494
+            },
+            {
+              "type": "non_fast_forward",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Hephaestus",
+              "ruleset_id": 15556494
+            },
+            {
+              "type": "merge_queue",
+              "parameters": {
+                "merge_method": "SQUASH",
+                "max_entries_to_build": 10,
+                "min_entries_to_merge": 1,
+                "max_entries_to_merge": 5,
+                "min_entries_to_merge_wait_minutes": 5,
+                "grouping_strategy": "HEADGREEN",
+                "check_response_timeout_minutes": 180
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Hephaestus",
+              "ruleset_id": 15556494
+            }
+          ]
+        }
+      ]
+    },
+    "classic_branch_protection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Hephaestus/branches/main/protection",
+      "status": 200,
+      "captured_at": "2026-08-27T21:58:40Z",
+      "etag": "W/\"33d962c4e550ffe36ce62b1ce7ec241731fc72d5621c450ea8bd0067a4d21366\"",
+      "request_id": "80D7:1FE865:3126C99:32D5536:6A90B310",
+      "api_version": "2022-11-28",
+      "response": {
+        "url": "https://api.github.com/repos/HomericIntelligence/Hephaestus/branches/main/protection",
+        "required_status_checks": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Hephaestus/branches/main/protection/required_status_checks",
+          "strict": false,
+          "contexts": [
+            "required-checks-gate",
+            "test (ubuntu-latest, 3.13, integration)",
+            "test (ubuntu-latest, 3.13, unit)"
+          ],
+          "contexts_url": "https://api.github.com/repos/HomericIntelligence/Hephaestus/branches/main/protection/required_status_checks/contexts",
+          "checks": [
+            {
+              "context": "required-checks-gate",
+              "app_id": 15368
+            },
+            {
+              "context": "test (ubuntu-latest, 3.13, integration)",
+              "app_id": 15368
+            },
+            {
+              "context": "test (ubuntu-latest, 3.13, unit)",
+              "app_id": 15368
+            }
+          ]
+        },
+        "required_pull_request_reviews": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Hephaestus/branches/main/protection/required_pull_request_reviews",
+          "dismiss_stale_reviews": false,
+          "require_code_owner_reviews": false,
+          "require_last_push_approval": false,
+          "required_approving_review_count": 0
+        },
+        "required_signatures": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Hephaestus/branches/main/protection/required_signatures",
+          "enabled": false
+        },
+        "enforce_admins": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Hephaestus/branches/main/protection/enforce_admins",
+          "enabled": true
+        },
+        "required_linear_history": {
+          "enabled": false
+        },
+        "allow_force_pushes": {
+          "enabled": false
+        },
+        "allow_deletions": {
+          "enabled": false
+        },
+        "block_creations": {
+          "enabled": false
+        },
+        "required_conversation_resolution": {
+          "enabled": true
+        },
+        "lock_branch": {
+          "enabled": false
+        },
+        "allow_fork_syncing": {
+          "enabled": false
+        }
+      }
+    },
+    "repository_policy_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Hephaestus",
+      "status": 200,
+      "captured_at": "2026-08-27T23:13:59Z",
+      "etag": "W/\"cc701af9dbf82440f8fd8809cc5459529427075c3557cefeddc4d150e6fb779e\"",
+      "request_id": "9C11:3DC3FC:8B09A7:A67AE0:6A90C4B7",
+      "api_version": "2022-11-28",
+      "response": {
+        "allow_auto_merge": true,
+        "allow_merge_commit": false,
+        "allow_rebase_merge": false,
+        "allow_squash_merge": true,
+        "allow_update_branch": true,
+        "default_branch": "main",
+        "delete_branch_on_merge": true,
+        "full_name": "HomericIntelligence/Hephaestus",
+        "web_commit_signoff_required": true
+      }
+    },
+    "default_branch_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Hephaestus/branches/main",
+      "status": 200,
+      "captured_at": "2026-08-27T23:13:59Z",
+      "etag": "W/\"eea80c76ce904b697b7a5b05bb2effc103f5bd62ae565ab1ac1b1cb627a31c3f\"",
+      "request_id": "10DD:150C6C:8A7A67:A5F666:6A90C4B7",
+      "api_version": "2022-11-28",
+      "response": {
+        "commit": {
+          "sha": "10da5b23a60377c84ccc40fd474358248ce50bd2"
+        },
+        "name": "main"
+      }
+    }
+  }
+}

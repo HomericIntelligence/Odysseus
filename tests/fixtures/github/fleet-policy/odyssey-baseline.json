@@ -1,0 +1,899 @@
+{
+  "schema_version": 2,
+  "repository": "HomericIntelligence/Odyssey",
+  "provenance": {
+    "capture_started_at": "2026-08-27T21:58:19Z",
+    "captured_at": "2026-08-27T21:59:08Z",
+    "capture_id": "fleet-policy-20260827T215908Z",
+    "api_version": "2022-11-28",
+    "main_sha": "d47074e8ee4eec06c6085315cc22ba4128b07b90",
+    "repository_api": "https://api.github.com/repos/HomericIntelligence/Odyssey",
+    "default_branch_api": "https://api.github.com/repos/HomericIntelligence/Odyssey/branches/main",
+    "ruleset_api": [
+      "https://api.github.com/repos/HomericIntelligence/Odyssey/rulesets/15556491",
+      "https://api.github.com/repos/HomericIntelligence/Odyssey/rulesets/18221116"
+    ],
+    "capture_source": "live GitHub REST readback",
+    "supplemental_capture": {
+      "capture_id": "fleet-policy-settings-20260827T231355Z",
+      "capture_started_at": "2026-08-27T23:13:55Z",
+      "captured_at": "2026-08-27T23:14:08Z",
+      "capture_source": "live GitHub REST response projections"
+    }
+  },
+  "repository_settings": {
+    "allow_auto_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "allow_squash_merge": true,
+    "allow_update_branch": true,
+    "default_branch": "main",
+    "delete_branch_on_merge": true,
+    "full_name": "HomericIntelligence/Odyssey",
+    "web_commit_signoff_required": true
+  },
+  "rulesets": [
+    {
+      "id": 15556491,
+      "name": "homeric-main-baseline",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Odyssey",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "refs/heads/main"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "required_signatures"
+        },
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": false,
+            "required_reviewers": [],
+            "require_code_owner_review": false,
+            "dismissal_restriction": {
+              "enabled": false,
+              "allowed_actors": []
+            },
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": true,
+            "require_extra_approval_for_unattributed_changes": true,
+            "allowed_merge_methods": [
+              "squash"
+            ]
+          }
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "lint",
+                "integration_id": 15368
+              },
+              {
+                "context": "unit-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "integration-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/dependency-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/secrets-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "build",
+                "integration_id": 15368
+              },
+              {
+                "context": "schema-validation",
+                "integration_id": 15368
+              },
+              {
+                "context": "deps/version-sync",
+                "integration_id": 15368
+              },
+              {
+                "context": "test",
+                "integration_id": 15368
+              },
+              {
+                "context": "package",
+                "integration_id": 15368
+              },
+              {
+                "context": "install",
+                "integration_id": 15368
+              },
+              {
+                "context": "release",
+                "integration_id": 15368
+              }
+            ]
+          }
+        },
+        {
+          "type": "required_linear_history"
+        },
+        {
+          "type": "non_fast_forward"
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5A6drPzgDtX4s",
+      "created_at": "2026-04-25T17:15:32.232-07:00",
+      "updated_at": "2026-08-10T06:59:02.813-07:00",
+      "bypass_actors": [
+        {
+          "actor_id": 5,
+          "actor_type": "RepositoryRole",
+          "bypass_mode": "pull_request"
+        }
+      ],
+      "current_user_can_bypass": "pull_requests_only",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Odyssey/rulesets/15556491"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Odyssey/rules/15556491"
+        }
+      }
+    },
+    {
+      "id": 18221116,
+      "name": "homeric-main-extras",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/Odyssey",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "refs/heads/main"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "pre-commit",
+                "integration_id": 15368
+              },
+              {
+                "context": "Mojo Package Compilation",
+                "integration_id": 15368
+              },
+              {
+                "context": "Code Quality Analysis",
+                "integration_id": 15368
+              },
+              {
+                "context": "Gradient Checking Tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "Data Utilities Test Suite",
+                "integration_id": 15368
+              },
+              {
+                "context": "Python Tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "Test Coverage Validation",
+                "integration_id": 15368
+              },
+              {
+                "context": "Test Metrics",
+                "integration_id": 15368
+              },
+              {
+                "context": "Audit Shared Links",
+                "integration_id": 15368
+              },
+              {
+                "context": "Mojo Syntax Validation",
+                "integration_id": 15368
+              },
+              {
+                "context": "lint-notebooks",
+                "integration_id": 15368
+              },
+              {
+                "context": "mypy",
+                "integration_id": 15368
+              },
+              {
+                "context": "python-syntax",
+                "integration_id": 15368
+              },
+              {
+                "context": "validate-notebooks",
+                "integration_id": 15368
+              },
+              {
+                "context": "Build Validation",
+                "integration_id": 15368
+              },
+              {
+                "context": "Gradient Coverage Report",
+                "integration_id": 15368
+              },
+              {
+                "context": "Core Layers",
+                "integration_id": 15368
+              },
+              {
+                "context": "Other Workflow Property Checks",
+                "integration_id": 15368
+              },
+              {
+                "context": "Security Workflow Property Checks",
+                "integration_id": 15368
+              },
+              {
+                "context": "Test Report",
+                "integration_id": 15368
+              }
+            ]
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5A6drPzgEWCDw",
+      "created_at": "2026-06-27T23:41:11.344-07:00",
+      "updated_at": "2026-07-29T19:31:27.886-07:00",
+      "bypass_actors": [],
+      "current_user_can_bypass": "never",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/Odyssey/rulesets/18221116"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/Odyssey/rules/18221116"
+        }
+      }
+    }
+  ],
+  "api_captures": {
+    "rulesets_including_parents": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Odyssey/rulesets?includes_parents=true&per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:54Z",
+          "etag": "W/\"e543c69a7b8ac7c7939be4d54061dc19598a438c5c75daeee3782dbabeabedba\"",
+          "request_id": "38A5:1FE865:312A0BD:32D8AFE:6A90B31E",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "id": 15556491,
+              "name": "homeric-main-baseline",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Odyssey",
+              "enforcement": "active",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5A6drPzgDtX4s",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Odyssey/rulesets/15556491"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Odyssey/rules/15556491"
+                }
+              },
+              "created_at": "2026-04-25T17:15:32.232-07:00",
+              "updated_at": "2026-08-10T06:59:02.813-07:00"
+            },
+            {
+              "id": 18221116,
+              "name": "homeric-main-extras",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/Odyssey",
+              "enforcement": "active",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5A6drPzgEWCDw",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/Odyssey/rulesets/18221116"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/Odyssey/rules/18221116"
+                }
+              },
+              "created_at": "2026-06-27T23:41:11.344-07:00",
+              "updated_at": "2026-07-29T19:31:27.886-07:00"
+            }
+          ]
+        }
+      ]
+    },
+    "ruleset_details": {
+      "method": "GET",
+      "responses": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Odyssey/rulesets/15556491",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:55Z",
+          "etag": "W/\"39d7c92172b974cb3fc2633275924f913952195a374b8a07b10513b1525be6c9\"",
+          "request_id": "22BA:36BA76:2AC03D5:2C6FB01:6A90B31E",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 15556491,
+            "name": "homeric-main-baseline",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Odyssey",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "refs/heads/main"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "deletion"
+              },
+              {
+                "type": "required_signatures"
+              },
+              {
+                "type": "pull_request",
+                "parameters": {
+                  "required_approving_review_count": 0,
+                  "dismiss_stale_reviews_on_push": false,
+                  "required_reviewers": [],
+                  "require_code_owner_review": false,
+                  "dismissal_restriction": {
+                    "enabled": false,
+                    "allowed_actors": []
+                  },
+                  "require_last_push_approval": false,
+                  "required_review_thread_resolution": true,
+                  "require_extra_approval_for_unattributed_changes": true,
+                  "allowed_merge_methods": [
+                    "squash"
+                  ]
+                }
+              },
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "do_not_enforce_on_create": false,
+                  "required_status_checks": [
+                    {
+                      "context": "lint",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "unit-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "integration-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/dependency-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/secrets-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "build",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "schema-validation",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "deps/version-sync",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "test",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "package",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "install",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "release",
+                      "integration_id": 15368
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "required_linear_history"
+              },
+              {
+                "type": "non_fast_forward"
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5A6drPzgDtX4s",
+            "created_at": "2026-04-25T17:15:32.232-07:00",
+            "updated_at": "2026-08-10T06:59:02.813-07:00",
+            "bypass_actors": [
+              {
+                "actor_id": 5,
+                "actor_type": "RepositoryRole",
+                "bypass_mode": "pull_request"
+              }
+            ],
+            "current_user_can_bypass": "pull_requests_only",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Odyssey/rulesets/15556491"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Odyssey/rules/15556491"
+              }
+            }
+          }
+        },
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Odyssey/rulesets/18221116",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:55Z",
+          "etag": "W/\"4f3b46603dfdc19113b724ae209f1c6a885ef86e4769e3b02cf516e10f57e336\"",
+          "request_id": "C1E1:1CB60F:2C214BB:2DD008A:6A90B31F",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 18221116,
+            "name": "homeric-main-extras",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/Odyssey",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "refs/heads/main"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "do_not_enforce_on_create": false,
+                  "required_status_checks": [
+                    {
+                      "context": "pre-commit",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "Mojo Package Compilation",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "Code Quality Analysis",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "Gradient Checking Tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "Data Utilities Test Suite",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "Python Tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "Test Coverage Validation",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "Test Metrics",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "Audit Shared Links",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "Mojo Syntax Validation",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "lint-notebooks",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "mypy",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "python-syntax",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "validate-notebooks",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "Build Validation",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "Gradient Coverage Report",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "Core Layers",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "Other Workflow Property Checks",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "Security Workflow Property Checks",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "Test Report",
+                      "integration_id": 15368
+                    }
+                  ]
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5A6drPzgEWCDw",
+            "created_at": "2026-06-27T23:41:11.344-07:00",
+            "updated_at": "2026-07-29T19:31:27.886-07:00",
+            "bypass_actors": [],
+            "current_user_can_bypass": "never",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/Odyssey/rulesets/18221116"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/Odyssey/rules/18221116"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "effective_default_branch_rules": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/Odyssey/rules/branches/main?per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:55Z",
+          "etag": "W/\"6040ce3a1b478a5a3e264c5c2ab887e4ebc9c9f13cec5cfe1a8990ca0688ac60\"",
+          "request_id": "BFD3:360044:2AB5D63:2C646F3:6A90B31F",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "type": "deletion",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Odyssey",
+              "ruleset_id": 15556491
+            },
+            {
+              "type": "required_signatures",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Odyssey",
+              "ruleset_id": 15556491
+            },
+            {
+              "type": "pull_request",
+              "parameters": {
+                "required_approving_review_count": 0,
+                "dismiss_stale_reviews_on_push": false,
+                "required_reviewers": [],
+                "require_code_owner_review": false,
+                "dismissal_restriction": {
+                  "enabled": false,
+                  "allowed_actors": []
+                },
+                "require_last_push_approval": false,
+                "required_review_thread_resolution": true,
+                "require_extra_approval_for_unattributed_changes": true,
+                "allowed_merge_methods": [
+                  "squash"
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Odyssey",
+              "ruleset_id": 15556491
+            },
+            {
+              "type": "required_status_checks",
+              "parameters": {
+                "strict_required_status_checks_policy": false,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [
+                  {
+                    "context": "lint",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "unit-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "integration-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/dependency-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/secrets-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "build",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "schema-validation",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "deps/version-sync",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "test",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "package",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "install",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "release",
+                    "integration_id": 15368
+                  }
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Odyssey",
+              "ruleset_id": 15556491
+            },
+            {
+              "type": "required_linear_history",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Odyssey",
+              "ruleset_id": 15556491
+            },
+            {
+              "type": "non_fast_forward",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Odyssey",
+              "ruleset_id": 15556491
+            },
+            {
+              "type": "required_status_checks",
+              "parameters": {
+                "strict_required_status_checks_policy": false,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [
+                  {
+                    "context": "pre-commit",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "Mojo Package Compilation",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "Code Quality Analysis",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "Gradient Checking Tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "Data Utilities Test Suite",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "Python Tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "Test Coverage Validation",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "Test Metrics",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "Audit Shared Links",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "Mojo Syntax Validation",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "lint-notebooks",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "mypy",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "python-syntax",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "validate-notebooks",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "Build Validation",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "Gradient Coverage Report",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "Core Layers",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "Other Workflow Property Checks",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "Security Workflow Property Checks",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "Test Report",
+                    "integration_id": 15368
+                  }
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/Odyssey",
+              "ruleset_id": 18221116
+            }
+          ]
+        }
+      ]
+    },
+    "classic_branch_protection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Odyssey/branches/main/protection",
+      "status": 200,
+      "captured_at": "2026-08-27T21:58:56Z",
+      "etag": "W/\"ebeca6163cdf3ada49faa1a863cc2fba677c4b1363080db978951619b4f32619\"",
+      "request_id": "E176:1EEAA3:29713D4:2B210FB:6A90B320",
+      "api_version": "2022-11-28",
+      "response": {
+        "url": "https://api.github.com/repos/HomericIntelligence/Odyssey/branches/main/protection",
+        "required_pull_request_reviews": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Odyssey/branches/main/protection/required_pull_request_reviews",
+          "dismiss_stale_reviews": false,
+          "require_code_owner_reviews": false,
+          "require_last_push_approval": false,
+          "required_approving_review_count": 0
+        },
+        "required_signatures": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Odyssey/branches/main/protection/required_signatures",
+          "enabled": false
+        },
+        "enforce_admins": {
+          "url": "https://api.github.com/repos/HomericIntelligence/Odyssey/branches/main/protection/enforce_admins",
+          "enabled": false
+        },
+        "required_linear_history": {
+          "enabled": false
+        },
+        "allow_force_pushes": {
+          "enabled": false
+        },
+        "allow_deletions": {
+          "enabled": false
+        },
+        "block_creations": {
+          "enabled": false
+        },
+        "required_conversation_resolution": {
+          "enabled": true
+        },
+        "lock_branch": {
+          "enabled": false
+        },
+        "allow_fork_syncing": {
+          "enabled": false
+        }
+      }
+    },
+    "repository_policy_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Odyssey",
+      "status": 200,
+      "captured_at": "2026-08-27T23:14:05Z",
+      "etag": "W/\"6aad33f1a8a1be8cc91e376d9f6e38a4d3db847e2dadbc471fe867b8f2a85280\"",
+      "request_id": "B4B4:154204:8A8A39:A60301:6A90C4BC",
+      "api_version": "2022-11-28",
+      "response": {
+        "allow_auto_merge": true,
+        "allow_merge_commit": false,
+        "allow_rebase_merge": false,
+        "allow_squash_merge": true,
+        "allow_update_branch": true,
+        "default_branch": "main",
+        "delete_branch_on_merge": true,
+        "full_name": "HomericIntelligence/Odyssey",
+        "web_commit_signoff_required": true
+      }
+    },
+    "default_branch_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/Odyssey/branches/main",
+      "status": 200,
+      "captured_at": "2026-08-27T23:14:05Z",
+      "etag": "W/\"a64b0c2a21611bd02cefd319047bdadc2e90286fbea6129995a711f407c7fc58\"",
+      "request_id": "297B:3DDCD3:8BC4DE:A737A8:6A90C4BD",
+      "api_version": "2022-11-28",
+      "response": {
+        "commit": {
+          "sha": "d47074e8ee4eec06c6085315cc22ba4128b07b90"
+        },
+        "name": "main"
+      }
+    }
+  }
+}

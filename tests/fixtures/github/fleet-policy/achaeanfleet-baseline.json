@@ -1,0 +1,578 @@
+{
+  "schema_version": 2,
+  "repository": "HomericIntelligence/AchaeanFleet",
+  "provenance": {
+    "capture_started_at": "2026-08-27T21:58:19Z",
+    "captured_at": "2026-08-27T21:59:08Z",
+    "capture_id": "fleet-policy-20260827T215908Z",
+    "api_version": "2022-11-28",
+    "main_sha": "c90441359c9439b5646ff55b95872134dfb7b39f",
+    "repository_api": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet",
+    "default_branch_api": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/branches/main",
+    "ruleset_api": [
+      "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/rulesets/15556484"
+    ],
+    "capture_source": "live GitHub REST readback",
+    "supplemental_capture": {
+      "capture_id": "fleet-policy-settings-20260827T231355Z",
+      "capture_started_at": "2026-08-27T23:13:55Z",
+      "captured_at": "2026-08-27T23:14:08Z",
+      "capture_source": "live GitHub REST response projections"
+    }
+  },
+  "repository_settings": {
+    "allow_auto_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "allow_squash_merge": true,
+    "allow_update_branch": true,
+    "default_branch": "main",
+    "delete_branch_on_merge": true,
+    "full_name": "HomericIntelligence/AchaeanFleet",
+    "web_commit_signoff_required": true
+  },
+  "rulesets": [
+    {
+      "id": 15556484,
+      "name": "homeric-main-baseline",
+      "target": "branch",
+      "source_type": "Repository",
+      "source": "HomericIntelligence/AchaeanFleet",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "refs/heads/main"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "required_signatures"
+        },
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": false,
+            "required_reviewers": [],
+            "require_code_owner_review": false,
+            "dismissal_restriction": {
+              "enabled": false,
+              "allowed_actors": []
+            },
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": true,
+            "require_extra_approval_for_unattributed_changes": true,
+            "allowed_merge_methods": [
+              "squash"
+            ]
+          }
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "lint",
+                "integration_id": 15368
+              },
+              {
+                "context": "unit-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "integration-tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/dependency-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "security/secrets-scan",
+                "integration_id": 15368
+              },
+              {
+                "context": "build",
+                "integration_id": 15368
+              },
+              {
+                "context": "schema-validation",
+                "integration_id": 15368
+              },
+              {
+                "context": "deps/version-sync",
+                "integration_id": 15368
+              },
+              {
+                "context": "test",
+                "integration_id": 15368
+              },
+              {
+                "context": "package",
+                "integration_id": 15368
+              },
+              {
+                "context": "install",
+                "integration_id": 15368
+              },
+              {
+                "context": "release",
+                "integration_id": 15368
+              }
+            ]
+          }
+        },
+        {
+          "type": "required_linear_history"
+        },
+        {
+          "type": "non_fast_forward"
+        },
+        {
+          "type": "merge_queue",
+          "parameters": {
+            "merge_method": "SQUASH",
+            "max_entries_to_build": 10,
+            "min_entries_to_merge": 1,
+            "max_entries_to_merge": 5,
+            "min_entries_to_merge_wait_minutes": 5,
+            "grouping_strategy": "HEADGREEN",
+            "check_response_timeout_minutes": 60
+          }
+        }
+      ],
+      "node_id": "RRS_lACqUmVwb3NpdG9yec5GdikGzgDtX4Q",
+      "created_at": "2026-04-25T17:15:25.993-07:00",
+      "updated_at": "2026-08-19T19:21:06.385-07:00",
+      "bypass_actors": [
+        {
+          "actor_id": 5,
+          "actor_type": "RepositoryRole",
+          "bypass_mode": "pull_request"
+        }
+      ],
+      "current_user_can_bypass": "pull_requests_only",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/rulesets/15556484"
+        },
+        "html": {
+          "href": "https://github.com/HomericIntelligence/AchaeanFleet/rules/15556484"
+        }
+      }
+    }
+  ],
+  "api_captures": {
+    "rulesets_including_parents": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/rulesets?includes_parents=true&per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:27Z",
+          "etag": "W/\"083772d9a0f1ff3db2cbdcae2dc518cbccf6a4f37fefb2711c546c4e16c7d33c\"",
+          "request_id": "622A:360044:2AAFED7:2C5E51B:6A90B303",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "id": 15556484,
+              "name": "homeric-main-baseline",
+              "target": "branch",
+              "source_type": "Repository",
+              "source": "HomericIntelligence/AchaeanFleet",
+              "enforcement": "active",
+              "node_id": "RRS_lACqUmVwb3NpdG9yec5GdikGzgDtX4Q",
+              "_links": {
+                "self": {
+                  "href": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/rulesets/15556484"
+                },
+                "html": {
+                  "href": "https://github.com/HomericIntelligence/AchaeanFleet/rules/15556484"
+                }
+              },
+              "created_at": "2026-04-25T17:15:25.993-07:00",
+              "updated_at": "2026-08-19T19:21:06.385-07:00"
+            }
+          ]
+        }
+      ]
+    },
+    "ruleset_details": {
+      "method": "GET",
+      "responses": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/rulesets/15556484",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:27Z",
+          "etag": "W/\"392780d081938782ba239bf2974f904257d87f531e6304e99f2a6dd80bd5f53e\"",
+          "request_id": "6B64:2C8ED:2A6C0CA:2C1ACE9:6A90B303",
+          "api_version": "2022-11-28",
+          "response": {
+            "id": 15556484,
+            "name": "homeric-main-baseline",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": "HomericIntelligence/AchaeanFleet",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "refs/heads/main"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "deletion"
+              },
+              {
+                "type": "required_signatures"
+              },
+              {
+                "type": "pull_request",
+                "parameters": {
+                  "required_approving_review_count": 0,
+                  "dismiss_stale_reviews_on_push": false,
+                  "required_reviewers": [],
+                  "require_code_owner_review": false,
+                  "dismissal_restriction": {
+                    "enabled": false,
+                    "allowed_actors": []
+                  },
+                  "require_last_push_approval": false,
+                  "required_review_thread_resolution": true,
+                  "require_extra_approval_for_unattributed_changes": true,
+                  "allowed_merge_methods": [
+                    "squash"
+                  ]
+                }
+              },
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "do_not_enforce_on_create": false,
+                  "required_status_checks": [
+                    {
+                      "context": "lint",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "unit-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "integration-tests",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/dependency-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "security/secrets-scan",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "build",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "schema-validation",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "deps/version-sync",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "test",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "package",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "install",
+                      "integration_id": 15368
+                    },
+                    {
+                      "context": "release",
+                      "integration_id": 15368
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "required_linear_history"
+              },
+              {
+                "type": "non_fast_forward"
+              },
+              {
+                "type": "merge_queue",
+                "parameters": {
+                  "merge_method": "SQUASH",
+                  "max_entries_to_build": 10,
+                  "min_entries_to_merge": 1,
+                  "max_entries_to_merge": 5,
+                  "min_entries_to_merge_wait_minutes": 5,
+                  "grouping_strategy": "HEADGREEN",
+                  "check_response_timeout_minutes": 60
+                }
+              }
+            ],
+            "node_id": "RRS_lACqUmVwb3NpdG9yec5GdikGzgDtX4Q",
+            "created_at": "2026-04-25T17:15:25.993-07:00",
+            "updated_at": "2026-08-19T19:21:06.385-07:00",
+            "bypass_actors": [
+              {
+                "actor_id": 5,
+                "actor_type": "RepositoryRole",
+                "bypass_mode": "pull_request"
+              }
+            ],
+            "current_user_can_bypass": "pull_requests_only",
+            "_links": {
+              "self": {
+                "href": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/rulesets/15556484"
+              },
+              "html": {
+                "href": "https://github.com/HomericIntelligence/AchaeanFleet/rules/15556484"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "effective_default_branch_rules": {
+      "method": "GET",
+      "pages": [
+        {
+          "endpoint": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/rules/branches/main?per_page=100",
+          "status": 200,
+          "captured_at": "2026-08-27T21:58:28Z",
+          "etag": "W/\"833aa8fd65c0a79393df8807da78ad419528a1458e8b590e744663435b87c232\"",
+          "request_id": "4250:33DA76:2BE020A:2D8EA00:6A90B303",
+          "api_version": "2022-11-28",
+          "response": [
+            {
+              "type": "deletion",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/AchaeanFleet",
+              "ruleset_id": 15556484
+            },
+            {
+              "type": "required_signatures",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/AchaeanFleet",
+              "ruleset_id": 15556484
+            },
+            {
+              "type": "pull_request",
+              "parameters": {
+                "required_approving_review_count": 0,
+                "dismiss_stale_reviews_on_push": false,
+                "required_reviewers": [],
+                "require_code_owner_review": false,
+                "dismissal_restriction": {
+                  "enabled": false,
+                  "allowed_actors": []
+                },
+                "require_last_push_approval": false,
+                "required_review_thread_resolution": true,
+                "require_extra_approval_for_unattributed_changes": true,
+                "allowed_merge_methods": [
+                  "squash"
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/AchaeanFleet",
+              "ruleset_id": 15556484
+            },
+            {
+              "type": "required_status_checks",
+              "parameters": {
+                "strict_required_status_checks_policy": false,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [
+                  {
+                    "context": "lint",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "unit-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "integration-tests",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/dependency-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "security/secrets-scan",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "build",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "schema-validation",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "deps/version-sync",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "test",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "package",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "install",
+                    "integration_id": 15368
+                  },
+                  {
+                    "context": "release",
+                    "integration_id": 15368
+                  }
+                ]
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/AchaeanFleet",
+              "ruleset_id": 15556484
+            },
+            {
+              "type": "required_linear_history",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/AchaeanFleet",
+              "ruleset_id": 15556484
+            },
+            {
+              "type": "non_fast_forward",
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/AchaeanFleet",
+              "ruleset_id": 15556484
+            },
+            {
+              "type": "merge_queue",
+              "parameters": {
+                "merge_method": "SQUASH",
+                "max_entries_to_build": 10,
+                "min_entries_to_merge": 1,
+                "max_entries_to_merge": 5,
+                "min_entries_to_merge_wait_minutes": 5,
+                "grouping_strategy": "HEADGREEN",
+                "check_response_timeout_minutes": 60
+              },
+              "ruleset_source_type": "Repository",
+              "ruleset_source": "HomericIntelligence/AchaeanFleet",
+              "ruleset_id": 15556484
+            }
+          ]
+        }
+      ]
+    },
+    "classic_branch_protection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/branches/main/protection",
+      "status": 200,
+      "captured_at": "2026-08-27T21:58:28Z",
+      "etag": "W/\"85192e8b24ecf66dc940747e8712f672fd71d8101d3a5f8b8e34048297e5a2a8\"",
+      "request_id": "C65E:265DC0:2B506DC:2CFED7B:6A90B304",
+      "api_version": "2022-11-28",
+      "response": {
+        "url": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/branches/main/protection",
+        "required_pull_request_reviews": {
+          "url": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/branches/main/protection/required_pull_request_reviews",
+          "dismiss_stale_reviews": false,
+          "require_code_owner_reviews": false,
+          "require_last_push_approval": false,
+          "required_approving_review_count": 0
+        },
+        "required_signatures": {
+          "url": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/branches/main/protection/required_signatures",
+          "enabled": false
+        },
+        "enforce_admins": {
+          "url": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/branches/main/protection/enforce_admins",
+          "enabled": false
+        },
+        "required_linear_history": {
+          "enabled": false
+        },
+        "allow_force_pushes": {
+          "enabled": false
+        },
+        "allow_deletions": {
+          "enabled": false
+        },
+        "block_creations": {
+          "enabled": false
+        },
+        "required_conversation_resolution": {
+          "enabled": true
+        },
+        "lock_branch": {
+          "enabled": false
+        },
+        "allow_fork_syncing": {
+          "enabled": false
+        }
+      }
+    },
+    "repository_policy_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet",
+      "status": 200,
+      "captured_at": "2026-08-27T23:13:55Z",
+      "etag": "W/\"694807d7c3d275070c75f56c41e563a6d7a71513c0695d453b9264e10cffc0c1\"",
+      "request_id": "D8B8:152807:8DCED0:A93EFA:6A90C4B3",
+      "api_version": "2022-11-28",
+      "response": {
+        "allow_auto_merge": true,
+        "allow_merge_commit": false,
+        "allow_rebase_merge": false,
+        "allow_squash_merge": true,
+        "allow_update_branch": true,
+        "default_branch": "main",
+        "delete_branch_on_merge": true,
+        "full_name": "HomericIntelligence/AchaeanFleet",
+        "web_commit_signoff_required": true
+      }
+    },
+    "default_branch_projection": {
+      "method": "GET",
+      "endpoint": "https://api.github.com/repos/HomericIntelligence/AchaeanFleet/branches/main",
+      "status": 200,
+      "captured_at": "2026-08-27T23:13:55Z",
+      "etag": "W/\"a55290694dfff398546cd609269ca21999c78be863ff27b09d2b3fe315b4a9a7\"",
+      "request_id": "35D6:3DD243:8F6E3D:AAE670:6A90C4B3",
+      "api_version": "2022-11-28",
+      "response": {
+        "commit": {
+          "sha": "c90441359c9439b5646ff55b95872134dfb7b39f"
+        },
+        "name": "main"
+      }
+    }
+  }
+}

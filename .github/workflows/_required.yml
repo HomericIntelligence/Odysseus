@@ -10,10 +10,8 @@
 # What IS load-bearing: each job's `name:` value. GitHub emits the status-check
 # context from the job `name:`, and the branch-protection rulesets pin those
 # contexts. Keep every job `name:` byte-for-byte aligned with the contexts in
-# configs/github/canonical-checks.md and the ruleset JSON
-# (configs/github/org-ruleset*.json use "Required Checks / <name>";
-# configs/github/repo-ruleset*.json use the bare "<name>"). Do NOT rename a job
-# without updating those rulesets and re-applying them.
+# configs/github/canonical-checks.md and the repository ruleset JSON. Do not
+# rename a job without updating the aggregate gate and the ruleset policy.
 #
 # References to this path: configs/github/canonical-checks.md,
 # docs/runbooks/branch-protection-rollout.md, .pre-commit-config.yaml.
@@ -376,15 +374,12 @@ jobs:
           # Policy (#394): merges gate on REQUIRED STATUS CHECKS, not on required
           # reviewers. The repo-scoped rulesets require 0 approvals (matching the
           # live `homeric-main-baseline` ruleset — the only ruleset enforced on
-          # this repo). Org-scoped rulesets still assert >=1 (org policy is out of
-          # scope here). We validate every file is well-formed JSON and carries a
-          # numeric required_approving_review_count, and hold the intended count
-          # per scope so drift is still caught in both directions.
+          # this repo). We validate every generated repository artifact is
+          # well-formed JSON and carries the zero-review fleet policy.
           declare -A expected_min_reviews=(
-            [configs/github/org-ruleset.json]=1
-            [configs/github/org-ruleset-active.json]=1
             [configs/github/repo-ruleset.json]=0
             [configs/github/repo-ruleset-active.json]=0
+            [configs/github/repo-ruleset-evaluate.json]=0
           )
           for f in "${!expected_min_reviews[@]}"; do
             jq . "$f" > /dev/null
@@ -412,8 +407,6 @@ jobs:
             [configs/github/repo-ruleset.json]=active
             [configs/github/repo-ruleset-active.json]=active
             [configs/github/repo-ruleset-evaluate.json]=evaluate
-            [configs/github/org-ruleset.json]=active
-            [configs/github/org-ruleset-active.json]=active
           )
           fail=0
           for f in "${!expected[@]}"; do

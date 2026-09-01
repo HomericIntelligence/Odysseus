@@ -457,11 +457,15 @@ touch. Then:
   `infrastructure/ProjectArgus/dashboard/docs/review-charter.md` →
   `infrastructure/Argus/dashboard/docs/review-charter.md`.
 
-### `tools/github/snapshot-protection.sh` and `tools/github/remove-classic-protection.sh`
+### Legacy protection helpers
 
-The two `REPOS` / `ALL_REPOS` arrays contain a hard-coded 15-element list.
-Replace the 11 `Project*` slugs with the bare names and add `Athena`. The
-list becomes:
+`tools/github/snapshot-protection.sh` and
+`tools/github/remove-classic-protection.sh` are retired safety stops. Do not
+restore their old hard-coded fleet arrays or direct deletion behavior. Fleet
+policy snapshots and classic-protection migration now belong exclusively to
+the scoped `tools/github/apply-repo-rulesets.sh` transaction.
+
+For historical reference, the former list became:
 
 ```bash
 REPOS=(Odysseus AchaeanFleet Argus Hermes Telemachy Keystone Myrmidons \
@@ -469,7 +473,7 @@ REPOS=(Odysseus AchaeanFleet Argus Hermes Telemachy Keystone Myrmidons \
        Charybdis Athena)
 ```
 
-(16 entries. Athena is the 16th. Update the comment that says "all 15 repos".)
+(16 entries. Athena is the 16th.)
 
 ### `scripts/gen-ecosystem-table.sh`
 
