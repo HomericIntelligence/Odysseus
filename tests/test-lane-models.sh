@@ -20,15 +20,15 @@ else
     fail "loader rejected the real config"
 fi
 
-TABLE="$(pixi run python "$LOADER" 2>/dev/null || true)"
+TABLE="$(pixi run python "$LOADER" 2>/dev/null)"
 if grep -q "opencode/x-preview-f-free-high" <<<"$TABLE"; then
     pass "--table shows the planning lane ID"
 else
     fail "--table missing planning lane ID"
 fi
 
-ENV_OUT="$(pixi run python "$LOADER" --env 2>/dev/null || true)"
-ENV_COUNT="$(grep -c '^export HEPH_' <<<"$ENV_OUT" || true)"
+ENV_OUT="$(pixi run python "$LOADER" --env 2>/dev/null)"
+ENV_COUNT="$(grep -c '^export HEPH_' <<<"$ENV_OUT")"
 if [ "$ENV_COUNT" -eq 5 ]; then
     pass "--env emits exactly 5 HEPH_*_MODEL exports"
 else
@@ -65,7 +65,7 @@ fi
 
 info "one-line-edit property (AC3): editing one lane line changes the output"
 sed 's|^  review:.*|  review: opencode/other-model-x|' "$CONFIG" > "$TMP/edited.yaml"
-EDITED_ENV="$(pixi run python "$LOADER" --env --config "$TMP/edited.yaml" 2>/dev/null || true)"
+EDITED_ENV="$(pixi run python "$LOADER" --env --config "$TMP/edited.yaml" 2>/dev/null)"
 if grep -q "^export HEPH_REVIEWER_MODEL=opencode/other-model-x$" <<<"$EDITED_ENV" \
     && grep -q "^export HEPH_PLANNER_MODEL=opencode/x-preview-f-free-high$" <<<"$EDITED_ENV"; then
     pass "single-line edit changes only that lane's export"
