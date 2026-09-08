@@ -92,8 +92,8 @@ preview. Exact current state prints `NO-DRIFT` and issues no mutation.
 - commands run from the Odysseus repository root
 - workflow changes merged to each target repository's default branch
 - independent human review completed for changes under `.github/workflows/`
-- Athena's protected `agent-contract-v1.0.0` tag published and every governed
-  workflow calling its immutable commit SHA
+- Athena's protected signed annotated `agent-contract-v1.0.0` tag published
+  and every governed workflow calling that exact tag
 - a per-repository activation issue containing the reviewed workflow inventory
   and fresh green health evidence for every protected-event, scheduled,
   required, publish, release, and deploy workflow; the inventory is owned by
