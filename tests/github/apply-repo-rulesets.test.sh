@@ -1322,6 +1322,7 @@ run_live_update() {
     GH_ACTION_WORKFLOW_PATH_OVERRIDE="${GH_ACTION_WORKFLOW_PATH_OVERRIDE:-}" \
     GH_ACTION_REFERENCED_WORKFLOW_COUNT_OVERRIDE="${GH_ACTION_REFERENCED_WORKFLOW_COUNT_OVERRIDE:-}" \
     GH_ACTION_REFERENCED_WORKFLOW_PATH_OVERRIDE="${GH_ACTION_REFERENCED_WORKFLOW_PATH_OVERRIDE:-}" \
+    GH_ACTION_REFERENCED_WORKFLOW_REF_OVERRIDE="${GH_ACTION_REFERENCED_WORKFLOW_REF_OVERRIDE:-}" \
     GH_ACTION_REFERENCED_WORKFLOW_SHA_OVERRIDE="${GH_ACTION_REFERENCED_WORKFLOW_SHA_OVERRIDE:-}" \
     GH_ACTION_RUN_UPDATED_AT_OVERRIDE="${GH_ACTION_RUN_UPDATED_AT_OVERRIDE:-}" \
     GH_AGENT_CONTRACT_TAG_LOOKUP_FAILURE="${GH_AGENT_CONTRACT_TAG_LOOKUP_FAILURE:-}" \
@@ -2268,7 +2269,11 @@ assert_remote_evidence_rejected duplicate-agent-contract-reference \
   GH_ACTION_REFERENCED_WORKFLOW_COUNT_OVERRIDE 2
 assert_remote_evidence_rejected wrong-agent-contract-path \
   GH_ACTION_REFERENCED_WORKFLOW_PATH_OVERRIDE \
-  HomericIntelligence/Athena/.github/workflows/another.yml@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  HomericIntelligence/Athena/.github/workflows/another.yml@agent-contract-v1.0.0
+assert_remote_evidence_rejected wrong-agent-contract-ref \
+  GH_ACTION_REFERENCED_WORKFLOW_REF_OVERRIDE refs/tags/agent-contract-v2.0.0
+assert_remote_evidence_rejected missing-agent-contract-ref \
+  GH_ACTION_REFERENCED_WORKFLOW_REF_OVERRIDE __missing__
 assert_remote_evidence_rejected wrong-agent-contract-sha \
   GH_ACTION_REFERENCED_WORKFLOW_SHA_OVERRIDE \
   cccccccccccccccccccccccccccccccccccccccc

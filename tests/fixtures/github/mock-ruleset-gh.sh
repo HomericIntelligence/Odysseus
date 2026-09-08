@@ -743,8 +743,9 @@ case "$suffix" in
     workflow_name=${GH_ACTION_WORKFLOW_NAME_OVERRIDE:-Required Checks}
     workflow_path=${GH_ACTION_WORKFLOW_PATH_OVERRIDE:-.github/workflows/_required.yml}
     workflow_id=${GH_ACTION_WORKFLOW_ID_OVERRIDE:-9001}
-    provider_sha=${GH_ACTION_REFERENCED_WORKFLOW_SHA_OVERRIDE:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}
-    provider_path=${GH_ACTION_REFERENCED_WORKFLOW_PATH_OVERRIDE:-HomericIntelligence/Athena/.github/workflows/_agent-contract.yml@$provider_sha}
+    provider_sha=${GH_ACTION_REFERENCED_WORKFLOW_SHA_OVERRIDE:-dddddddddddddddddddddddddddddddddddddddd}
+    provider_path=${GH_ACTION_REFERENCED_WORKFLOW_PATH_OVERRIDE:-HomericIntelligence/Athena/.github/workflows/_agent-contract.yml@agent-contract-v1.0.0}
+    provider_ref=${GH_ACTION_REFERENCED_WORKFLOW_REF_OVERRIDE:-refs/tags/agent-contract-v1.0.0}
     provider_count=${GH_ACTION_REFERENCED_WORKFLOW_COUNT_OVERRIDE:-1}
     run_updated_at=${GH_ACTION_RUN_UPDATED_AT_OVERRIDE:-${GH_EVIDENCE_OBSERVED_AT:-2026-08-27T19:00:00Z}}
     jq -n \
@@ -762,6 +763,7 @@ case "$suffix" in
       --arg workflow_name "$workflow_name" \
       --arg workflow_path "$workflow_path" \
       --arg provider_path "$provider_path" \
+      --arg provider_ref "$provider_ref" \
       --arg provider_sha "$provider_sha" \
       --arg run_updated_at "$run_updated_at" '{
         id: $id,
@@ -778,10 +780,12 @@ case "$suffix" in
         html_url: $html_url,
         created_at: $run_updated_at,
         updated_at: $run_updated_at,
-        referenced_workflows: [range(0; $provider_count) | {
-          path: $provider_path,
-          sha: $provider_sha
-        }],
+        referenced_workflows: [range(0; $provider_count) |
+          ({path: $provider_path, sha: $provider_sha} +
+            if $provider_ref == "__missing__"
+            then {}
+            else {ref: $provider_ref}
+            end)],
         repository: {full_name: $full_name}
       }'
     ;;

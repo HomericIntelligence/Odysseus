@@ -111,7 +111,10 @@ repository object per target. Each repository records `main_sha` and
 paginated jobs, and its check suite. It requires the exact repository, event,
 SHA, branch shape, workflow name/path, successful sole aggregate job and check
 run from GitHub Actions App 15368, and exactly one referenced Athena reusable
-workflow at the commit currently resolved by `agent-contract-v1.0.0`.
+workflow. For an external repository, the run must report the exact
+`agent-contract-v1.0.0`-qualified path, its full tag ref, and the current
+annotated-tag object SHA. The tool independently verifies that the protected
+signed tag resolves to a signed commit.
 The release resolver requires the exact tag ref, a verified signed annotated
 tag, a verified signed commit, and one active repository-owned tag ruleset with
 no bypass that targets only `refs/tags/agent-contract-v*` and blocks update and
