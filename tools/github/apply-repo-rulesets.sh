@@ -1571,6 +1571,10 @@ verify_github_evidence() {
       and .check_suite_id > 0
       and (.referenced_workflows | type) == "array"
       and ([.referenced_workflows[]
+        | select((.path | type) == "string")
+        | select(.path == $agent_contract_path or
+          (.path | startswith($agent_contract_path + "@")))] | length) == 1
+      and ([.referenced_workflows[]
         | select(.path ==
           ($agent_contract_path + "@" + $agent_contract_tag))
         | select(.ref == ("refs/tags/" + $agent_contract_tag))

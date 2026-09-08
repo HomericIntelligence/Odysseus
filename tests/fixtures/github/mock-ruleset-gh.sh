@@ -747,6 +747,7 @@ case "$suffix" in
     provider_path=${GH_ACTION_REFERENCED_WORKFLOW_PATH_OVERRIDE:-HomericIntelligence/Athena/.github/workflows/_agent-contract.yml@agent-contract-v1.0.0}
     provider_ref=${GH_ACTION_REFERENCED_WORKFLOW_REF_OVERRIDE:-refs/tags/agent-contract-v1.0.0}
     provider_count=${GH_ACTION_REFERENCED_WORKFLOW_COUNT_OVERRIDE:-1}
+    extra_provider_ref=${GH_ACTION_EXTRA_REFERENCED_WORKFLOW_REF_OVERRIDE:-}
     run_updated_at=${GH_ACTION_RUN_UPDATED_AT_OVERRIDE:-${GH_EVIDENCE_OBSERVED_AT:-2026-08-27T19:00:00Z}}
     jq -n \
       --argjson id "$returned_id" \
@@ -765,6 +766,7 @@ case "$suffix" in
       --arg provider_path "$provider_path" \
       --arg provider_ref "$provider_ref" \
       --arg provider_sha "$provider_sha" \
+      --arg extra_provider_ref "$extra_provider_ref" \
       --arg run_updated_at "$run_updated_at" '{
         id: $id,
         run_attempt: $run_attempt,
@@ -780,12 +782,20 @@ case "$suffix" in
         html_url: $html_url,
         created_at: $run_updated_at,
         updated_at: $run_updated_at,
-        referenced_workflows: [range(0; $provider_count) |
+        referenced_workflows: ([range(0; $provider_count) |
           ({path: $provider_path, sha: $provider_sha} +
             if $provider_ref == "__missing__"
             then {}
             else {ref: $provider_ref}
-            end)],
+            end)] +
+          if $extra_provider_ref == ""
+          then []
+          else [{
+            path: $provider_path,
+            ref: $extra_provider_ref,
+            sha: $provider_sha
+          }]
+          end),
         repository: {full_name: $full_name}
       }'
     ;;
