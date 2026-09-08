@@ -17,6 +17,16 @@ fail() {
   exit 1
 }
 
+file_mode() {
+  python3 - "$1" <<'PY'
+import os
+import stat
+import sys
+
+print(f"{stat.S_IMODE(os.stat(sys.argv[1]).st_mode):03o}")
+PY
+}
+
 assert_renderer_rejects_policy() {
   local policy=$1
   local label=$2
@@ -626,6 +636,43 @@ for contract in "${contracts[@]}"; do
   assert_synthetic_fixture_converges "$fixture" "$repo"
 done
 
+mnemosyne_approval="$tmp_dir/mnemosyne-extra-ruleset-approval.json"
+jq -n '{
+  schema_version: 1,
+  repositories: {
+    Mnemosyne: {
+      id: 18221133,
+      name: "homeric-main-extras"
+    }
+  }
+}' >"$mnemosyne_approval"
+mnemosyne_approval_output="$tmp_dir/mnemosyne-extra-ruleset-approval.log"
+: >"$tmp_dir/gh-calls.log"
+if ! PATH="$tmp_dir/bin:$PATH" \
+    GH_RULESET_FIXTURE=tests/fixtures/github/fleet-policy/mnemosyne-baseline.json \
+    GH_CALL_LOG="$tmp_dir/gh-calls.log" \
+    tools/github/apply-repo-rulesets.sh \
+      --active --repos Mnemosyne --dry-run \
+      --extra-ruleset-approval-file "$mnemosyne_approval" \
+      >"$mnemosyne_approval_output" 2>&1; then
+  cat "$mnemosyne_approval_output" >&2
+  fail "exact approved Mnemosyne extras ruleset did not pass dry-run"
+fi
+mnemosyne_approval_drift=$(
+  sed -n 's/^DRIFT Mnemosyne: //p' "$mnemosyne_approval_output"
+)
+jq -en --argjson drift "$mnemosyne_approval_drift" '
+  $drift.extra_ruleset.before.id == 18221133
+  and $drift.extra_ruleset.before.name == "homeric-main-extras"
+  and $drift.extra_ruleset.before.enforcement == "active"
+  and $drift.extra_ruleset.after.enforcement == "disabled"
+  and (($drift.extra_ruleset.after
+    | del(.enforcement)) == ($drift.extra_ruleset.before | del(.enforcement)))
+' >/dev/null || fail "approved extras preview did not show an enforcement-only transition"
+assert_no_mock_mutation "approved Mnemosyne extras preview" \
+  "$tmp_dir/gh-calls.log"
+echo "PASS: exact approved repository-owned extras ruleset can enter dry-run"
+
 assert_overlapping_protection_rejected() {
   local name=$1
   local fixture=$2
@@ -1127,6 +1174,13 @@ run_live_update() {
   local classic_mutation_count_file=${GH_CLASSIC_MUTATION_COUNT_FILE:-"$tmp_dir/classic-${repos//,/-}.count"}
   local classic_signature_count_file=${GH_CLASSIC_SIGNATURE_COUNT_FILE:-"$tmp_dir/classic-signatures-${repos//,/-}.count"}
   local observed_at=${GH_EVIDENCE_OBSERVED_AT_OVERRIDE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+  local extra_approval_args=()
+
+  if [[ -n "${GH_EXTRA_RULESET_APPROVAL_FILE:-}" ]]; then
+    extra_approval_args=(
+      --extra-ruleset-approval-file "$GH_EXTRA_RULESET_APPROVAL_FILE"
+    )
+  fi
 
   if [[ "$repos" == *,* ]]; then
     repository_state_dir="$tmp_dir/repository-${repos//,/-}.d"
@@ -1202,6 +1256,7 @@ run_live_update() {
     GH_ALLOW_MUTATION=true \
     GH_RULESET_STATE="$state_file" \
     GH_RULESET_STATE_DIR="${GH_RULESET_STATE_DIR:-}" \
+    GH_EXTRA_RULESET_STATE="${GH_EXTRA_RULESET_STATE:-}" \
     GH_REPOSITORY_STATE="$repository_state_file" \
     GH_REPOSITORY_STATE_DIR="$repository_state_dir" \
     GH_PUT_COUNT_FILE="$put_count_file" \
@@ -1233,6 +1288,10 @@ run_live_update() {
     GH_EFFECTIVE_PARAMETER_MISMATCH_AT="${GH_EFFECTIVE_PARAMETER_MISMATCH_AT:-}" \
     GH_CONCURRENT_RULESET_CHANGE_AT="${GH_CONCURRENT_RULESET_CHANGE_AT:-}" \
     GH_CONCURRENT_RULESET_UNKNOWN_AT="${GH_CONCURRENT_RULESET_UNKNOWN_AT:-}" \
+    GH_CONCURRENT_BASELINE_CHANGE_ON_EXTRA_DETAIL_GET="${GH_CONCURRENT_BASELINE_CHANGE_ON_EXTRA_DETAIL_GET:-}" \
+    GH_CONCURRENT_EXTRA_CHANGE_ON_EXTRA_DETAIL_GET="${GH_CONCURRENT_EXTRA_CHANGE_ON_EXTRA_DETAIL_GET:-}" \
+    GH_FAIL_EXTRA_READBACK_AFTER_WRITE="${GH_FAIL_EXTRA_READBACK_AFTER_WRITE:-}" \
+    GH_SIGNAL_HUP_EXTRA_PUT_AFTER_WRITE="${GH_SIGNAL_HUP_EXTRA_PUT_AFTER_WRITE:-}" \
     GH_DRIFT_COMPLETED_REPO_ON_PUT_SOURCE="${GH_DRIFT_COMPLETED_REPO_ON_PUT_SOURCE:-}" \
     GH_DRIFT_COMPLETED_REPO_ON_PUT_TARGET="${GH_DRIFT_COMPLETED_REPO_ON_PUT_TARGET:-}" \
     GH_CONCURRENT_SETTINGS_CHANGE_AT="${GH_CONCURRENT_SETTINGS_CHANGE_AT:-}" \
@@ -1288,6 +1347,7 @@ run_live_update() {
     RULESET_SNAPSHOT_DIR="$snapshot_dir" \
     tools/github/apply-repo-rulesets.sh "${RULESET_MODE:---active}" --repos "$repos" \
       --evidence-file "$evidence_file" \
+      "${extra_approval_args[@]}" \
       >"$output_file" 2>&1
 }
 
@@ -1409,9 +1469,11 @@ jq -en --argjson digest "$first_digest" '
 ' >/dev/null || fail "dry-run digests do not bind both complete pre/post resources"
 jq -en --argjson drift "$first_drift" '
   ($drift | keys | sort) ==
-    (["classic_branch_protection", "repository_settings", "ruleset"] | sort)
+    (["classic_branch_protection", "extra_ruleset", "repository_settings", "ruleset"] | sort)
   and ($drift.classic_branch_protection.before == null)
   and ($drift.classic_branch_protection.after == null)
+  and ($drift.extra_ruleset.before == null)
+  and ($drift.extra_ruleset.after == null)
   and ($drift.ruleset.before | type) == "object"
   and ($drift.ruleset.after | type) == "object"
   and ($drift.repository_settings.before | type) == "object"
@@ -2358,6 +2420,474 @@ jq -e --slurpfile policy configs/github/fleet-ruleset-policy.json '
 [[ $(<"$success_settings_count") -eq 1 ]] || \
   fail "verified update must issue exactly one repository PATCH"
 echo "PASS: live update snapshots pre-state and verifies exact post-state"
+
+extra_live_fixture="$tmp_dir/approved-extra-live-fixture.json"
+extra_live_state="$tmp_dir/approved-extra-live-state.json"
+extra_live_pre="$tmp_dir/approved-extra-live-pre.json"
+extra_live_baseline="$tmp_dir/approved-extra-live-baseline.json"
+extra_live_snapshots="$tmp_dir/approved-extra-live-snapshots"
+extra_live_approval="$tmp_dir/approved-extra-live-approval.json"
+extra_live_settings="$tmp_dir/approved-extra-live-settings.json"
+extra_live_settings_count="$tmp_dir/approved-extra-live-settings-count"
+extra_live_effective_shape="$tmp_dir/approved-extra-live-effective-shape.json"
+jq '.rulesets += [{
+  id: 18221133,
+  name: "homeric-main-extras",
+  target: "branch",
+  source_type: "Repository",
+  source: "HomericIntelligence/Myrmidons",
+  enforcement: "active",
+  bypass_actors: [],
+  conditions: {ref_name: {include: ["~DEFAULT_BRANCH"], exclude: []}},
+  rules: [{
+    type: "required_status_checks",
+    parameters: {
+      strict_required_status_checks_policy: true,
+      do_not_enforce_on_create: false,
+      required_status_checks: [{context: "legacy-extra", integration_id: 15368}]
+    }
+  }]
+}]' "$myrmidons_fixture" >"$extra_live_fixture"
+seed_ruleset_state "$extra_live_fixture" "$extra_live_baseline"
+jq '.rulesets[] | select(.id == 18221133)' \
+  "$extra_live_fixture" >"$extra_live_state"
+cp "$extra_live_state" "$extra_live_pre"
+jq -n '{
+  schema_version: 1,
+  repositories: {
+    Myrmidons: {id: 18221133, name: "homeric-main-extras"}
+  }
+}' >"$extra_live_approval"
+jq -n '{
+  full_name: "HomericIntelligence/Myrmidons",
+  default_branch: "main",
+  allow_auto_merge: false,
+  allow_merge_commit: true,
+  allow_rebase_merge: true,
+  allow_squash_merge: true,
+  allow_update_branch: false,
+  delete_branch_on_merge: false,
+  web_commit_signoff_required: false
+}' >"$extra_live_settings"
+GH_RULESET_FIXTURE="$extra_live_fixture" \
+  GH_RULESET_STATE="$extra_live_baseline" \
+  GH_EXTRA_RULESET_STATE="$extra_live_state" \
+  GH_CALL_LOG="$tmp_dir/approved-extra-effective-shape.log" \
+  "$tmp_dir/bin/gh" api --paginate --slurp \
+    "repos/HomericIntelligence/Myrmidons/rules/branches/main?per_page=100" \
+    >"$extra_live_effective_shape"
+jq -e '
+  ([.[][] | select(.type == "deletion") | has("parameters")] == [false])
+  and ([.[][] | select(.type == "required_status_checks") |
+    has("parameters")] == [true, true])
+' "$extra_live_effective_shape" >/dev/null ||
+  fail "dynamic effective-rule mock differs from the captured absent-parameters shape"
+echo "PASS: dynamic effective-rule mock preserves captured absent parameters"
+
+assert_extra_approval_rejected() {
+  local name=$1
+  local approval_file=$2
+  local baseline_state="$tmp_dir/$name-baseline.json"
+  local extra_state="$tmp_dir/$name-extra.json"
+  local output_file="$tmp_dir/$name.log"
+
+  seed_ruleset_state "$extra_live_fixture" "$baseline_state"
+  cp "$extra_live_pre" "$extra_state"
+  if GH_EXTRA_RULESET_STATE="$extra_state" \
+      GH_EXTRA_RULESET_APPROVAL_FILE="$approval_file" run_live_update \
+        "$extra_live_fixture" Myrmidons "$baseline_state" \
+        "$tmp_dir/$name-snapshots" "$output_file" \
+        "$tmp_dir/$name-put-count" "$tmp_dir/$name-get-count"; then
+    fail "$name was accepted"
+  fi
+  assert_no_mock_mutation "$name" "$tmp_dir/gh-calls.log"
+  echo "PASS: $name is rejected before mutation"
+}
+
+duplicate_top_level_approval="$tmp_dir/duplicate-top-level-approval.json"
+printf '%s\n' \
+  '{"schema_version":1,"repositories":{},"repositories":{"Myrmidons":{"id":18221133,"name":"homeric-main-extras"}}}' \
+  >"$duplicate_top_level_approval"
+assert_extra_approval_rejected \
+  duplicate-top-level-extra-approval "$duplicate_top_level_approval"
+
+duplicate_repository_approval="$tmp_dir/duplicate-repository-approval.json"
+printf '%s\n' \
+  '{"schema_version":1,"repositories":{"Myrmidons":{"id":18221133,"name":"homeric-main-extras"},"Myrmidons":{"id":18221133,"name":"homeric-main-extras"}}}' \
+  >"$duplicate_repository_approval"
+assert_extra_approval_rejected \
+  duplicate-repository-extra-approval "$duplicate_repository_approval"
+
+wrong_extra_id_approval="$tmp_dir/wrong-extra-id-approval.json"
+jq '.repositories.Myrmidons.id = 18221134' \
+  "$extra_live_approval" >"$wrong_extra_id_approval"
+assert_extra_approval_rejected wrong-extra-id-approval "$wrong_extra_id_approval"
+
+wrong_extra_name_approval="$tmp_dir/wrong-extra-name-approval.json"
+jq '.repositories.Myrmidons.name = "different-extra"' \
+  "$extra_live_approval" >"$wrong_extra_name_approval"
+assert_extra_approval_rejected wrong-extra-name-approval "$wrong_extra_name_approval"
+
+assert_approved_extra_scope_rejected() {
+  local name=$1
+  local filter=$2
+  local baseline_state="$tmp_dir/$name-baseline.json"
+  local extra_state="$tmp_dir/$name-extra.json"
+
+  seed_ruleset_state "$extra_live_fixture" "$baseline_state"
+  jq "$filter" "$extra_live_pre" >"$extra_state"
+  if GH_EXTRA_RULESET_STATE="$extra_state" \
+      GH_EXTRA_RULESET_APPROVAL_FILE="$extra_live_approval" run_live_update \
+        "$extra_live_fixture" Myrmidons "$baseline_state" \
+        "$tmp_dir/$name-snapshots" "$tmp_dir/$name.log" \
+        "$tmp_dir/$name-put-count" "$tmp_dir/$name-get-count"; then
+    fail "$name was accepted"
+  fi
+  assert_no_mock_mutation "$name" "$tmp_dir/gh-calls.log"
+  echo "PASS: $name is rejected before mutation"
+}
+
+assert_approved_extra_scope_rejected \
+  approved-extra-wildcard-scope \
+  '.conditions.ref_name.include = ["refs/heads/*"]'
+assert_approved_extra_scope_rejected \
+  approved-extra-exclusion-scope \
+  '.conditions.ref_name.exclude = ["refs/heads/release"]'
+assert_approved_extra_scope_rejected \
+  approved-extra-inherited-scope \
+  '.source_type = "Organization" | .source = "HomericIntelligence"'
+
+if ! GH_EXTRA_RULESET_STATE="$extra_live_state" \
+    GH_EXTRA_RULESET_APPROVAL_FILE="$extra_live_approval" \
+    GH_REPOSITORY_STATE="$extra_live_settings" \
+    GH_SETTINGS_PATCH_COUNT_FILE="$extra_live_settings_count" run_live_update \
+    "$extra_live_fixture" Myrmidons "$extra_live_baseline" \
+    "$extra_live_snapshots" "$tmp_dir/approved-extra-live.log" \
+    "$tmp_dir/approved-extra-live-put-count" \
+    "$tmp_dir/approved-extra-live-get-count"; then
+  cat "$tmp_dir/approved-extra-live.log" >&2
+  fail "approved extras live retirement failed"
+fi
+jq -e '.enforcement == "disabled"' "$extra_live_state" >/dev/null || \
+  fail "approved extras live retirement did not disable the exact ruleset"
+jq -e --slurpfile before "$extra_live_pre" '
+  (del(.enforcement)) == ($before[0] | del(.enforcement))
+' "$extra_live_state" >/dev/null || \
+  fail "approved extras live retirement changed more than enforcement"
+assert_durable_snapshot "$extra_live_snapshots" "$extra_live_pre" \
+  "approved extras live retirement" 6
+for extra_payload_snapshot in \
+    "$extra_live_snapshots/Myrmidons-extra-ruleset-18221133-restore.json" \
+    "$extra_live_snapshots/Myrmidons-extra-ruleset-18221133-disabled.json"; do
+  [[ -f "$extra_payload_snapshot" ]] ||
+    fail "approved extras did not persist $extra_payload_snapshot"
+  [[ $(file_mode "$extra_payload_snapshot") == 600 ]] ||
+    fail "approved extras payload snapshot is not mode 600: $extra_payload_snapshot"
+done
+jq -e --slurpfile expected "$extra_live_pre" '
+  . == ($expected[0] | del(.id, .source, .source_type))
+' "$extra_live_snapshots/Myrmidons-extra-ruleset-18221133-restore.json" \
+  >/dev/null || fail "durable extras restore payload differs from the verified preimage"
+jq -e --slurpfile expected "$extra_live_pre" '
+  . == ($expected[0] | del(.id, .source, .source_type) | .enforcement = "disabled")
+' "$extra_live_snapshots/Myrmidons-extra-ruleset-18221133-disabled.json" \
+  >/dev/null || fail "durable extras update payload differs from the requested state"
+[[ $(<"$tmp_dir/approved-extra-live-put-count") -eq 2 ]] || \
+  fail "approved extras live retirement must issue one baseline and one extras PUT"
+baseline_put_line=$(grep -n -m1 \
+  'PUT repos/HomericIntelligence/Myrmidons/rulesets/15556489' \
+  "$tmp_dir/gh-calls.log" | cut -d: -f1)
+settings_patch_line=$(grep -n -m1 \
+  'PATCH repos/HomericIntelligence/Myrmidons' \
+  "$tmp_dir/gh-calls.log" | cut -d: -f1)
+extra_put_line=$(grep -n -m1 \
+  'PUT repos/HomericIntelligence/Myrmidons/rulesets/18221133' \
+  "$tmp_dir/gh-calls.log" | cut -d: -f1)
+[[ -n "$baseline_put_line" && -n "$settings_patch_line" &&
+  -n "$extra_put_line" && "$baseline_put_line" -lt "$settings_patch_line" &&
+  "$settings_patch_line" -lt "$extra_put_line" ]] ||
+  fail "approved extras mutation order was not baseline, settings, then extras"
+echo "PASS: approved extras live retirement is snapshotted and verified"
+
+extra_final_sweep_state="$tmp_dir/approved-extra-final-sweep-state.json"
+extra_final_sweep_baseline="$tmp_dir/approved-extra-final-sweep-baseline.json"
+extra_final_sweep_settings="$tmp_dir/approved-extra-final-sweep-settings.json"
+extra_final_change_at=$(<"$tmp_dir/approved-extra-live-get-count")
+cp "$extra_live_pre" "$extra_final_sweep_state"
+seed_ruleset_state "$extra_live_fixture" "$extra_final_sweep_baseline"
+jq -n '{
+  full_name: "HomericIntelligence/Myrmidons",
+  default_branch: "main",
+  allow_auto_merge: false,
+  allow_merge_commit: true,
+  allow_rebase_merge: true,
+  allow_squash_merge: true,
+  allow_update_branch: false,
+  delete_branch_on_merge: false,
+  web_commit_signoff_required: false
+}' >"$extra_final_sweep_settings"
+if GH_EXTRA_RULESET_STATE="$extra_final_sweep_state" \
+    GH_EXTRA_RULESET_APPROVAL_FILE="$extra_live_approval" \
+    GH_REPOSITORY_STATE="$extra_final_sweep_settings" \
+    GH_CONCURRENT_RULESET_CHANGE_AT="$extra_final_change_at" run_live_update \
+      "$extra_live_fixture" Myrmidons "$extra_final_sweep_baseline" \
+      "$tmp_dir/approved-extra-final-sweep-snapshots" \
+      "$tmp_dir/approved-extra-final-sweep.log" \
+      "$tmp_dir/approved-extra-final-sweep-put-count" \
+      "$tmp_dir/approved-extra-final-sweep-get-count"; then
+  fail "final fleet sweep accepted baseline drift during its extras readback"
+fi
+jq -e --slurpfile expected "$extra_live_pre" '. == $expected[0]' \
+  "$extra_final_sweep_state" >/dev/null ||
+  fail "final-sweep compensation did not restore the completed extras write"
+jq -e '.conditions.ref_name.include == ["refs/heads/concurrent"]' \
+  "$extra_final_sweep_baseline" >/dev/null ||
+  fail "final-sweep compensation overwrote concurrent baseline drift"
+grep -qF 'final fleet sweep detected drift' \
+  "$tmp_dir/approved-extra-final-sweep.log" ||
+  fail "final extras sweep did not use completed-repository compensation"
+echo "PASS: final fleet sweep detects extras-time drift and compensates completed writes"
+
+extra_stale_baseline="$tmp_dir/approved-extra-stale-baseline.json"
+extra_stale_state="$tmp_dir/approved-extra-stale-state.json"
+seed_ruleset_state "$extra_live_fixture" "$extra_stale_baseline"
+cp "$extra_live_pre" "$extra_stale_state"
+if GH_EXTRA_RULESET_STATE="$extra_stale_state" \
+    GH_EXTRA_RULESET_APPROVAL_FILE="$extra_live_approval" \
+    GH_CONCURRENT_BASELINE_CHANGE_ON_EXTRA_DETAIL_GET=true run_live_update \
+      "$extra_live_fixture" Myrmidons "$extra_stale_baseline" \
+      "$tmp_dir/approved-extra-stale-snapshots" \
+      "$tmp_dir/approved-extra-stale.log" \
+      "$tmp_dir/approved-extra-stale-put-count" \
+      "$tmp_dir/approved-extra-stale-get-count"; then
+  fail "approved extras disable accepted a concurrent baseline change"
+fi
+jq -e '
+  .conditions.ref_name.include == ["refs/heads/concurrent-extra-window"]
+' "$extra_stale_baseline" >/dev/null ||
+  fail "extras-time recovery overwrote the concurrent baseline state"
+jq -e --slurpfile expected "$extra_live_pre" '. == $expected[0]' \
+  "$extra_stale_state" >/dev/null ||
+  fail "extras-time baseline drift changed the approved extras ruleset"
+if grep -qF \
+    'PUT repos/HomericIntelligence/Myrmidons/rulesets/18221133' \
+    "$tmp_dir/gh-calls.log"; then
+  fail "extras-time baseline drift reached the extras PUT"
+fi
+grep -qF 'UNCERTAIN MUTATION' "$tmp_dir/approved-extra-stale.log" ||
+  fail "extras-time concurrent baseline state did not report uncertainty"
+echo "PASS: approved extras disable revalidates the complete midpoint state"
+
+extra_stale_extra_baseline="$tmp_dir/approved-extra-stale-extra-baseline.json"
+extra_stale_extra_baseline_pre="$tmp_dir/approved-extra-stale-extra-baseline-pre.json"
+extra_stale_extra_state="$tmp_dir/approved-extra-stale-extra-state.json"
+seed_ruleset_state "$extra_live_fixture" "$extra_stale_extra_baseline"
+cp "$extra_stale_extra_baseline" "$extra_stale_extra_baseline_pre"
+cp "$extra_live_pre" "$extra_stale_extra_state"
+if GH_EXTRA_RULESET_STATE="$extra_stale_extra_state" \
+    GH_EXTRA_RULESET_APPROVAL_FILE="$extra_live_approval" \
+    GH_CONCURRENT_EXTRA_CHANGE_ON_EXTRA_DETAIL_GET=true run_live_update \
+      "$extra_live_fixture" Myrmidons "$extra_stale_extra_baseline" \
+      "$tmp_dir/approved-extra-stale-extra-snapshots" \
+      "$tmp_dir/approved-extra-stale-extra.log" \
+      "$tmp_dir/approved-extra-stale-extra-put-count" \
+      "$tmp_dir/approved-extra-stale-extra-get-count"; then
+  fail "approved extras disable accepted a stale extras precondition"
+fi
+jq -e --slurpfile expected "$extra_stale_extra_baseline_pre" \
+  '. == $expected[0]' "$extra_stale_extra_baseline" >/dev/null ||
+  fail "stale extras precondition did not restore the baseline preimage"
+jq -e '.conditions.ref_name.include == ["refs/heads/concurrent-extra"]' \
+  "$extra_stale_extra_state" >/dev/null ||
+  fail "stale extras recovery overwrote the concurrent extras state"
+if grep -qF \
+    'PUT repos/HomericIntelligence/Myrmidons/rulesets/18221133' \
+    "$tmp_dir/gh-calls.log"; then
+  fail "stale extras precondition reached the extras PUT"
+fi
+echo "PASS: approved extras disable rejects a stale exact preimage"
+
+extra_rollback_state="$tmp_dir/approved-extra-rollback-state.json"
+extra_rollback_baseline="$tmp_dir/approved-extra-rollback-baseline.json"
+extra_rollback_baseline_pre="$tmp_dir/approved-extra-rollback-baseline-pre.json"
+cp "$extra_live_pre" "$extra_rollback_state"
+seed_ruleset_state "$extra_live_fixture" "$extra_rollback_baseline"
+cp "$extra_rollback_baseline" "$extra_rollback_baseline_pre"
+if GH_EXTRA_RULESET_STATE="$extra_rollback_state" \
+    GH_EXTRA_RULESET_APPROVAL_FILE="$extra_live_approval" \
+    GH_FAIL_PUT_AFTER_WRITE_AT=2 run_live_update \
+    "$extra_live_fixture" Myrmidons "$extra_rollback_baseline" \
+    "$tmp_dir/approved-extra-rollback-snapshots" \
+    "$tmp_dir/approved-extra-rollback.log" \
+    "$tmp_dir/approved-extra-rollback-put-count" \
+    "$tmp_dir/approved-extra-rollback-get-count"; then
+  fail "ambiguous approved-extras PUT unexpectedly succeeded"
+fi
+jq -e --slurpfile expected "$extra_live_pre" '. == $expected[0]' \
+  "$extra_rollback_state" >/dev/null || \
+  fail "ambiguous approved-extras PUT did not restore its exact preimage"
+jq -e --slurpfile expected "$extra_rollback_baseline_pre" '. == $expected[0]' \
+  "$extra_rollback_baseline" >/dev/null || \
+  fail "ambiguous approved-extras PUT did not restore the baseline preimage"
+grep -qF "Fleet rollback verified exactly" \
+  "$tmp_dir/approved-extra-rollback.log" || \
+  fail "ambiguous approved-extras PUT did not verify reverse-order rollback"
+echo "PASS: ambiguous approved-extras PUT restores earlier repository writes"
+
+extra_readback_state="$tmp_dir/approved-extra-readback-state.json"
+extra_readback_baseline="$tmp_dir/approved-extra-readback-baseline.json"
+extra_readback_baseline_pre="$tmp_dir/approved-extra-readback-baseline-pre.json"
+cp "$extra_live_pre" "$extra_readback_state"
+seed_ruleset_state "$extra_live_fixture" "$extra_readback_baseline"
+cp "$extra_readback_baseline" "$extra_readback_baseline_pre"
+if GH_EXTRA_RULESET_STATE="$extra_readback_state" \
+    GH_EXTRA_RULESET_APPROVAL_FILE="$extra_live_approval" \
+    GH_FAIL_EXTRA_READBACK_AFTER_WRITE=true run_live_update \
+      "$extra_live_fixture" Myrmidons "$extra_readback_baseline" \
+      "$tmp_dir/approved-extra-readback-snapshots" \
+      "$tmp_dir/approved-extra-readback.log" \
+      "$tmp_dir/approved-extra-readback-put-count" \
+      "$tmp_dir/approved-extra-readback-get-count"; then
+  fail "failed approved-extras readback unexpectedly succeeded"
+fi
+jq -e --slurpfile expected "$extra_live_pre" '. == $expected[0]' \
+  "$extra_readback_state" >/dev/null ||
+  fail "failed approved-extras readback did not restore its exact preimage"
+jq -e --slurpfile expected "$extra_readback_baseline_pre" '. == $expected[0]' \
+  "$extra_readback_baseline" >/dev/null ||
+  fail "failed approved-extras readback did not restore the baseline preimage"
+grep -qF 'Fleet rollback verified exactly' \
+  "$tmp_dir/approved-extra-readback.log" ||
+  fail "failed approved-extras readback did not verify rollback"
+echo "PASS: failed approved-extras readback restores all earlier writes"
+
+extra_third_state="$tmp_dir/approved-extra-third-state.json"
+extra_third_baseline="$tmp_dir/approved-extra-third-baseline.json"
+extra_third_baseline_pre="$tmp_dir/approved-extra-third-baseline-pre.json"
+cp "$extra_live_pre" "$extra_third_state"
+seed_ruleset_state "$extra_live_fixture" "$extra_third_baseline"
+cp "$extra_third_baseline" "$extra_third_baseline_pre"
+if GH_EXTRA_RULESET_STATE="$extra_third_state" \
+    GH_EXTRA_RULESET_APPROVAL_FILE="$extra_live_approval" \
+    GH_CORRUPT_PUT_AT=2 run_live_update \
+      "$extra_live_fixture" Myrmidons "$extra_third_baseline" \
+      "$tmp_dir/approved-extra-third-snapshots" \
+      "$tmp_dir/approved-extra-third.log" \
+      "$tmp_dir/approved-extra-third-put-count" \
+      "$tmp_dir/approved-extra-third-get-count"; then
+  fail "unrecognized approved-extras third state unexpectedly succeeded"
+fi
+jq -e '.conditions.ref_name.include == ["refs/heads/not-main"]' \
+  "$extra_third_state" >/dev/null ||
+  fail "approved-extras recovery overwrote an unrecognized third state"
+jq -e --slurpfile expected "$extra_third_baseline_pre" '. == $expected[0]' \
+  "$extra_third_baseline" >/dev/null ||
+  fail "approved-extras uncertainty did not restore the baseline preimage"
+grep -qF 'UNCERTAIN MUTATION' "$tmp_dir/approved-extra-third.log" ||
+  fail "approved-extras third state did not report uncertainty"
+echo "PASS: approved-extras recovery preserves an unrecognized third state"
+
+extra_signal_state="$tmp_dir/approved-extra-signal-state.json"
+extra_signal_baseline="$tmp_dir/approved-extra-signal-baseline.json"
+extra_signal_baseline_pre="$tmp_dir/approved-extra-signal-baseline-pre.json"
+cp "$extra_live_pre" "$extra_signal_state"
+seed_ruleset_state "$extra_live_fixture" "$extra_signal_baseline"
+cp "$extra_signal_baseline" "$extra_signal_baseline_pre"
+if GH_EXTRA_RULESET_STATE="$extra_signal_state" \
+    GH_EXTRA_RULESET_APPROVAL_FILE="$extra_live_approval" \
+    GH_SIGNAL_HUP_EXTRA_PUT_AFTER_WRITE=true run_live_update \
+      "$extra_live_fixture" Myrmidons "$extra_signal_baseline" \
+      "$tmp_dir/approved-extra-signal-snapshots" \
+      "$tmp_dir/approved-extra-signal.log" \
+      "$tmp_dir/approved-extra-signal-put-count" \
+      "$tmp_dir/approved-extra-signal-get-count"; then
+  fail "HUP during approved-extras PUT unexpectedly succeeded"
+fi
+jq -e --slurpfile expected "$extra_live_pre" '. == $expected[0]' \
+  "$extra_signal_state" >/dev/null ||
+  fail "HUP during approved-extras PUT did not restore its exact preimage"
+jq -e --slurpfile expected "$extra_signal_baseline_pre" '. == $expected[0]' \
+  "$extra_signal_baseline" >/dev/null ||
+  fail "HUP during approved-extras PUT did not restore the baseline preimage"
+grep -qF 'received HUP during an armed approved-extras mutation' \
+  "$tmp_dir/approved-extra-signal.log" ||
+  fail "HUP during approved-extras PUT did not use signal recovery"
+echo "PASS: HUP during approved-extras PUT restores all earlier writes"
+
+extra_classic_ruleset="$tmp_dir/approved-extra-classic-ruleset.json"
+extra_classic_ruleset_pre="$tmp_dir/approved-extra-classic-ruleset-pre.json"
+extra_classic_state="$tmp_dir/approved-extra-classic-state.json"
+extra_classic_pre="$tmp_dir/approved-extra-classic-pre.json"
+extra_classic_protection="$tmp_dir/approved-extra-classic-protection.json"
+extra_classic_protection_pre="$tmp_dir/approved-extra-classic-protection-pre.json"
+extra_classic_settings="$tmp_dir/approved-extra-classic-settings.json"
+seed_ruleset_state "$extra_live_fixture" "$extra_classic_ruleset"
+cp "$extra_classic_ruleset" "$extra_classic_ruleset_pre"
+cp "$extra_live_pre" "$extra_classic_state"
+cp "$extra_classic_state" "$extra_classic_pre"
+write_classic_protection_fixture "$extra_classic_protection"
+cp "$extra_classic_protection" "$extra_classic_protection_pre"
+jq -n '{
+  full_name: "HomericIntelligence/Myrmidons",
+  default_branch: "main",
+  allow_auto_merge: false,
+  allow_merge_commit: true,
+  allow_rebase_merge: true,
+  allow_squash_merge: true,
+  allow_update_branch: false,
+  delete_branch_on_merge: false,
+  web_commit_signoff_required: false
+}' >"$extra_classic_settings"
+if GH_EXTRA_RULESET_STATE="$extra_classic_state" \
+    GH_EXTRA_RULESET_APPROVAL_FILE="$extra_live_approval" \
+    GH_CLASSIC_PROTECTION_STATE="$extra_classic_protection" \
+    GH_REPOSITORY_STATE="$extra_classic_settings" \
+    GH_SETTINGS_PATCH_COUNT_FILE="$tmp_dir/approved-extra-classic-settings-count" \
+    GH_FAIL_CLASSIC_DELETE_AFTER_WRITE_AT=1 run_live_update \
+      "$extra_live_fixture" Myrmidons "$extra_classic_ruleset" \
+      "$tmp_dir/approved-extra-classic-snapshots" \
+      "$tmp_dir/approved-extra-classic.log" \
+      "$tmp_dir/approved-extra-classic-put-count" \
+      "$tmp_dir/approved-extra-classic-get-count"; then
+  fail "ambiguous classic removal with approved extras unexpectedly succeeded"
+fi
+jq -e --slurpfile expected "$extra_classic_ruleset_pre" '. == $expected[0]' \
+  "$extra_classic_ruleset" >/dev/null ||
+  fail "classic-plus-extras rollback did not restore the baseline"
+jq -e --slurpfile expected "$extra_classic_pre" '. == $expected[0]' \
+  "$extra_classic_state" >/dev/null ||
+  fail "classic-plus-extras rollback did not restore the extras ruleset"
+jq -e --slurpfile expected "$extra_classic_protection_pre" '
+  def normalized_any_app:
+    .required_status_checks.checks |= map(
+      if .app_id == null then .app_id = -1 else . end
+    );
+  normalized_any_app == ($expected[0] | normalized_any_app)
+' "$extra_classic_protection" >/dev/null ||
+  fail "classic-plus-extras rollback did not restore classic protection"
+classic_delete_line=$(grep -n -m1 \
+  'DELETE repos/HomericIntelligence/Myrmidons/branches/main/protection' \
+  "$tmp_dir/gh-calls.log" | cut -d: -f1)
+classic_restore_line=$(grep -n \
+  'PUT repos/HomericIntelligence/Myrmidons/branches/main/protection' \
+  "$tmp_dir/gh-calls.log" | tail -1 | cut -d: -f1)
+extra_restore_line=$(grep -n \
+  'PUT repos/HomericIntelligence/Myrmidons/rulesets/18221133' \
+  "$tmp_dir/gh-calls.log" | tail -1 | cut -d: -f1)
+settings_restore_line=$(grep -n \
+  'PATCH repos/HomericIntelligence/Myrmidons' \
+  "$tmp_dir/gh-calls.log" | tail -1 | cut -d: -f1)
+baseline_restore_line=$(grep -n \
+  'PUT repos/HomericIntelligence/Myrmidons/rulesets/15556489' \
+  "$tmp_dir/gh-calls.log" | tail -1 | cut -d: -f1)
+[[ -n "$classic_delete_line" && -n "$classic_restore_line" &&
+  -n "$extra_restore_line" && -n "$settings_restore_line" &&
+  -n "$baseline_restore_line" && "$classic_delete_line" -lt "$classic_restore_line" &&
+  "$classic_restore_line" -lt "$extra_restore_line" &&
+  "$extra_restore_line" -lt "$settings_restore_line" &&
+  "$settings_restore_line" -lt "$baseline_restore_line" ]] ||
+  fail "classic-plus-extras rollback did not run in exact reverse order"
+echo "PASS: classic and approved extras roll back in exact reverse order"
 
 classic_success_ruleset="$tmp_dir/classic-success-ruleset.json"
 classic_success_state="$tmp_dir/classic-success-state.json"
