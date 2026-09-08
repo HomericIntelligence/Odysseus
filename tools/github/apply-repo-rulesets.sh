@@ -1547,7 +1547,8 @@ verify_github_evidence() {
         --arg proof "$proof_name" \
         --arg default_branch "$default_branch" \
         --arg agent_contract_path "$AGENT_CONTRACT_PATH" \
-        --arg agent_contract_sha "$AGENT_CONTRACT_SHA" \
+        --arg agent_contract_tag "$AGENT_CONTRACT_TAG" \
+        --arg agent_contract_tag_object_sha "$AGENT_CONTRACT_TAG_OBJECT_SHA" \
         --argjson observed_epoch "$EVIDENCE_OBSERVED_EPOCH" \
         --argjson max_age "$MAX_EVIDENCE_AGE_SECONDS" '
       .id == $run_id
@@ -1570,10 +1571,14 @@ verify_github_evidence() {
       and .check_suite_id > 0
       and (.referenced_workflows | type) == "array"
       and ([.referenced_workflows[]
+        | select((.path | type) == "string")
+        | select(.path == $agent_contract_path or
+          (.path | startswith($agent_contract_path + "@")))] | length) == 1
+      and ([.referenced_workflows[]
         | select(.path ==
-          ($agent_contract_path + "@" + $agent_contract_sha))
-        | select(.sha == $agent_contract_sha)
-        | select((has("ref") | not) or .ref == null)] | length) == 1
+          ($agent_contract_path + "@" + $agent_contract_tag))
+        | select(.ref == ("refs/tags/" + $agent_contract_tag))
+        | select(.sha == $agent_contract_tag_object_sha)] | length) == 1
       and (
         if $proof == "main"
         then .head_branch == $default_branch
@@ -1781,7 +1786,7 @@ resolve_protected_agent_contract_release() {
     return 1
   fi
 
-  printf '%s\n' "$commit_sha"
+  printf '%s\n' "$tag_object_sha"
 }
 
 if [[ "$DRY_RUN" != true ]]; then
@@ -1813,7 +1818,7 @@ if [[ "$DRY_RUN" != true ]]; then
     echo "ERROR: GitHub evidence verification failed for fleet: observed_at is stale or in the future" >&2
     exit 2
   fi
-  if ! AGENT_CONTRACT_SHA=$(resolve_protected_agent_contract_release); then
+  if ! AGENT_CONTRACT_TAG_OBJECT_SHA=$(resolve_protected_agent_contract_release); then
     echo "ERROR: GitHub evidence verification failed for fleet: protected Athena agent-contract release is unresolved" >&2
     exit 2
   fi

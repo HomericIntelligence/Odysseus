@@ -92,8 +92,8 @@ preview. Exact current state prints `NO-DRIFT` and issues no mutation.
 - commands run from the Odysseus repository root
 - workflow changes merged to each target repository's default branch
 - independent human review completed for changes under `.github/workflows/`
-- Athena's protected `agent-contract-v1.0.0` tag published and every governed
-  workflow calling its immutable commit SHA
+- Athena's protected signed annotated `agent-contract-v1.0.0` tag published
+  and every governed workflow calling that exact tag
 - a per-repository activation issue containing the reviewed workflow inventory
   and fresh green health evidence for every protected-event, scheduled,
   required, publish, release, and deploy workflow; the inventory is owned by
@@ -111,7 +111,10 @@ repository object per target. Each repository records `main_sha` and
 paginated jobs, and its check suite. It requires the exact repository, event,
 SHA, branch shape, workflow name/path, successful sole aggregate job and check
 run from GitHub Actions App 15368, and exactly one referenced Athena reusable
-workflow at the commit currently resolved by `agent-contract-v1.0.0`.
+workflow. For an external repository, the run must report the exact
+`agent-contract-v1.0.0`-qualified path, its full tag ref, and the current
+annotated-tag object SHA. The tool independently verifies that the protected
+signed tag resolves to a signed commit.
 The release resolver requires the exact tag ref, a verified signed annotated
 tag, a verified signed commit, and one active repository-owned tag ruleset with
 no bypass that targets only `refs/tags/agent-contract-v*` and blocks update and
