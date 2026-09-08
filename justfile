@@ -854,9 +854,17 @@ repo-rulesets-apply:
 repo-rulesets-preview REPOS:
     ./tools/github/apply-repo-rulesets.sh --active --repos "{{REPOS}}" --dry-run
 
+# Read-only preview for one reviewed repository-owned extras retirement
+repo-rulesets-preview-approved-extra REPOS APPROVAL:
+    ./tools/github/apply-repo-rulesets.sh --active --repos "{{REPOS}}" --dry-run --extra-ruleset-approval-file "{{APPROVAL}}"
+
 # Pilot activation with fresh GitHub-verified proof and an operator-owned snapshot path
 repo-rulesets-activate-repos REPOS EVIDENCE SNAPSHOT:
     RULESET_SNAPSHOT_DIR="{{SNAPSHOT}}" ./tools/github/apply-repo-rulesets.sh --active --repos "{{REPOS}}" --evidence-file "{{EVIDENCE}}"
+
+# Pilot activation that retires one exact reviewed repository-owned extras ruleset
+repo-rulesets-activate-approved-extra REPOS EVIDENCE SNAPSHOT APPROVAL:
+    RULESET_SNAPSHOT_DIR="{{SNAPSHOT}}" ./tools/github/apply-repo-rulesets.sh --active --repos "{{REPOS}}" --evidence-file "{{EVIDENCE}}" --extra-ruleset-approval-file "{{APPROVAL}}"
 
 # Explicit exact-fleet activation after PR/merge-group/main gate proof
 repo-rulesets-activate EVIDENCE:

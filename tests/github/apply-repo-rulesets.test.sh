@@ -626,6 +626,43 @@ for contract in "${contracts[@]}"; do
   assert_synthetic_fixture_converges "$fixture" "$repo"
 done
 
+mnemosyne_approval="$tmp_dir/mnemosyne-extra-ruleset-approval.json"
+jq -n '{
+  schema_version: 1,
+  repositories: {
+    Mnemosyne: {
+      id: 18221133,
+      name: "homeric-main-extras"
+    }
+  }
+}' >"$mnemosyne_approval"
+mnemosyne_approval_output="$tmp_dir/mnemosyne-extra-ruleset-approval.log"
+: >"$tmp_dir/gh-calls.log"
+if ! PATH="$tmp_dir/bin:$PATH" \
+    GH_RULESET_FIXTURE=tests/fixtures/github/fleet-policy/mnemosyne-baseline.json \
+    GH_CALL_LOG="$tmp_dir/gh-calls.log" \
+    tools/github/apply-repo-rulesets.sh \
+      --active --repos Mnemosyne --dry-run \
+      --extra-ruleset-approval-file "$mnemosyne_approval" \
+      >"$mnemosyne_approval_output" 2>&1; then
+  cat "$mnemosyne_approval_output" >&2
+  fail "exact approved Mnemosyne extras ruleset did not pass dry-run"
+fi
+mnemosyne_approval_drift=$(
+  sed -n 's/^DRIFT Mnemosyne: //p' "$mnemosyne_approval_output"
+)
+jq -en --argjson drift "$mnemosyne_approval_drift" '
+  $drift.extra_ruleset.before.id == 18221133
+  and $drift.extra_ruleset.before.name == "homeric-main-extras"
+  and $drift.extra_ruleset.before.enforcement == "active"
+  and $drift.extra_ruleset.after.enforcement == "disabled"
+  and (($drift.extra_ruleset.after
+    | del(.enforcement)) == ($drift.extra_ruleset.before | del(.enforcement)))
+' >/dev/null || fail "approved extras preview did not show an enforcement-only transition"
+assert_no_mock_mutation "approved Mnemosyne extras preview" \
+  "$tmp_dir/gh-calls.log"
+echo "PASS: exact approved repository-owned extras ruleset can enter dry-run"
+
 assert_overlapping_protection_rejected() {
   local name=$1
   local fixture=$2
@@ -1127,6 +1164,13 @@ run_live_update() {
   local classic_mutation_count_file=${GH_CLASSIC_MUTATION_COUNT_FILE:-"$tmp_dir/classic-${repos//,/-}.count"}
   local classic_signature_count_file=${GH_CLASSIC_SIGNATURE_COUNT_FILE:-"$tmp_dir/classic-signatures-${repos//,/-}.count"}
   local observed_at=${GH_EVIDENCE_OBSERVED_AT_OVERRIDE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+  local extra_approval_args=()
+
+  if [[ -n "${GH_EXTRA_RULESET_APPROVAL_FILE:-}" ]]; then
+    extra_approval_args=(
+      --extra-ruleset-approval-file "$GH_EXTRA_RULESET_APPROVAL_FILE"
+    )
+  fi
 
   if [[ "$repos" == *,* ]]; then
     repository_state_dir="$tmp_dir/repository-${repos//,/-}.d"
@@ -1202,6 +1246,7 @@ run_live_update() {
     GH_ALLOW_MUTATION=true \
     GH_RULESET_STATE="$state_file" \
     GH_RULESET_STATE_DIR="${GH_RULESET_STATE_DIR:-}" \
+    GH_EXTRA_RULESET_STATE="${GH_EXTRA_RULESET_STATE:-}" \
     GH_REPOSITORY_STATE="$repository_state_file" \
     GH_REPOSITORY_STATE_DIR="$repository_state_dir" \
     GH_PUT_COUNT_FILE="$put_count_file" \
@@ -1288,6 +1333,7 @@ run_live_update() {
     RULESET_SNAPSHOT_DIR="$snapshot_dir" \
     tools/github/apply-repo-rulesets.sh "${RULESET_MODE:---active}" --repos "$repos" \
       --evidence-file "$evidence_file" \
+      "${extra_approval_args[@]}" \
       >"$output_file" 2>&1
 }
 
@@ -1409,9 +1455,11 @@ jq -en --argjson digest "$first_digest" '
 ' >/dev/null || fail "dry-run digests do not bind both complete pre/post resources"
 jq -en --argjson drift "$first_drift" '
   ($drift | keys | sort) ==
-    (["classic_branch_protection", "repository_settings", "ruleset"] | sort)
+    (["classic_branch_protection", "extra_ruleset", "repository_settings", "ruleset"] | sort)
   and ($drift.classic_branch_protection.before == null)
   and ($drift.classic_branch_protection.after == null)
+  and ($drift.extra_ruleset.before == null)
+  and ($drift.extra_ruleset.after == null)
   and ($drift.ruleset.before | type) == "object"
   and ($drift.ruleset.after | type) == "object"
   and ($drift.repository_settings.before | type) == "object"
@@ -2358,6 +2406,88 @@ jq -e --slurpfile policy configs/github/fleet-ruleset-policy.json '
 [[ $(<"$success_settings_count") -eq 1 ]] || \
   fail "verified update must issue exactly one repository PATCH"
 echo "PASS: live update snapshots pre-state and verifies exact post-state"
+
+extra_live_fixture="$tmp_dir/approved-extra-live-fixture.json"
+extra_live_state="$tmp_dir/approved-extra-live-state.json"
+extra_live_pre="$tmp_dir/approved-extra-live-pre.json"
+extra_live_baseline="$tmp_dir/approved-extra-live-baseline.json"
+extra_live_snapshots="$tmp_dir/approved-extra-live-snapshots"
+extra_live_approval="$tmp_dir/approved-extra-live-approval.json"
+jq '.rulesets += [{
+  id: 18221133,
+  name: "homeric-main-extras",
+  target: "branch",
+  source_type: "Repository",
+  source: "HomericIntelligence/Myrmidons",
+  enforcement: "active",
+  bypass_actors: [],
+  conditions: {ref_name: {include: ["~DEFAULT_BRANCH"], exclude: []}},
+  rules: [{
+    type: "required_status_checks",
+    parameters: {
+      strict_required_status_checks_policy: true,
+      do_not_enforce_on_create: false,
+      required_status_checks: [{context: "legacy-extra", integration_id: 15368}]
+    }
+  }]
+}]' "$myrmidons_fixture" >"$extra_live_fixture"
+seed_ruleset_state "$extra_live_fixture" "$extra_live_baseline"
+jq '.rulesets[] | select(.id == 18221133)' \
+  "$extra_live_fixture" >"$extra_live_state"
+cp "$extra_live_state" "$extra_live_pre"
+jq -n '{
+  schema_version: 1,
+  repositories: {
+    Myrmidons: {id: 18221133, name: "homeric-main-extras"}
+  }
+}' >"$extra_live_approval"
+if ! GH_EXTRA_RULESET_STATE="$extra_live_state" \
+    GH_EXTRA_RULESET_APPROVAL_FILE="$extra_live_approval" run_live_update \
+    "$extra_live_fixture" Myrmidons "$extra_live_baseline" \
+    "$extra_live_snapshots" "$tmp_dir/approved-extra-live.log" \
+    "$tmp_dir/approved-extra-live-put-count" \
+    "$tmp_dir/approved-extra-live-get-count"; then
+  cat "$tmp_dir/approved-extra-live.log" >&2
+  fail "approved extras live retirement failed"
+fi
+jq -e '.enforcement == "disabled"' "$extra_live_state" >/dev/null || \
+  fail "approved extras live retirement did not disable the exact ruleset"
+jq -e --slurpfile before "$extra_live_pre" '
+  (del(.enforcement)) == ($before[0] | del(.enforcement))
+' "$extra_live_state" >/dev/null || \
+  fail "approved extras live retirement changed more than enforcement"
+assert_durable_snapshot "$extra_live_snapshots" "$extra_live_pre" \
+  "approved extras live retirement" 4
+[[ $(<"$tmp_dir/approved-extra-live-put-count") -eq 2 ]] || \
+  fail "approved extras live retirement must issue one baseline and one extras PUT"
+echo "PASS: approved extras live retirement is snapshotted and verified"
+
+extra_rollback_state="$tmp_dir/approved-extra-rollback-state.json"
+extra_rollback_baseline="$tmp_dir/approved-extra-rollback-baseline.json"
+extra_rollback_baseline_pre="$tmp_dir/approved-extra-rollback-baseline-pre.json"
+cp "$extra_live_pre" "$extra_rollback_state"
+seed_ruleset_state "$extra_live_fixture" "$extra_rollback_baseline"
+cp "$extra_rollback_baseline" "$extra_rollback_baseline_pre"
+if GH_EXTRA_RULESET_STATE="$extra_rollback_state" \
+    GH_EXTRA_RULESET_APPROVAL_FILE="$extra_live_approval" \
+    GH_FAIL_PUT_AFTER_WRITE_AT=2 run_live_update \
+    "$extra_live_fixture" Myrmidons "$extra_rollback_baseline" \
+    "$tmp_dir/approved-extra-rollback-snapshots" \
+    "$tmp_dir/approved-extra-rollback.log" \
+    "$tmp_dir/approved-extra-rollback-put-count" \
+    "$tmp_dir/approved-extra-rollback-get-count"; then
+  fail "ambiguous approved-extras PUT unexpectedly succeeded"
+fi
+jq -e --slurpfile expected "$extra_live_pre" '. == $expected[0]' \
+  "$extra_rollback_state" >/dev/null || \
+  fail "ambiguous approved-extras PUT did not restore its exact preimage"
+jq -e --slurpfile expected "$extra_rollback_baseline_pre" '. == $expected[0]' \
+  "$extra_rollback_baseline" >/dev/null || \
+  fail "ambiguous approved-extras PUT did not restore the baseline preimage"
+grep -qF "Fleet rollback verified exactly" \
+  "$tmp_dir/approved-extra-rollback.log" || \
+  fail "ambiguous approved-extras PUT did not verify reverse-order rollback"
+echo "PASS: ambiguous approved-extras PUT restores earlier repository writes"
 
 classic_success_ruleset="$tmp_dir/classic-success-ruleset.json"
 classic_success_state="$tmp_dir/classic-success-state.json"

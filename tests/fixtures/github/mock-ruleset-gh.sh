@@ -48,6 +48,10 @@ ruleset_state_path() {
   fi
 }
 
+extra_ruleset_state_path() {
+  printf '%s\n' "${GH_EXTRA_RULESET_STATE:-}"
+}
+
 repository_state_path() {
   local repo=$1
   if [[ -n "${GH_REPOSITORY_STATE_DIR:-}" ]]; then
@@ -137,6 +141,12 @@ read_ruleset_state() {
   local ruleset_id=$2
   local state_file fixture_repo
   fixture_repo=$(jq -r '.repository | split("/")[-1]' "$GH_RULESET_FIXTURE")
+  state_file=$(extra_ruleset_state_path)
+  if [[ -n "$state_file" && -s "$state_file" ]] &&
+      jq -e --argjson id "$ruleset_id" '.id == $id' "$state_file" >/dev/null; then
+    jq . "$state_file"
+    return
+  fi
   state_file=$(ruleset_state_path "$repo")
   if [[ -n "$state_file" && -s "$state_file" ]]; then
     if [[ "$repo" == "$fixture_repo" ]]; then
@@ -343,7 +353,12 @@ if [[ "$method" != GET ]]; then
         exit 1
       fi
 
-      state_file=$(ruleset_state_path "$repo")
+      ruleset_id=${suffix#/rulesets/}
+      state_file=$(extra_ruleset_state_path)
+      if [[ -z "$state_file" || ! -s "$state_file" ]] ||
+          ! jq -e --argjson id "$ruleset_id" '.id == $id' "$state_file" >/dev/null; then
+        state_file=$(ruleset_state_path "$repo")
+      fi
       if [[ -n "$state_file" ]]; then
         [[ -s "$state_file" ]] || {
           echo "mock state file is missing: $state_file" >&2
@@ -810,18 +825,29 @@ case "$suffix" in
       fi
     else
       effective_state_source=$(ruleset_state_path "$repo")
+      extra_state_source=$(extra_ruleset_state_path)
       effective_state_temp=""
+      extra_state_temp=""
       if [[ -z "$effective_state_source" || ! -s "$effective_state_source" ]]; then
         effective_state_temp="${TMPDIR:-/tmp}/mock-effective-state-$$.json"
         jq -n null >"$effective_state_temp"
         effective_state_source=$effective_state_temp
       fi
+      if [[ -z "$extra_state_source" || ! -s "$extra_state_source" ]]; then
+        extra_state_temp="${TMPDIR:-/tmp}/mock-effective-extra-state-$$.json"
+        jq -n null >"$extra_state_temp"
+        extra_state_source=$extra_state_temp
+      fi
       jq --arg source "HomericIntelligence/$repo" \
-        --slurpfile current "$effective_state_source" '[
+        --slurpfile current "$effective_state_source" \
+        --slurpfile extra "$extra_state_source" '[
         .rulesets[] as $captured
         | (if (($current[0] | type) == "object" and
               $current[0].id == $captured.id)
             then $current[0]
+            elif (($extra[0] | type) == "object" and
+              $extra[0].id == $captured.id)
+            then $extra[0]
             else $captured
             end)
         | select(.target == "branch" and .enforcement == "active") as $ruleset
@@ -839,9 +865,8 @@ case "$suffix" in
             parameters: (.parameters // null)
           }
       ]' "$GH_RULESET_FIXTURE" >"$effective_file"
-      if [[ -n "$effective_state_temp" ]]; then
-        rm -f "$effective_state_temp"
-      fi
+      [[ -z "$effective_state_temp" ]] || rm -f "$effective_state_temp"
+      [[ -z "$extra_state_temp" ]] || rm -f "$extra_state_temp"
       if repo_selected "${GH_INHERITED_RULESET_REPOS:-}" "$repo" ||
           count_selected "${GH_EFFECTIVE_OVERLAP_AT:-}" \
             "$effective_get_count"; then
@@ -963,19 +988,30 @@ case "$suffix" in
       fi
     else
       list_state_source=$(ruleset_state_path "$repo")
+      extra_state_source=$(extra_ruleset_state_path)
       list_state_temp=""
+      extra_state_temp=""
       if [[ -z "$list_state_source" || ! -s "$list_state_source" ]]; then
         list_state_temp="${TMPDIR:-/tmp}/mock-ruleset-list-state-$$.json"
         jq -n null >"$list_state_temp"
         list_state_source=$list_state_temp
       fi
+      if [[ -z "$extra_state_source" || ! -s "$extra_state_source" ]]; then
+        extra_state_temp="${TMPDIR:-/tmp}/mock-ruleset-list-extra-state-$$.json"
+        jq -n null >"$extra_state_temp"
+        extra_state_source=$extra_state_temp
+      fi
       jq --arg name_override "${GH_RULESET_LIST_NAME_OVERRIDE:-}" \
         --arg source "HomericIntelligence/$repo" \
-        --slurpfile current "$list_state_source" '
+        --slurpfile current "$list_state_source" \
+        --slurpfile extra "$extra_state_source" '
         [.rulesets | to_entries[] as $entry
         | (if (($current[0] | type) == "object"
               and $current[0].id == $entry.value.id)
             then $current[0]
+            elif (($extra[0] | type) == "object"
+              and $extra[0].id == $entry.value.id)
+            then $extra[0]
             else $entry.value
             end)
         | {
@@ -992,9 +1028,8 @@ case "$suffix" in
           enforcement
         }]
       ' "$GH_RULESET_FIXTURE" >"$list_file"
-      if [[ -n "$list_state_temp" ]]; then
-        rm -f "$list_state_temp"
-      fi
+      [[ -z "$list_state_temp" ]] || rm -f "$list_state_temp"
+      [[ -z "$extra_state_temp" ]] || rm -f "$extra_state_temp"
       if count_selected "${GH_RULESET_LIST_EXTRA_AT:-}" "$list_count"; then
         jq '. + [{
           id: 999998,

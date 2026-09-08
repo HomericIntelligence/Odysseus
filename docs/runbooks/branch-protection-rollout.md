@@ -25,9 +25,10 @@ activation issue.
 The reconciler reads the complete repository-owned baseline and repository
 settings from GitHub. It also paginates `includes_parents=true` rulesets,
 fetches every ruleset detail, reads effective rules for the exact default
-branch, and reads classic branch protection. Disabled extras are inventoried;
-an inherited or additional active rule affecting the branch is an explicit
-stop. A missing or duplicate baseline, unknown rule, incomplete response,
+branch, and reads classic branch protection. Disabled extras are inventoried.
+An inherited or additional active rule affecting the branch is an explicit
+stop unless one exact repository-owned extras ruleset has a reviewed approval
+file. A missing or duplicate baseline, unknown rule, incomplete response,
 renamed baseline, wildcard or alternate scope, or non-repository owner also
 fails before payload derivation. The tool never creates a missing baseline.
 
@@ -46,7 +47,10 @@ three resource preimages. A changed precondition aborts without overwriting the
 new state and compensates any earlier completed repository in reverse order.
 
 The transaction writes only a drifted baseline and only the seven governed
-repository settings, with independent exact readback after each request.
+repository settings, with independent exact readback after each request. When
+an approval file identifies one active extras ruleset, the transaction changes
+only its enforcement from `active` to `disabled`. It records the complete
+preimage and verifies the exact disabled readback before it continues.
 Classic protection is observable drift: it is deleted only after the
 equivalent active ruleset and the full classic restore fingerprint are read
 back again immediately before deletion. Status checks returned with a null App
@@ -152,6 +156,28 @@ completed on `main`.
    just repo-rulesets-preview <PilotRepo>
    ```
 
+   If the activation issue explicitly approves retirement of one active
+   repository-owned extras ruleset, create an operator-local JSON file:
+
+   ```json
+   {
+     "schema_version": 1,
+     "repositories": {
+       "<PilotRepo>": {
+         "id": 123456,
+         "name": "reviewed-extras-ruleset"
+       }
+     }
+   }
+   ```
+
+   Then run `just repo-rulesets-preview-approved-extra <PilotRepo>
+   <approval.json>`. The file is a closed allowlist. Each entry must match one
+   active repository-owned branch ruleset whose only included selector is
+   `~DEFAULT_BRANCH` or the exact resolved default-branch ref. Wildcards,
+   exclusions, inherited rulesets, alternate branches, unknown fields,
+   approvals outside the target set, and two or more overlaps fail closed.
+
 4. Preserve the canonical `PROTECTION-INVENTORY`, `DIGEST`, and `DRIFT`
    records. Compare every resource with the approved policy. Stop on any
    inherited/extra active rule, classic policy that cannot be restored, unknown
@@ -168,6 +194,11 @@ completed on `main`.
      <timestamped-gate-audit.json> \
      <durable-operator-path>/<PilotRepo>
    ```
+
+   For the reviewed extras case, use `just
+   repo-rulesets-activate-approved-extra <PilotRepo>
+   <timestamped-gate-audit.json> <durable-operator-path>/<PilotRepo>
+   <approval.json>`.
 
 6. Preserve all snapshots and exact-postcondition output. Independently read
    back repository settings, the complete baseline, effective default-branch
@@ -231,9 +262,9 @@ until the repository is recorded as complete. A verified rollback still
 terminates the operation; rerun only after diagnosing the failure.
 `UNCERTAIN MUTATION` is a fleet-wide stop condition: do not run another apply
 and do not hand-edit protection. Preserve the durable ruleset, settings,
-effective-policy, and classic-protection snapshots. Compare current state with
-both the preimage and requested state before any reviewed manual recovery; do
-not overwrite a third state created by another actor.
+effective-policy, approved-extras, and classic-protection snapshots. Compare
+current state with both the preimage and requested state before any reviewed
+manual recovery; do not overwrite a third state created by another actor.
 
 Never disable, replace, or delete unrelated status, review, signature, or
 bypass rules to recover from a queue problem. Retain the snapshot and the exact

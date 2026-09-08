@@ -4,6 +4,7 @@ set -Eeuo pipefail
 # apply-repo-rulesets.sh [--active|--evaluate] [--repos repo1,repo2,...]
 #                         [--all] [--dry-run] [--snapshot-dir path]
 #                         [--evidence-file path]
+#                         [--extra-ruleset-approval-file path]
 # Reconciles an existing repository-owned homeric-main-baseline to the complete
 # versioned fleet policy. The script never creates a missing baseline.
 # Usage:
@@ -30,6 +31,7 @@ DRY_RUN=false
 ALL_REPOS=false
 SNAPSHOT_DIR_OVERRIDE="${RULESET_SNAPSHOT_DIR:-}"
 EVIDENCE_FILE=""
+EXTRA_RULESET_APPROVAL_SOURCE=""
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
@@ -85,12 +87,63 @@ while [[ $# -gt 0 ]]; do
       fi
       shift
       ;;
+    --extra-ruleset-approval-file)
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "ERROR: --extra-ruleset-approval-file requires a non-empty path" >&2
+        exit 2
+      fi
+      EXTRA_RULESET_APPROVAL_SOURCE=$2
+      shift 2
+      ;;
+    --extra-ruleset-approval-file=*)
+      EXTRA_RULESET_APPROVAL_SOURCE="${1#--extra-ruleset-approval-file=}"
+      if [[ -z "$EXTRA_RULESET_APPROVAL_SOURCE" ]]; then
+        echo "ERROR: --extra-ruleset-approval-file requires a non-empty path" >&2
+        exit 2
+      fi
+      shift
+      ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
+EXTRA_RULESET_APPROVAL_FILE="$tmp_dir/extra-ruleset-approval.json"
+if [[ -n "$EXTRA_RULESET_APPROVAL_SOURCE" ]]; then
+  if ! cp "$EXTRA_RULESET_APPROVAL_SOURCE" "$EXTRA_RULESET_APPROVAL_FILE.tmp" ||
+      ! chmod 600 "$EXTRA_RULESET_APPROVAL_FILE.tmp" ||
+      ! mv "$EXTRA_RULESET_APPROVAL_FILE.tmp" "$EXTRA_RULESET_APPROVAL_FILE" ||
+      ! sync "$EXTRA_RULESET_APPROVAL_FILE"; then
+    echo "ERROR: could not seal extra-ruleset approval input: $EXTRA_RULESET_APPROVAL_SOURCE" >&2
+    exit 1
+  fi
+else
+  jq -n '{schema_version: 1, repositories: {}}' \
+    >"$EXTRA_RULESET_APPROVAL_FILE"
+  chmod 600 "$EXTRA_RULESET_APPROVAL_FILE"
+fi
+if ! jq -e '
+    type == "object"
+    and (keys | sort) == ["repositories", "schema_version"]
+    and .schema_version == 1
+    and (.repositories | type) == "object"
+    and all(
+      .repositories | to_entries[];
+      (.key | type) == "string"
+      and (.key | test("^[A-Za-z0-9._-]+$"))
+      and (.value | type) == "object"
+      and (.value | keys | sort) == ["id", "name"]
+      and (.value.id | type) == "number"
+      and .value.id > 0
+      and .value.id == (.value.id | floor)
+      and (.value.name | type) == "string"
+      and (.value.name | test("\\S"))
+    )
+  ' "$EXTRA_RULESET_APPROVAL_FILE" >/dev/null; then
+  echo "ERROR: extra-ruleset approval input has an invalid schema" >&2
+  exit 2
+fi
 POLICY_SOURCE_FILE=$POLICY_FILE
 POLICY_SNAPSHOT_TMP="$tmp_dir/fleet-ruleset-policy.json.tmp"
 POLICY_FILE="$tmp_dir/fleet-ruleset-policy.json"
@@ -176,6 +229,82 @@ validate_live_identity_scope() {
         }
       )
     ' "$ruleset_file" > /dev/null
+}
+
+validate_repository_ruleset_identity() {
+  local ruleset_file=$1
+  local repo=$2
+  local ruleset_id=$3
+  local ruleset_name=$4
+  jq -e \
+    --arg source "$ORG/$repo" \
+    --arg name "$ruleset_name" \
+    --argjson id "$ruleset_id" '
+      .id == $id
+      and .name == $name
+      and .target == "branch"
+      and .source_type == "Repository"
+      and .source == $source
+      and ((keys_unsorted - [
+        "_links",
+        "bypass_actors",
+        "conditions",
+        "created_at",
+        "current_user_can_bypass",
+        "enforcement",
+        "id",
+        "name",
+        "node_id",
+        "rules",
+        "source",
+        "source_type",
+        "target",
+        "updated_at"
+      ]) | length) == 0
+    ' "$ruleset_file" >/dev/null
+}
+
+validate_approved_extra_scope() {
+  local ruleset_file=$1
+  local repo=$2
+  local default_branch=$3
+  local approved_id=$4
+  local approved_name=$5
+  jq -e \
+    --arg source "$ORG/$repo" \
+    --arg default_ref "refs/heads/$default_branch" \
+    --arg name "$approved_name" \
+    --argjson id "$approved_id" '
+      .id == $id
+      and .name == $name
+      and ((keys_unsorted - [
+        "_links",
+        "bypass_actors",
+        "conditions",
+        "created_at",
+        "current_user_can_bypass",
+        "enforcement",
+        "id",
+        "name",
+        "node_id",
+        "rules",
+        "source",
+        "source_type",
+        "target",
+        "updated_at"
+      ]) | length) == 0
+      and .target == "branch"
+      and .source_type == "Repository"
+      and .source == $source
+      and .enforcement == "active"
+      and (.bypass_actors | type) == "array"
+      and (.rules | type) == "array"
+      and .conditions.ref_name.exclude == []
+      and (
+        .conditions.ref_name.include == ["~DEFAULT_BRANCH"]
+        or .conditions.ref_name.include == [$default_ref]
+      )
+    ' "$ruleset_file" >/dev/null
 }
 
 write_mutable_payload() {
@@ -614,6 +743,7 @@ rollback_completed_repositories() {
   local index repo existing_id
   local settings_payload settings_rollback ruleset_payload ruleset_rollback
   local default_branch encoded_branch classic_rollback classic_signatures
+  local extra_id extra_name extra_payload extra_rollback
   local rollback_ok=true
 
   for ((index = ${#COMPLETED_REPOS[@]} - 1; index >= 0; index--)); do
@@ -630,11 +760,22 @@ rollback_completed_repositories() {
     encoded_branch=$(jq -rn --arg value "$default_branch" '$value | @uri')
     classic_rollback=${PLAN_CLASSIC_ROLLBACK[$repo]}
     classic_signatures=${PLAN_CLASSIC_SIGNATURES[$repo]}
+    extra_id=${PLAN_EXTRA_ID[$repo]}
+    extra_name=${PLAN_EXTRA_NAME[$repo]}
+    extra_payload=${PLAN_EXTRA_UPDATE_PAYLOAD[$repo]}
+    extra_rollback=${PLAN_EXTRA_ROLLBACK[$repo]}
 
     if [[ "${PLAN_CLASSIC_PRESENT[$repo]}" == true ]] &&
         ! restore_classic_protection_from_snapshot "$repo" "$encoded_branch" \
           "$classic_rollback" "$classic_signatures"; then
       echo "  WARNING: fleet rollback could not verify $repo classic protection" >&2
+      rollback_ok=false
+    fi
+
+    if [[ "${PLAN_EXTRA_PRESENT[$repo]}" == true ]] &&
+        ! restore_ruleset_from_snapshot "$repo" "$extra_id" \
+          "$extra_payload" "$extra_rollback" true "$extra_name"; then
+      echo "  WARNING: fleet rollback could not verify $repo approved extras ruleset" >&2
       rollback_ok=false
     fi
 
@@ -664,12 +805,14 @@ restore_ruleset_from_snapshot() {
   local desired_payload=$3
   local rollback_payload=$4
   local ambiguous_write=$5
+  local expected_name=${6:-$RULESET_NAME}
   local readback="$tmp_dir/$repo-$existing_id-rollback-readback.json"
   local rollback_put_rc=0
 
   if [[ "$ambiguous_write" == true ]]; then
     if ! gh api "repos/$ORG/$repo/rulesets/$existing_id" >"$readback" ||
-        ! validate_live_identity_scope "$readback" "$repo"; then
+        ! validate_repository_ruleset_identity \
+          "$readback" "$repo" "$existing_id" "$expected_name"; then
       echo "  WARNING: ambiguous ruleset state could not be classified" >&2
       return 1
     fi
@@ -689,7 +832,8 @@ restore_ruleset_from_snapshot() {
     echo "  WARNING: rollback PUT reported exit $rollback_put_rc; verifying live state" >&2
   fi
   gh api "repos/$ORG/$repo/rulesets/$existing_id" >"$readback" &&
-    validate_live_identity_scope "$readback" "$repo" &&
+    validate_repository_ruleset_identity \
+      "$readback" "$repo" "$existing_id" "$expected_name" &&
     exact_mutable_state_matches "$rollback_payload" "$readback"
 }
 
@@ -850,6 +994,14 @@ rollback_classic_transaction_abort() {
     current_rollback_ok=false
     echo "  WARNING: classic-protection rollback could not be verified" >&2
   fi
+  if [[ "$MUTATION_EXTRA_CHANGED" == true ]] &&
+      ! restore_ruleset_from_snapshot \
+        "$MUTATION_REPO" "$MUTATION_EXTRA_ID" \
+        "$MUTATION_EXTRA_UPDATE_PAYLOAD" "$MUTATION_EXTRA_ROLLBACK_PAYLOAD" \
+        true "$MUTATION_EXTRA_NAME"; then
+    current_rollback_ok=false
+    echo "  WARNING: approved-extras rollback could not be verified" >&2
+  fi
   if [[ "$MUTATION_SETTINGS_CHANGED" == true ]] &&
       ! restore_settings_from_snapshot \
         "$MUTATION_REPO" "$MUTATION_SETTINGS_PAYLOAD" \
@@ -876,6 +1028,48 @@ rollback_classic_transaction_abort() {
   exit 1
 }
 
+rollback_extra_transaction_abort() {
+  local reason=$1
+  local current_rollback_ok=true
+  local fleet_rollback_ok=false
+
+  RECOVERY_STARTED=true
+  trap '' HUP INT TERM PIPE
+  MUTATION_ARMED=false
+  echo "  FAILED: $reason; rolling back approved extras and earlier repository writes" >&2
+  if ! restore_ruleset_from_snapshot \
+      "$MUTATION_REPO" "$MUTATION_EXTRA_ID" \
+      "$MUTATION_EXTRA_UPDATE_PAYLOAD" "$MUTATION_EXTRA_ROLLBACK_PAYLOAD" \
+      true "$MUTATION_EXTRA_NAME"; then
+    current_rollback_ok=false
+    echo "  WARNING: approved-extras rollback could not be verified" >&2
+  fi
+  if [[ "$MUTATION_SETTINGS_CHANGED" == true ]] &&
+      ! restore_settings_from_snapshot \
+        "$MUTATION_REPO" "$MUTATION_SETTINGS_PAYLOAD" \
+        "$MUTATION_SETTINGS_ROLLBACK_PAYLOAD" true; then
+    current_rollback_ok=false
+    echo "  WARNING: repository-settings rollback could not be verified" >&2
+  fi
+  if [[ "$MUTATION_RULESET_CHANGED" == true ]] &&
+      ! restore_ruleset_from_snapshot \
+        "$MUTATION_REPO" "$MUTATION_RULESET_ID" \
+        "$MUTATION_UPDATE_PAYLOAD" "$MUTATION_ROLLBACK_PAYLOAD" true; then
+    current_rollback_ok=false
+    echo "  WARNING: baseline ruleset rollback could not be verified" >&2
+  fi
+  if rollback_completed_repositories "$MUTATION_REPO"; then
+    fleet_rollback_ok=true
+  fi
+  if [[ "$current_rollback_ok" == true && "$fleet_rollback_ok" == true ]]; then
+    echo "  Fleet rollback verified exactly; aborting this operation." >&2
+    exit 1
+  fi
+  echo "  UNCERTAIN MUTATION: approved-extras transaction rollback could not be verified exactly." >&2
+  echo "  Durable recovery snapshot: $MUTATION_EXTRA_SNAPSHOT" >&2
+  exit 1
+}
+
 abort_current_transaction() {
   local reason=$1
   if [[ "$MUTATION_ARMED" != true ]]; then
@@ -884,6 +1078,9 @@ abort_current_transaction() {
   case "$MUTATION_KIND" in
     classic)
       rollback_classic_transaction_abort "$reason"
+      ;;
+    extra)
+      rollback_extra_transaction_abort "$reason"
       ;;
     settings)
       rollback_settings_and_ruleset_abort \
@@ -932,6 +1129,12 @@ MUTATION_CLASSIC_ROLLBACK_PAYLOAD=""
 MUTATION_CLASSIC_SIGNATURES=false
 MUTATION_CLASSIC_SNAPSHOT=""
 MUTATION_ENCODED_BRANCH=""
+MUTATION_EXTRA_ID=""
+MUTATION_EXTRA_NAME=""
+MUTATION_EXTRA_UPDATE_PAYLOAD=""
+MUTATION_EXTRA_ROLLBACK_PAYLOAD=""
+MUTATION_EXTRA_SNAPSHOT=""
+MUTATION_EXTRA_CHANGED=false
 
 handle_mutation_signal() {
   local signal_name=$1
@@ -947,6 +1150,9 @@ handle_mutation_signal() {
     if [[ "$MUTATION_KIND" == classic ]]; then
       rollback_classic_transaction_abort \
         "received $signal_name during an armed classic-protection mutation"
+    elif [[ "$MUTATION_KIND" == extra ]]; then
+      rollback_extra_transaction_abort \
+        "received $signal_name during an armed approved-extras mutation"
     elif [[ "$MUTATION_KIND" == settings ]]; then
       rollback_settings_and_ruleset_abort \
         "$MUTATION_REPO" \
@@ -996,6 +1202,36 @@ compensate_current_and_completed() {
             "$MUTATION_REPO" "$MUTATION_ENCODED_BRANCH" \
             "$MUTATION_CLASSIC_ROLLBACK_PAYLOAD" \
             "$MUTATION_CLASSIC_SIGNATURES"; then
+          current_rollback_ok=false
+        fi
+        if [[ "$MUTATION_EXTRA_CHANGED" == true ]] &&
+            ! restore_ruleset_from_snapshot \
+              "$MUTATION_REPO" "$MUTATION_EXTRA_ID" \
+              "$MUTATION_EXTRA_UPDATE_PAYLOAD" \
+              "$MUTATION_EXTRA_ROLLBACK_PAYLOAD" true \
+              "$MUTATION_EXTRA_NAME"; then
+          current_rollback_ok=false
+        fi
+        if [[ "$MUTATION_SETTINGS_CHANGED" == true ]] &&
+            ! restore_settings_from_snapshot \
+              "$MUTATION_REPO" "$MUTATION_SETTINGS_PAYLOAD" \
+              "$MUTATION_SETTINGS_ROLLBACK_PAYLOAD" true; then
+          current_rollback_ok=false
+        fi
+        if [[ "$MUTATION_RULESET_CHANGED" == true ]] &&
+            ! restore_ruleset_from_snapshot \
+              "$MUTATION_REPO" "$MUTATION_RULESET_ID" \
+              "$MUTATION_UPDATE_PAYLOAD" "$MUTATION_ROLLBACK_PAYLOAD" \
+              true; then
+          current_rollback_ok=false
+        fi
+        ;;
+      extra)
+        if ! restore_ruleset_from_snapshot \
+            "$MUTATION_REPO" "$MUTATION_EXTRA_ID" \
+            "$MUTATION_EXTRA_UPDATE_PAYLOAD" \
+            "$MUTATION_EXTRA_ROLLBACK_PAYLOAD" true \
+            "$MUTATION_EXTRA_NAME"; then
           current_rollback_ok=false
         fi
         if [[ "$MUTATION_SETTINGS_CHANGED" == true ]] &&
@@ -1132,6 +1368,16 @@ for repo in "${REPOS[@]}"; do
     exit 2
   fi
   seen_repos[$repo]=1
+done
+
+mapfile -t approved_extra_repos < <(
+  jq -r '.repositories | keys[]' "$EXTRA_RULESET_APPROVAL_FILE"
+)
+for approved_repo in "${approved_extra_repos[@]}"; do
+  if [[ -z "${seen_repos[$approved_repo]:-}" ]]; then
+    echo "ERROR: extra-ruleset approval names a repository outside the target set: $approved_repo" >&2
+    exit 2
+  fi
 done
 
 required_producer_blob_at_sha() {
@@ -1583,6 +1829,12 @@ declare -A PLAN_CLASSIC_PRESENT=()
 declare -A PLAN_CLASSIC_ROLLBACK=()
 declare -A PLAN_CLASSIC_SIGNATURES=()
 declare -A PLAN_CLASSIC_SNAPSHOT=()
+declare -A PLAN_EXTRA_PRESENT=()
+declare -A PLAN_EXTRA_ID=()
+declare -A PLAN_EXTRA_NAME=()
+declare -A PLAN_EXTRA_UPDATE_PAYLOAD=()
+declare -A PLAN_EXTRA_ROLLBACK=()
+declare -A PLAN_EXTRA_SNAPSHOT=()
 
 for repo in "${REPOS[@]}"; do
   echo ""
@@ -1714,8 +1966,61 @@ for repo in "${REPOS[@]}"; do
         | unique[]
       ' "$effective_rules"
     )
-    if [[ ${#overlapping_ids[@]} -gt 0 ]]; then
+    approved_extra_id=$(jq -r --arg repo "$repo" \
+      '.repositories[$repo].id // empty' "$EXTRA_RULESET_APPROVAL_FILE")
+    approved_extra_name=$(jq -r --arg repo "$repo" \
+      '.repositories[$repo].name // empty' "$EXTRA_RULESET_APPROVAL_FILE")
+    approved_extra_present=false
+    extra_ruleset_live="$tmp_dir/$repo-extra-ruleset-live.json"
+    extra_ruleset_before="$tmp_dir/$repo-extra-ruleset-before.json"
+    extra_ruleset_after="$tmp_dir/$repo-extra-ruleset-after.json"
+    extra_ruleset_restore_payload="$tmp_dir/$repo-extra-ruleset-restore.json"
+    extra_ruleset_update_payload="$tmp_dir/$repo-extra-ruleset-update.json"
+    jq -n null >"$extra_ruleset_before"
+    jq -n null >"$extra_ruleset_after"
+    jq -n null >"$extra_ruleset_restore_payload"
+    jq -n null >"$extra_ruleset_update_payload"
+
+    if [[ ${#overlapping_ids[@]} -gt 1 ]]; then
       echo "  FAILED: overlapping active branch ruleset affects $default_branch: ${overlapping_ids[*]}" >&2
+      fail=$((fail + 1))
+      continue
+    elif [[ ${#overlapping_ids[@]} -eq 1 ]]; then
+      if [[ -z "$approved_extra_id" ||
+          "$approved_extra_id" != "${overlapping_ids[0]}" ]]; then
+        echo "  FAILED: overlapping active branch ruleset affects $default_branch: ${overlapping_ids[*]}" >&2
+        fail=$((fail + 1))
+        continue
+      fi
+      cp "$tmp_dir/$repo-${overlapping_ids[0]}-effective.json" \
+        "$extra_ruleset_live"
+      if ! validate_approved_extra_scope \
+          "$extra_ruleset_live" "$repo" "$default_branch" \
+          "$approved_extra_id" "$approved_extra_name" ||
+          ! write_mutable_payload \
+            "$extra_ruleset_live" "$extra_ruleset_restore_payload" ||
+          ! jq -e '.enforcement = "disabled"' \
+            "$extra_ruleset_restore_payload" >"$extra_ruleset_update_payload" ||
+          ! jq -e '{
+              id,
+              name,
+              target,
+              enforcement,
+              bypass_actors,
+              conditions,
+              rules,
+              source,
+              source_type
+            }' "$extra_ruleset_live" >"$extra_ruleset_before" ||
+          ! jq -e '.enforcement = "disabled"' \
+            "$extra_ruleset_before" >"$extra_ruleset_after"; then
+        echo "  FAILED: approved extras ruleset identity or scope is invalid" >&2
+        fail=$((fail + 1))
+        continue
+      fi
+      approved_extra_present=true
+    elif [[ -n "$approved_extra_id" ]]; then
+      echo "  FAILED: extra-ruleset approval has no matching active rule on $default_branch" >&2
       fail=$((fail + 1))
       continue
     fi
@@ -2184,7 +2489,9 @@ for repo in "${REPOS[@]}"; do
         ! settings_before_digest=$(json_sha256 "$settings_before") ||
         ! settings_after_digest=$(json_sha256 "$settings_payload") ||
         ! classic_before_digest=$(json_sha256 "$classic_before") ||
-        ! classic_after_digest=$(json_sha256 "$classic_after"); then
+        ! classic_after_digest=$(json_sha256 "$classic_after") ||
+        ! extra_before_digest=$(json_sha256 "$extra_ruleset_before") ||
+        ! extra_after_digest=$(json_sha256 "$extra_ruleset_after"); then
       echo "  FAILED: could not derive canonical JSON digests" >&2
       fail=$((fail + 1))
       continue
@@ -2195,7 +2502,9 @@ for repo in "${REPOS[@]}"; do
       --arg settings_before "$settings_before_digest" \
       --arg settings_after "$settings_after_digest" \
       --arg classic_before "$classic_before_digest" \
-      --arg classic_after "$classic_after_digest" '{
+      --arg classic_after "$classic_after_digest" \
+      --arg extra_before "$extra_before_digest" \
+      --arg extra_after "$extra_after_digest" '{
         classic_branch_protection: {
           before: $classic_before,
           after: $classic_after
@@ -2207,12 +2516,17 @@ for repo in "${REPOS[@]}"; do
         ruleset: {
           before: $ruleset_before,
           after: $ruleset_after
+        },
+        extra_ruleset: {
+          before: $extra_before,
+          after: $extra_after
         }
       }')
     echo "PROTECTION-INVENTORY $repo: $(jq -cS . "$protection_inventory")"
     echo "DIGEST $repo: $digest_object"
 
     if [[ "$ruleset_drift" == false && "$settings_drift" == false &&
+        "$approved_extra_present" == false &&
         "$classic_protection_present" == false ]]; then
       echo "NO-DRIFT $repo"
     else
@@ -2222,7 +2536,9 @@ for repo in "${REPOS[@]}"; do
         --slurpfile settings_before "$settings_before" \
         --slurpfile settings_after "$settings_payload" \
         --slurpfile classic_before "$classic_before" \
-        --slurpfile classic_after "$classic_after" '{
+        --slurpfile classic_after "$classic_after" \
+        --slurpfile extra_before "$extra_ruleset_before" \
+        --slurpfile extra_after "$extra_ruleset_after" '{
           classic_branch_protection: {
             before: $classic_before[0],
             after: $classic_after[0]
@@ -2234,6 +2550,10 @@ for repo in "${REPOS[@]}"; do
           ruleset: {
             before: $ruleset_before[0],
             after: $ruleset_after[0]
+          },
+          extra_ruleset: {
+            before: $extra_before[0],
+            after: $extra_after[0]
           }
         }')
       echo "DRIFT $repo: $drift_object"
@@ -2248,6 +2568,7 @@ for repo in "${REPOS[@]}"; do
     settings_snapshot="$SNAPSHOT_ROOT/$repo-repository-settings-pre.json"
     inventory_snapshot="$SNAPSHOT_ROOT/$repo-effective-protection-pre.json"
     classic_snapshot="$SNAPSHOT_ROOT/$repo-classic-protection-pre.json"
+    extra_snapshot="$SNAPSHOT_ROOT/$repo-extra-ruleset-$approved_extra_id-pre.json"
     rollback_payload="$tmp_dir/$repo-$existing_id-rollback.json"
     settings_rollback_payload="$tmp_dir/$repo-settings-rollback.json"
     post_readback="$tmp_dir/$repo-$existing_id-post-readback.json"
@@ -2255,7 +2576,8 @@ for repo in "${REPOS[@]}"; do
     if ! mkdir -p "$SNAPSHOT_ROOT" ||
         [[ -e "$snapshot_file" || -e "$settings_snapshot" ||
           -e "$inventory_snapshot" ||
-          ( "$classic_protection_present" == true && -e "$classic_snapshot" ) ]]; then
+          ( "$classic_protection_present" == true && -e "$classic_snapshot" ) ||
+          ( "$approved_extra_present" == true && -e "$extra_snapshot" ) ]]; then
       echo "  FAILED: durable snapshot path is unavailable or already exists for $repo" >&2
       fail=$((fail + 1))
       continue
@@ -2292,6 +2614,19 @@ for repo in "${REPOS[@]}"; do
     else
       classic_snapshot=""
     fi
+    if [[ "$approved_extra_present" == true ]]; then
+      extra_snapshot_tmp="$extra_snapshot.tmp"
+      if ! cp "$extra_ruleset_live" "$extra_snapshot_tmp" ||
+          ! chmod 600 "$extra_snapshot_tmp" ||
+          ! mv "$extra_snapshot_tmp" "$extra_snapshot" ||
+          ! sync "$extra_snapshot"; then
+        echo "  FAILED: could not persist durable approved-extras snapshot" >&2
+        fail=$((fail + 1))
+        continue
+      fi
+    else
+      extra_snapshot=""
+    fi
     if [[ "$classic_protection_present" == true &&
         "$desired_enforcement" != active ]]; then
       echo "  FAILED: classic protection can be removed only after an active equivalent ruleset" >&2
@@ -2304,7 +2639,7 @@ for repo in "${REPOS[@]}"; do
       continue
     fi
     cp "$settings_snapshot" "$settings_rollback_payload"
-    echo "  Durable pre-state snapshots: $snapshot_file $settings_snapshot $inventory_snapshot${classic_snapshot:+ $classic_snapshot}"
+    echo "  Durable pre-state snapshots: $snapshot_file $settings_snapshot $inventory_snapshot${extra_snapshot:+ $extra_snapshot}${classic_snapshot:+ $classic_snapshot}"
     PLAN_RULESET_ID[$repo]=$existing_id
     PLAN_RULESET_DRIFT[$repo]=$ruleset_drift
     PLAN_SETTINGS_DRIFT[$repo]=$settings_drift
@@ -2320,6 +2655,12 @@ for repo in "${REPOS[@]}"; do
     PLAN_CLASSIC_ROLLBACK[$repo]=$classic_rollback_payload
     PLAN_CLASSIC_SIGNATURES[$repo]=$classic_signatures
     PLAN_CLASSIC_SNAPSHOT[$repo]=$classic_snapshot
+    PLAN_EXTRA_PRESENT[$repo]=$approved_extra_present
+    PLAN_EXTRA_ID[$repo]=$approved_extra_id
+    PLAN_EXTRA_NAME[$repo]=$approved_extra_name
+    PLAN_EXTRA_UPDATE_PAYLOAD[$repo]=$extra_ruleset_update_payload
+    PLAN_EXTRA_ROLLBACK[$repo]=$extra_ruleset_restore_payload
+    PLAN_EXTRA_SNAPSHOT[$repo]=$extra_snapshot
   fi
 done
 
@@ -2450,8 +2791,12 @@ verify_repository_postcondition() {
   local update_payload=$6
   local enforcement=$7
   local label=$8
+  local extra_id=${9:-}
+  local extra_name=${10:-}
+  local extra_payload=${11:-}
   local encoded_branch prefix
   local repository_file branch_file ruleset_file classic_file classic_error
+  local extra_file
 
   encoded_branch=$(jq -rn --arg value "$default_branch" '$value | @uri')
   prefix="$tmp_dir/$repo-$label"
@@ -2486,6 +2831,16 @@ verify_repository_postcondition() {
       "$enforcement" "$label"; then
     return 1
   fi
+  if [[ -n "$extra_id" ]]; then
+    extra_file="$prefix-extra-ruleset.json"
+    if ! gh api "repos/$ORG/$repo/rulesets/$extra_id" >"$extra_file" ||
+        ! validate_repository_ruleset_identity \
+          "$extra_file" "$repo" "$extra_id" "$extra_name" ||
+        ! exact_mutable_state_matches "$extra_payload" "$extra_file" ||
+        ! jq -e '.enforcement == "disabled"' "$extra_file" >/dev/null; then
+      return 1
+    fi
+  fi
 }
 
 for repo in "${REPOS[@]}"; do
@@ -2504,6 +2859,12 @@ for repo in "${REPOS[@]}"; do
   classic_rollback_payload=${PLAN_CLASSIC_ROLLBACK[$repo]}
   classic_signatures=${PLAN_CLASSIC_SIGNATURES[$repo]}
   classic_snapshot=${PLAN_CLASSIC_SNAPSHOT[$repo]}
+  approved_extra_present=${PLAN_EXTRA_PRESENT[$repo]}
+  approved_extra_id=${PLAN_EXTRA_ID[$repo]}
+  approved_extra_name=${PLAN_EXTRA_NAME[$repo]}
+  extra_ruleset_update_payload=${PLAN_EXTRA_UPDATE_PAYLOAD[$repo]}
+  extra_ruleset_restore_payload=${PLAN_EXTRA_ROLLBACK[$repo]}
+  extra_snapshot=${PLAN_EXTRA_SNAPSHOT[$repo]}
   encoded_branch=$(jq -rn --arg value "$default_branch" '$value | @uri')
   expected_main_sha=$(jq -er --arg repo "$repo" \
     '.repositories[$repo].main_sha' "$EVIDENCE_FILE")
@@ -2670,6 +3031,12 @@ for repo in "${REPOS[@]}"; do
   MUTATION_CLASSIC_SIGNATURES=$classic_signatures
   MUTATION_CLASSIC_SNAPSHOT=$classic_snapshot
   MUTATION_ENCODED_BRANCH=$encoded_branch
+  MUTATION_EXTRA_ID=$approved_extra_id
+  MUTATION_EXTRA_NAME=$approved_extra_name
+  MUTATION_EXTRA_UPDATE_PAYLOAD=$extra_ruleset_update_payload
+  MUTATION_EXTRA_ROLLBACK_PAYLOAD=$extra_ruleset_restore_payload
+  MUTATION_EXTRA_SNAPSHOT=$extra_snapshot
+  MUTATION_EXTRA_CHANGED=false
   if [[ "$ruleset_drift" == true ]]; then
     if ! gh api "repos/$ORG/$repo" >"$mutation_repository_identity" ||
         ! exact_repository_identity_matches \
@@ -2755,6 +3122,48 @@ for repo in "${REPOS[@]}"; do
     MUTATION_SETTINGS_CHANGED=true
   fi
 
+  if [[ "$approved_extra_present" == true ]]; then
+    extra_precondition="$tmp_dir/$repo-$approved_extra_id-extra-jit-precondition.json"
+    extra_readback="$tmp_dir/$repo-$approved_extra_id-extra-post-readback.json"
+    if ! read_exact_default_branch_sha \
+        "$repo" "$encoded_branch" "$default_branch" "$expected_main_sha" \
+        "$branch_precondition" ||
+        ! gh api "repos/$ORG/$repo" >"$mutation_repository_identity" ||
+        ! exact_repository_identity_matches \
+          "$repo" "$default_branch" "$mutation_repository_identity" ||
+        ! gh api "repos/$ORG/$repo/rulesets/$approved_extra_id" \
+          >"$extra_precondition" ||
+        ! validate_approved_extra_scope \
+          "$extra_precondition" "$repo" "$default_branch" \
+          "$approved_extra_id" "$approved_extra_name" ||
+        ! exact_mutable_state_matches \
+          "$extra_ruleset_restore_payload" "$extra_precondition"; then
+      abort_current_transaction \
+        "approved extras changed before the just-in-time disable precondition"
+    fi
+    echo "  Disabling approved $repo extras ruleset (id: $approved_extra_id)..."
+    MUTATION_KIND=extra
+    MUTATION_ARMED=true
+    if ! gh api -X PUT "repos/$ORG/$repo/rulesets/$approved_extra_id" \
+        --input "$extra_ruleset_update_payload" >/dev/null; then
+      rollback_extra_transaction_abort \
+        "approved-extras PUT failed or returned an ambiguous result"
+    fi
+    if ! gh api "repos/$ORG/$repo/rulesets/$approved_extra_id" \
+        >"$extra_readback" ||
+        ! validate_repository_ruleset_identity \
+          "$extra_readback" "$repo" "$approved_extra_id" \
+          "$approved_extra_name" ||
+        ! exact_mutable_state_matches \
+          "$extra_ruleset_update_payload" "$extra_readback" ||
+        ! jq -e '.enforcement == "disabled"' \
+          "$extra_readback" >/dev/null; then
+      rollback_extra_transaction_abort \
+        "approved-extras readback did not match the exact disabled state"
+    fi
+    MUTATION_EXTRA_CHANGED=true
+  fi
+
   if [[ "$classic_protection_present" == true ]]; then
     if ! gh api "repos/$ORG/$repo/branches/$encoded_branch/protection" \
         >"$precondition_classic" 2>"$precondition_classic_error" ||
@@ -2807,7 +3216,9 @@ for repo in "${REPOS[@]}"; do
   if ! verify_repository_postcondition \
       "$repo" "$existing_id" "$default_branch" "$expected_main_sha" \
       "$settings_payload" "$update_payload" "$desired_enforcement" \
-      transaction-final; then
+      transaction-final \
+      "$approved_extra_id" "$approved_extra_name" \
+      "$extra_ruleset_update_payload"; then
     abort_current_transaction \
       "final-effective-protection/default-branch-sha postcondition did not match the canonical baseline"
   fi
@@ -2824,7 +3235,9 @@ for repo in "${REPOS[@]}"; do
   if ! verify_repository_postcondition \
       "$repo" "${PLAN_RULESET_ID[$repo]}" "${PLAN_DEFAULT_BRANCH[$repo]}" \
       "$expected_main_sha" "${PLAN_SETTINGS_PAYLOAD[$repo]}" \
-      "${PLAN_UPDATE_PAYLOAD[$repo]}" "$desired_enforcement" fleet-final; then
+      "${PLAN_UPDATE_PAYLOAD[$repo]}" "$desired_enforcement" fleet-final \
+      "${PLAN_EXTRA_ID[$repo]}" "${PLAN_EXTRA_NAME[$repo]}" \
+      "${PLAN_EXTRA_UPDATE_PAYLOAD[$repo]}"; then
     RECOVERY_STARTED=true
     MUTATION_ARMED=false
     trap '' HUP INT TERM PIPE
