@@ -2949,7 +2949,14 @@ verify_approved_extra_disable_precondition() {
         --slurpfile baseline "$update_payload" \
         --slurpfile extra "$extra_restore_payload" '
         def normalized_rules:
-          map(
+          map({
+            type,
+            ruleset_id,
+            ruleset_source_type,
+            ruleset_source,
+            parameters: (.parameters // null)
+          })
+          | map(
             if .type == "required_status_checks" and
                 (.parameters | type) == "object" and
                 (.parameters.required_status_checks | type) == "array"

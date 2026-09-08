@@ -861,7 +861,7 @@ case "$suffix" in
             end)
         | select(.target == "branch" and .enforcement == "active") as $ruleset
         | $ruleset.rules[]
-        | {
+        | ({
             type,
             ruleset_id: $ruleset.id,
             ruleset_source_type: $ruleset.source_type,
@@ -870,9 +870,8 @@ case "$suffix" in
               then $source
               else $ruleset.source
               end
-            ),
-            parameters: (.parameters // null)
-          }
+            )
+          } + if has("parameters") then {parameters} else {} end)
       ]' "$GH_RULESET_FIXTURE" >"$effective_file"
       [[ -z "$effective_state_temp" ]] || rm -f "$effective_state_temp"
       [[ -z "$extra_state_temp" ]] || rm -f "$extra_state_temp"

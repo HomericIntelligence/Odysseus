@@ -17,6 +17,16 @@ fail() {
   exit 1
 }
 
+file_mode() {
+  python3 - "$1" <<'PY'
+import os
+import stat
+import sys
+
+print(f"{stat.S_IMODE(os.stat(sys.argv[1]).st_mode):03o}")
+PY
+}
+
 assert_renderer_rejects_policy() {
   local policy=$1
   local label=$2
@@ -2419,6 +2429,7 @@ extra_live_snapshots="$tmp_dir/approved-extra-live-snapshots"
 extra_live_approval="$tmp_dir/approved-extra-live-approval.json"
 extra_live_settings="$tmp_dir/approved-extra-live-settings.json"
 extra_live_settings_count="$tmp_dir/approved-extra-live-settings-count"
+extra_live_effective_shape="$tmp_dir/approved-extra-live-effective-shape.json"
 jq '.rulesets += [{
   id: 18221133,
   name: "homeric-main-extras",
@@ -2458,6 +2469,20 @@ jq -n '{
   delete_branch_on_merge: false,
   web_commit_signoff_required: false
 }' >"$extra_live_settings"
+GH_RULESET_FIXTURE="$extra_live_fixture" \
+  GH_RULESET_STATE="$extra_live_baseline" \
+  GH_EXTRA_RULESET_STATE="$extra_live_state" \
+  GH_CALL_LOG="$tmp_dir/approved-extra-effective-shape.log" \
+  "$tmp_dir/bin/gh" api --paginate --slurp \
+    "repos/HomericIntelligence/Myrmidons/rules/branches/main?per_page=100" \
+    >"$extra_live_effective_shape"
+jq -e '
+  ([.[][] | select(.type == "deletion") | has("parameters")] == [false])
+  and ([.[][] | select(.type == "required_status_checks") |
+    has("parameters")] == [true, true])
+' "$extra_live_effective_shape" >/dev/null ||
+  fail "dynamic effective-rule mock differs from the captured absent-parameters shape"
+echo "PASS: dynamic effective-rule mock preserves captured absent parameters"
 
 assert_extra_approval_rejected() {
   local name=$1
@@ -2556,7 +2581,7 @@ for extra_payload_snapshot in \
     "$extra_live_snapshots/Myrmidons-extra-ruleset-18221133-disabled.json"; do
   [[ -f "$extra_payload_snapshot" ]] ||
     fail "approved extras did not persist $extra_payload_snapshot"
-  [[ $(stat -f '%Lp' "$extra_payload_snapshot") == 600 ]] ||
+  [[ $(file_mode "$extra_payload_snapshot") == 600 ]] ||
     fail "approved extras payload snapshot is not mode 600: $extra_payload_snapshot"
 done
 jq -e --slurpfile expected "$extra_live_pre" '
