@@ -123,6 +123,30 @@ else
     >"$EXTRA_RULESET_APPROVAL_FILE"
   chmod 600 "$EXTRA_RULESET_APPROVAL_FILE"
 fi
+if ! python3 - "$EXTRA_RULESET_APPROVAL_FILE" <<'PY'
+import json
+import sys
+
+
+def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key: {key}")
+        result[key] = value
+    return result
+
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as approval_file:
+        json.load(approval_file, object_pairs_hook=reject_duplicate_keys)
+except (OSError, UnicodeError, ValueError):
+    raise SystemExit(1)
+PY
+then
+  echo "ERROR: extra-ruleset approval input has an invalid schema" >&2
+  exit 2
+fi
 if ! jq -e '
     type == "object"
     and (keys | sort) == ["repositories", "schema_version"]
@@ -178,7 +202,6 @@ desired_repository_settings=$(jq -c '.repository_settings' "$POLICY_FILE")
 
 declare -a COMPLETED_REPOS=()
 RECOVERY_STARTED=false
-RECOVERY_VERIFIED=false
 OPERATION_COMMITTED=false
 
 if [[ -n "$SNAPSHOT_DIR_OVERRIDE" ]]; then
@@ -1024,7 +1047,15 @@ rollback_classic_transaction_abort() {
     exit 1
   fi
   echo "  UNCERTAIN MUTATION: classic-protection transaction rollback could not be verified exactly." >&2
-  echo "  Durable recovery snapshots: $MUTATION_SNAPSHOT $MUTATION_SETTINGS_SNAPSHOT $MUTATION_CLASSIC_SNAPSHOT" >&2
+  echo "  Durable recovery artifacts:" >&2
+  echo "    baseline: $MUTATION_SNAPSHOT" >&2
+  echo "    repository settings: $MUTATION_SETTINGS_SNAPSHOT" >&2
+  if [[ -n "$MUTATION_EXTRA_SNAPSHOT" ]]; then
+    echo "    extras response: $MUTATION_EXTRA_SNAPSHOT" >&2
+    echo "    extras restore payload: $MUTATION_EXTRA_ROLLBACK_PAYLOAD" >&2
+    echo "    extras disabled payload: $MUTATION_EXTRA_UPDATE_PAYLOAD" >&2
+  fi
+  echo "    classic protection: $MUTATION_CLASSIC_SNAPSHOT" >&2
   exit 1
 }
 
@@ -1066,7 +1097,12 @@ rollback_extra_transaction_abort() {
     exit 1
   fi
   echo "  UNCERTAIN MUTATION: approved-extras transaction rollback could not be verified exactly." >&2
-  echo "  Durable recovery snapshot: $MUTATION_EXTRA_SNAPSHOT" >&2
+  echo "  Durable recovery artifacts:" >&2
+  echo "    baseline: $MUTATION_SNAPSHOT" >&2
+  echo "    repository settings: $MUTATION_SETTINGS_SNAPSHOT" >&2
+  echo "    extras response: $MUTATION_EXTRA_SNAPSHOT" >&2
+  echo "    extras restore payload: $MUTATION_EXTRA_ROLLBACK_PAYLOAD" >&2
+  echo "    extras disabled payload: $MUTATION_EXTRA_UPDATE_PAYLOAD" >&2
   exit 1
 }
 
@@ -1280,7 +1316,6 @@ compensate_current_and_completed() {
     fleet_rollback_ok=true
   fi
   if [[ "$current_rollback_ok" == true && "$fleet_rollback_ok" == true ]]; then
-    RECOVERY_VERIFIED=true
     return 0
   fi
   return 1
@@ -1424,7 +1459,6 @@ verify_github_evidence() {
   local branch_file="$tmp_dir/$repo-default-branch.json"
   local default_branch encoded_branch current_sha current_producer_blob
   local proof_name expected_event run_id attempt_number evidence_sha run_url
-  local proof_producer_blob
   local run_file jobs_file checks_file check_suite_id
   local pull_request_jobs_file=""
   local merge_group_jobs_file=""
@@ -1487,8 +1521,9 @@ verify_github_evidence() {
       echo "ERROR: GitHub evidence verification failed for $repo: $proof_name proof is incomplete" >&2
       return 1
     fi
-    if ! proof_producer_blob=$(required_producer_blob_at_sha \
-        "$repo" "$evidence_sha" "$proof_name" "$current_producer_blob"); then
+    if ! required_producer_blob_at_sha \
+        "$repo" "$evidence_sha" "$proof_name" "$current_producer_blob" \
+        >/dev/null; then
       echo "ERROR: GitHub evidence verification failed for $repo: $proof_name producer blob differs from current main or contains smoke" >&2
       return 1
     fi
@@ -2569,6 +2604,8 @@ for repo in "${REPOS[@]}"; do
     inventory_snapshot="$SNAPSHOT_ROOT/$repo-effective-protection-pre.json"
     classic_snapshot="$SNAPSHOT_ROOT/$repo-classic-protection-pre.json"
     extra_snapshot="$SNAPSHOT_ROOT/$repo-extra-ruleset-$approved_extra_id-pre.json"
+    extra_restore_snapshot="$SNAPSHOT_ROOT/$repo-extra-ruleset-$approved_extra_id-restore.json"
+    extra_update_snapshot="$SNAPSHOT_ROOT/$repo-extra-ruleset-$approved_extra_id-disabled.json"
     rollback_payload="$tmp_dir/$repo-$existing_id-rollback.json"
     settings_rollback_payload="$tmp_dir/$repo-settings-rollback.json"
     post_readback="$tmp_dir/$repo-$existing_id-post-readback.json"
@@ -2577,7 +2614,9 @@ for repo in "${REPOS[@]}"; do
         [[ -e "$snapshot_file" || -e "$settings_snapshot" ||
           -e "$inventory_snapshot" ||
           ( "$classic_protection_present" == true && -e "$classic_snapshot" ) ||
-          ( "$approved_extra_present" == true && -e "$extra_snapshot" ) ]]; then
+          ( "$approved_extra_present" == true &&
+            ( -e "$extra_snapshot" || -e "$extra_restore_snapshot" ||
+              -e "$extra_update_snapshot" ) ) ]]; then
       echo "  FAILED: durable snapshot path is unavailable or already exists for $repo" >&2
       fail=$((fail + 1))
       continue
@@ -2616,16 +2655,28 @@ for repo in "${REPOS[@]}"; do
     fi
     if [[ "$approved_extra_present" == true ]]; then
       extra_snapshot_tmp="$extra_snapshot.tmp"
+      extra_restore_snapshot_tmp="$extra_restore_snapshot.tmp"
+      extra_update_snapshot_tmp="$extra_update_snapshot.tmp"
       if ! cp "$extra_ruleset_live" "$extra_snapshot_tmp" ||
           ! chmod 600 "$extra_snapshot_tmp" ||
           ! mv "$extra_snapshot_tmp" "$extra_snapshot" ||
-          ! sync "$extra_snapshot"; then
-        echo "  FAILED: could not persist durable approved-extras snapshot" >&2
+          ! sync "$extra_snapshot" ||
+          ! cp "$extra_ruleset_restore_payload" "$extra_restore_snapshot_tmp" ||
+          ! chmod 600 "$extra_restore_snapshot_tmp" ||
+          ! mv "$extra_restore_snapshot_tmp" "$extra_restore_snapshot" ||
+          ! sync "$extra_restore_snapshot" ||
+          ! cp "$extra_ruleset_update_payload" "$extra_update_snapshot_tmp" ||
+          ! chmod 600 "$extra_update_snapshot_tmp" ||
+          ! mv "$extra_update_snapshot_tmp" "$extra_update_snapshot" ||
+          ! sync "$extra_update_snapshot"; then
+        echo "  FAILED: could not persist durable approved-extras recovery artifacts" >&2
         fail=$((fail + 1))
         continue
       fi
     else
       extra_snapshot=""
+      extra_restore_snapshot=""
+      extra_update_snapshot=""
     fi
     if [[ "$classic_protection_present" == true &&
         "$desired_enforcement" != active ]]; then
@@ -2639,7 +2690,7 @@ for repo in "${REPOS[@]}"; do
       continue
     fi
     cp "$settings_snapshot" "$settings_rollback_payload"
-    echo "  Durable pre-state snapshots: $snapshot_file $settings_snapshot $inventory_snapshot${extra_snapshot:+ $extra_snapshot}${classic_snapshot:+ $classic_snapshot}"
+    echo "  Durable recovery artifacts: $snapshot_file $settings_snapshot $inventory_snapshot${extra_snapshot:+ $extra_snapshot $extra_restore_snapshot $extra_update_snapshot}${classic_snapshot:+ $classic_snapshot}"
     PLAN_RULESET_ID[$repo]=$existing_id
     PLAN_RULESET_DRIFT[$repo]=$ruleset_drift
     PLAN_SETTINGS_DRIFT[$repo]=$settings_drift
@@ -2658,8 +2709,8 @@ for repo in "${REPOS[@]}"; do
     PLAN_EXTRA_PRESENT[$repo]=$approved_extra_present
     PLAN_EXTRA_ID[$repo]=$approved_extra_id
     PLAN_EXTRA_NAME[$repo]=$approved_extra_name
-    PLAN_EXTRA_UPDATE_PAYLOAD[$repo]=$extra_ruleset_update_payload
-    PLAN_EXTRA_ROLLBACK[$repo]=$extra_ruleset_restore_payload
+    PLAN_EXTRA_UPDATE_PAYLOAD[$repo]=$extra_update_snapshot
+    PLAN_EXTRA_ROLLBACK[$repo]=$extra_restore_snapshot
     PLAN_EXTRA_SNAPSHOT[$repo]=$extra_snapshot
   fi
 done
@@ -2782,6 +2833,164 @@ verify_canonical_effective_inventory() {
   fi
 }
 
+verify_approved_extra_disable_precondition() {
+  local repo=$1
+  local existing_id=$2
+  local default_branch=$3
+  local expected_main_sha=$4
+  local settings_payload=$5
+  local update_payload=$6
+  local extra_id=$7
+  local extra_name=$8
+  local enforcement=$9
+  local protection_inventory=${10}
+  local extra_restore_payload=${11}
+  local classic_present=${12}
+  local classic_rollback_payload=${13}
+  local classic_signatures=${14}
+  local encoded_branch prefix
+  local extra_file ruleset_file repository_file branch_file
+  local ruleset_pages rulesets effective_pages effective_rules
+  local classic_file classic_error
+
+  [[ "$enforcement" == active ]] || return 1
+  encoded_branch=$(jq -rn --arg value "$default_branch" '$value | @uri')
+  prefix="$tmp_dir/$repo-extra-disable-precondition"
+  extra_file="$prefix-extra.json"
+  ruleset_file="$prefix-baseline.json"
+  repository_file="$prefix-repository.json"
+  branch_file="$prefix-branch.json"
+  ruleset_pages="$prefix-rulesets.pages"
+  rulesets="$prefix-rulesets.json"
+  effective_pages="$prefix-effective.pages"
+  effective_rules="$prefix-effective.json"
+  classic_file="$prefix-classic.json"
+  classic_error="$prefix-classic.err"
+
+  if ! gh api "repos/$ORG/$repo/rulesets/$extra_id" >"$extra_file" ||
+      ! validate_approved_extra_scope \
+        "$extra_file" "$repo" "$default_branch" "$extra_id" "$extra_name" ||
+      ! exact_mutable_state_matches \
+        "$extra_restore_payload" "$extra_file" ||
+      ! gh api "repos/$ORG/$repo/rulesets/$existing_id" >"$ruleset_file" ||
+      ! validate_live_identity_scope "$ruleset_file" "$repo" ||
+      ! exact_mutable_state_matches "$update_payload" "$ruleset_file" ||
+      ! jq -e '.enforcement == "active"' "$ruleset_file" >/dev/null ||
+      ! gh api "repos/$ORG/$repo" >"$repository_file" ||
+      ! exact_repository_identity_matches \
+        "$repo" "$default_branch" "$repository_file" ||
+      ! exact_repository_settings_match \
+        "$settings_payload" "$repository_file" ||
+      ! read_exact_default_branch_sha \
+        "$repo" "$encoded_branch" "$default_branch" "$expected_main_sha" \
+        "$branch_file" ||
+      ! gh api --paginate --slurp \
+        "repos/$ORG/$repo/rulesets?includes_parents=true&per_page=100" \
+        >"$ruleset_pages" ||
+      ! jq -e '
+        select(type == "array" and all(.[]; type == "array"))
+        | [ .[][] ]
+      ' "$ruleset_pages" >"$rulesets" ||
+      ! gh api --paginate --slurp \
+        "repos/$ORG/$repo/rules/branches/$encoded_branch?per_page=100" \
+        >"$effective_pages" ||
+      ! jq -e '
+        select(type == "array" and all(.[]; type == "array"))
+        | [ .[][] ]
+      ' "$effective_pages" >"$effective_rules"; then
+    return 1
+  fi
+
+  if [[ "$classic_present" == true ]]; then
+    if ! gh api "repos/$ORG/$repo/branches/$encoded_branch/protection" \
+        >"$classic_file" 2>"$classic_error" ||
+        ! exact_classic_protection_matches \
+          "$classic_rollback_payload" "$classic_signatures" \
+          "$classic_file"; then
+      return 1
+    fi
+  elif gh api "repos/$ORG/$repo/branches/$encoded_branch/protection" \
+      >"$classic_file" 2>"$classic_error" ||
+      ! grep -qF 'HTTP 404' "$classic_error"; then
+    return 1
+  fi
+
+  if ! jq -e \
+      --argjson baseline_id "$existing_id" \
+      --arg enforcement "$enforcement" \
+      --slurpfile expected "$protection_inventory" '
+        def summary: {id, name, target, source, source_type, enforcement};
+        type == "array"
+        and all(.[];
+          type == "object"
+          and (.id | type) == "number"
+          and (.name | type) == "string"
+          and (.target | type) == "string"
+          and (.source | type) == "string"
+          and (.source_type | type) == "string"
+          and (.enforcement == "active"
+            or .enforcement == "evaluate"
+            or .enforcement == "disabled"))
+        and (map(.id) | length) == (map(.id) | unique | length)
+        and ([.[] | summary] | sort_by(.source_type, .source, .id)) ==
+          ($expected[0].rulesets
+            | map(
+                if .id == $baseline_id
+                then .enforcement = $enforcement
+                else .
+                end
+              )
+            | sort_by(.source_type, .source, .id))
+      ' "$rulesets" >/dev/null ||
+      ! jq -e \
+        --arg source "$ORG/$repo" \
+        --argjson baseline_id "$existing_id" \
+        --argjson extra_id "$extra_id" \
+        --slurpfile baseline "$update_payload" \
+        --slurpfile extra "$extra_restore_payload" '
+        def normalized_rules:
+          map(
+            if .type == "required_status_checks" and
+                (.parameters | type) == "object" and
+                (.parameters.required_status_checks | type) == "array"
+            then .parameters.required_status_checks |=
+              sort_by(.context, .integration_id)
+            elif .type == "pull_request" and
+                (.parameters | type) == "object"
+            then .parameters.allowed_merge_methods |= sort
+              | .parameters.dismissal_restriction.allowed_actors |=
+                sort_by(.type, .id)
+              | .parameters.required_reviewers |= (
+                  map(.file_patterns |= sort)
+                  | sort_by(
+                      .reviewer.type,
+                      .reviewer.id,
+                      .minimum_approvals,
+                      (.file_patterns | join("\u0000"))
+                    )
+                )
+            else .
+            end
+          )
+          | sort_by(.ruleset_id, .type);
+        def effective($ruleset_id; $rules):
+          $rules
+          | map({
+              type,
+              ruleset_id: $ruleset_id,
+              ruleset_source_type: "Repository",
+              ruleset_source: $source,
+              parameters: (.parameters // null)
+            });
+        type == "array"
+        and (normalized_rules ==
+          ((effective($baseline_id; $baseline[0].rules) +
+            effective($extra_id; $extra[0].rules)) | normalized_rules))
+      ' "$effective_rules" >/dev/null; then
+    return 1
+  fi
+}
+
 verify_repository_postcondition() {
   local repo=$1
   local existing_id=$2
@@ -2806,6 +3015,16 @@ verify_repository_postcondition() {
   classic_file="$prefix-classic.json"
   classic_error="$prefix-classic.err"
 
+  if [[ -n "$extra_id" ]]; then
+    extra_file="$prefix-extra-ruleset.json"
+    if ! gh api "repos/$ORG/$repo/rulesets/$extra_id" >"$extra_file" ||
+        ! validate_repository_ruleset_identity \
+          "$extra_file" "$repo" "$extra_id" "$extra_name" ||
+        ! exact_mutable_state_matches "$extra_payload" "$extra_file" ||
+        ! jq -e '.enforcement == "disabled"' "$extra_file" >/dev/null; then
+      return 1
+    fi
+  fi
   if ! gh api "repos/$ORG/$repo" >"$repository_file" ||
       ! exact_repository_identity_matches \
         "$repo" "$default_branch" "$repository_file" ||
@@ -2830,16 +3049,6 @@ verify_repository_postcondition() {
       "$repo" "$existing_id" "$default_branch" "$update_payload" \
       "$enforcement" "$label"; then
     return 1
-  fi
-  if [[ -n "$extra_id" ]]; then
-    extra_file="$prefix-extra-ruleset.json"
-    if ! gh api "repos/$ORG/$repo/rulesets/$extra_id" >"$extra_file" ||
-        ! validate_repository_ruleset_identity \
-          "$extra_file" "$repo" "$extra_id" "$extra_name" ||
-        ! exact_mutable_state_matches "$extra_payload" "$extra_file" ||
-        ! jq -e '.enforcement == "disabled"' "$extra_file" >/dev/null; then
-      return 1
-    fi
   fi
 }
 
@@ -2884,14 +3093,6 @@ for repo in "${REPOS[@]}"; do
   classic_delete_readback="$tmp_dir/$repo-classic-delete-readback.json"
   classic_delete_error="$tmp_dir/$repo-classic-delete-readback.err"
   mutation_repository_identity="$tmp_dir/$repo-mutation-repository-identity.json"
-  final_ruleset_readback="$tmp_dir/$repo-final-ruleset-readback.json"
-  final_branch_readback="$tmp_dir/$repo-final-default-branch.json"
-  final_ruleset_pages="$tmp_dir/$repo-final-rulesets.pages"
-  final_rulesets="$tmp_dir/$repo-final-rulesets.json"
-  final_effective_pages="$tmp_dir/$repo-final-effective.pages"
-  final_effective="$tmp_dir/$repo-final-effective.json"
-  final_classic_readback="$tmp_dir/$repo-final-classic-readback.json"
-  final_classic_error="$tmp_dir/$repo-final-classic-readback.err"
   ruleset_changed=false
 
   if ! read_exact_default_branch_sha \
@@ -3123,23 +3324,16 @@ for repo in "${REPOS[@]}"; do
   fi
 
   if [[ "$approved_extra_present" == true ]]; then
-    extra_precondition="$tmp_dir/$repo-$approved_extra_id-extra-jit-precondition.json"
     extra_readback="$tmp_dir/$repo-$approved_extra_id-extra-post-readback.json"
-    if ! read_exact_default_branch_sha \
-        "$repo" "$encoded_branch" "$default_branch" "$expected_main_sha" \
-        "$branch_precondition" ||
-        ! gh api "repos/$ORG/$repo" >"$mutation_repository_identity" ||
-        ! exact_repository_identity_matches \
-          "$repo" "$default_branch" "$mutation_repository_identity" ||
-        ! gh api "repos/$ORG/$repo/rulesets/$approved_extra_id" \
-          >"$extra_precondition" ||
-        ! validate_approved_extra_scope \
-          "$extra_precondition" "$repo" "$default_branch" \
-          "$approved_extra_id" "$approved_extra_name" ||
-        ! exact_mutable_state_matches \
-          "$extra_ruleset_restore_payload" "$extra_precondition"; then
+    if ! verify_approved_extra_disable_precondition \
+        "$repo" "$existing_id" "$default_branch" "$expected_main_sha" \
+        "$settings_payload" "$update_payload" "$approved_extra_id" \
+        "$approved_extra_name" "$desired_enforcement" \
+        "$protection_inventory" "$extra_ruleset_restore_payload" \
+        "$classic_protection_present" "$classic_rollback_payload" \
+        "$classic_signatures"; then
       abort_current_transaction \
-        "approved extras changed before the just-in-time disable precondition"
+        "complete midpoint state changed before the approved-extras disable"
     fi
     echo "  Disabling approved $repo extras ruleset (id: $approved_extra_id)..."
     MUTATION_KIND=extra
