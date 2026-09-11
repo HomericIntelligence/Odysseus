@@ -48,6 +48,31 @@ check-submodule-drift:
 check-doc-field-drift:
     ./scripts/check-doc-field-drift.sh
 
+# Odysseus Fleet web application (Node >=22.12; all credentials stay in the backend)
+web-install:
+    npm --prefix web ci --cache "{{env_var('HOME')}}/.cache/homeric-fleet-npm"
+
+web-lock:
+    npm --prefix web install --package-lock-only --ignore-scripts --cache "{{env_var('HOME')}}/.cache/homeric-fleet-npm"
+
+web-test:
+    npm --prefix web test
+
+web-build:
+    npm --prefix web run build
+
+web-start:
+    npm --prefix web start
+
+web-browser-test:
+    npm --prefix web run test:browser
+
+web-format:
+    npm --prefix web run format
+
+web-format-check:
+    npm --prefix web run format:check
+
 # ===========================================================================
 # Ecosystem Health
 # ===========================================================================

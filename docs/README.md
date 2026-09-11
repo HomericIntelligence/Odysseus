@@ -9,6 +9,8 @@ Welcome to the HomericIntelligence documentation hub. This page serves as a tabl
 Start here to understand the HomericIntelligence system as a whole:
 
 - **[System Architecture](architecture.md)** — Complete overview of all components, their roles, and how they interact. Post-ADR-006 architecture with Agamemnon as the coordination hub.
+- **[Homeric Fleet Implementation Plan](homeric-fleet-plan.md)** — Consolidated Odysseus integration, laptop/SSH/Slurm operations, and the 108-agent acceptance gates.
+- **[Fleet Web Application](../web/README.md)** — Run the local ownership, message-flow, and session-control interface; configure backend sources and private input.
 
 ---
 

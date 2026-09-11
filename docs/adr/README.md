@@ -27,6 +27,7 @@ choice, its context, decision rationale, and consequences.
 | [018](018-uv-ecosystem-wide.md) | uv Is the Ecosystem-Wide Standard — Toolchains via PyPI, apt, and the Mojo pip Package | Proposed | [ADR-017](017-uv-for-python-pixi-for-toolchains.md) | — |
 | [019](019-lemonade-private-inference-lane.md) | Lemonade as the Private Inference Lane for the Mesh | Proposed | — | — |
 | [020](020-mesh-distributed-hephaestus-loop.md) | Distribute the Hephaestus Automation Loop Across the Mesh | Proposed | — | — |
+| [021](021-fleet-execution-and-web-interface.md) | Fleet Execution and the Odysseus Web Interface | Proposed | — | — |
 
 ## How to Create a New ADR
 

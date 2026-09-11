@@ -18,7 +18,16 @@ integrates through well-defined subjects rather than direct service calls.
 
 Odysseus is the meta-repo and user-facing hub. It holds Architecture Decision
 Records, runbooks, canonical configs, and references every other repository as
-a git submodule. Odysseus itself contains no application code.
+a git submodule. Its [Fleet web application](../web/README.md) lives in `web/`:
+the initial implementation provides authenticated work ownership, worker, live
+message observation, GitHub pipeline projection, and scoped session-control views. Agamemnon retains
+orchestration authority. The remaining
+interactive/intake flows and infrastructure acceptance gates are tracked in the
+[Fleet implementation plan](homeric-fleet-plan.md).
+
+The web backend uses supported management APIs and Keystone observation
+subscriptions. Task dispatch remains on Keystone's canonical role subjects;
+HTTP management calls do not establish a second task queue.
 
 ---
 
@@ -27,7 +36,7 @@ a git submodule. Odysseus itself contains no application code.
 | Component | Category | Role |
 |-----------|----------|------|
 | **Odysseus** | meta | User interface, observability hub, and meta-repo. Bidirectional with user. Consumes Argus dashboards. |
-| **Agamemnon** | control | Planning, coordination, and HMAS orchestration (L0–L3). GitHub Issues/Projects is the backing store. Does not perform research or expose a user UI. |
+| **Agamemnon** | control | Planning, coordination, and HMAS orchestration (L0–L3). GitHub issues hold durable state; Projects is a derived view. Does not perform research or expose a user UI. |
 | **Nestor** | control | Thin C++ intake/status/dispatch service for research. Accepts ideas (`POST /v1/research`), dispatches them to the research myrmidon pool, tracks status. Research, interviewing, and ideation run in research-pool myrmidons — never inside Nestor itself (LLM work never runs inside C++ services; see [ADR-013](adr/013-hmas-mesh-wire-contracts.md)). |
 | **Keystone** | transport | Invisible transport layer. BlazingMQ for intra-host (<500 ns, >2 M msg/sec); NATS JetStream (nats.c v3.12.0) for cross-host over Tailscale. Components talk *through* Keystone, never *to* it. |
 | **Hermes** | infrastructure | External message delivery bridge. Routes external-service events into NATS and delivers outbound messages to external services. |
@@ -82,7 +91,7 @@ traverse the network.
                    ▼
   ┌─────────────────────────────────────────────────────────────────────┐
   │                      Agamemnon                               │
-  │   HMAS L0–L3 · GitHub Issues/Projects backing store                │
+  │   HMAS L0–L3 · issue-backed state · derived Projects view          │
   │   /v1/tasks  /v1/agents  /v1/chaos/*  /v1/workflows                │
   └─────────────────┬──────────────────────────────────────────────────┘
                     │ dispatch (via Keystone NATS subjects)
@@ -166,11 +175,18 @@ The full HMAS pipeline, end to end (wire contracts in
 ```
 
 Interviews, escalations, and dashboards flow back up the same subjects, so
-each hop is bidirectional. All communication flows **through** Keystone
-(invisible transport); no component holds a direct socket reference to
-another. Keystone is a transport detail, not a pipeline stage. All workers
+each hop is bidirectional. Role-addressed work and lifecycle messages flow
+**through** Keystone. Supported management interfaces provide resource inspection
+and commands, including Odysseus's authenticated backend adapters; they do not
+create an additional work queue. Keystone is a transport detail, not a pipeline stage. All workers
 run AchaeanFleet container images and integrate advise-before / learn-after
 around every task.
+
+This sequence is the integration target. Fleet acceptance must still establish
+durable research intake, registration publication, claimed worker execution,
+interviews, and real parent-planner wakeups together. Local consumer replay and
+fixture tests alone do not establish the complete production flow; see the
+[implementation gates](homeric-fleet-plan.md#9-implementation-sequence-and-release-gates).
 
 ---
 
