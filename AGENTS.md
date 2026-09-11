@@ -23,7 +23,7 @@ Commands sections below apply to you as well.
 
 Odysseus is the meta-repo and unified architecture hub for the HomericIntelligence distributed agent mesh. It is the top-level entry point for the entire ecosystem: it holds Architecture Decision Records, operational runbooks, shared infrastructure configs, and references every other HomericIntelligence repository as a git submodule.
 
-Odysseus itself contains no application code. Its value is coordination: it ensures that any engineer (or AI agent) starting here can understand the full system, find every component, and perform cross-cutting operations with a single `just` command.
+Odysseus holds the Fleet web application in `web/` as well as system coordination documentation. The web backend projects supported component interfaces and transport observations; it does not become another orchestration authority. Engineers and agents starting here can understand the system, find every component, and perform cross-cutting operations with a single `just` command.
 
 ---
 
@@ -116,6 +116,7 @@ Odysseus/
 | `configs/nats/` | Yes | Coordinate | Canonical — coordinate before editing |
 | `e2e/` | Yes | Yes | Pipeline harness and Compose stacks |
 | `tools/` | Yes | Yes | Console scripts and GitHub helper CLIs |
+| `web/` | Yes | Yes | Odysseus web application, component interface adapters, and focused tests; no separate task authority |
 | `scripts/` | Yes | Yes | Validation and utility scripts |
 | `justfile` | Yes | Yes | Task execution entry points |
 | `pixi.toml` | Yes | Coordinate | Dependency manifest — coordinate before editing |

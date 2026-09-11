@@ -20,6 +20,7 @@ TEAM_ID=$(echo "$TEAM_RESP" | python3 -c "import sys,json; print(json.load(sys.s
 info "B09: 20 tasks — queue grows while myrmidon processes serially"
 
 BEFORE=$(nats_stream_msg_count "homeric-myrmidon" 2>/dev/null || echo "0")
+info "B09: Initial stream depth: $BEFORE messages"
 
 TASK_IDS=()
 for i in $(seq 1 20); do

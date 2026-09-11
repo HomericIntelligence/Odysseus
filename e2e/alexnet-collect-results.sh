@@ -19,8 +19,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 # ── Configuration ──
 FLEET="${FLEET:-epimetheus apollo aeolus hephaestus hermes}"
 CENTRAL_DIR="${CENTRAL_DIR:-$HOME/alexnet-fleet-results}"
@@ -101,6 +99,7 @@ for host in "${_hosts[@]}"; do
         rsync_out=$(rsync -az --info=stats2 "$remote_src" "$dest/" 2>&1)
         rsync_status=$?
         set -e
+        printf '%s\n' "$rsync_out"
         if [[ -d "$dest" ]] && ls "$dest"/* >/dev/null 2>&1; then
             COLLECTED=$((COLLECTED + 1))
             echo "    [ok] collected (rsync exit=$rsync_status)"

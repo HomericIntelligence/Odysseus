@@ -48,6 +48,38 @@ check-submodule-drift:
 check-doc-field-drift:
     ./scripts/check-doc-field-drift.sh
 
+# Odysseus Fleet web application (Node >=22.12; all credentials stay in the backend)
+web-install:
+    npm --prefix web ci --cache "{{env_var('HOME')}}/.cache/homeric-fleet-npm"
+
+web-lock:
+    npm --prefix web install --package-lock-only --ignore-scripts --cache "{{env_var('HOME')}}/.cache/homeric-fleet-npm"
+
+web-test:
+    npm --prefix web test
+
+web-build:
+    npm --prefix web run build
+
+web-start:
+    npm --prefix web start
+
+web-browser-test:
+    npm --prefix web run test:browser
+
+# Install the browser and its supported platform dependencies for fixture tests.
+web-browser-install:
+    npm --prefix web exec -- playwright install --with-deps chromium
+
+# Run the same formatting, unit, build and browser gates locally and in CI.
+web-ci: web-format-check web-test web-build web-browser-test
+
+web-format:
+    npm --prefix web run format
+
+web-format-check:
+    npm --prefix web run format:check
+
 # ===========================================================================
 # Ecosystem Health
 # ===========================================================================
@@ -222,6 +254,7 @@ lint:
     # the `eval "$cmd"` pattern and other shell issues in e2e/lib/ slipped
     # through. Treat shellcheck failures as a lint failure for the root.
     if command -v shellcheck >/dev/null 2>&1; then
+        bash tests/test-shellcheck-contract.sh
         echo "--- root: running shellcheck on tracked shell scripts ---"
         # Limit scope to first-party shell scripts; ignore submodules.
         # Use awk to filter so empty result yields exit 0 (no need for `|| true`).
@@ -370,7 +403,7 @@ render-nomad-configs OUT_DIR="/etc/nomad.d":
     if command -v nomad >/dev/null 2>&1; then nomad fmt -check "{{ OUT_DIR }}"/*.hcl; fi
 
 # Run all CI checks locally
-ci: lint validate-configs check-doc-field-drift test-merge-queue-readiness test-milestone-registry
+ci: lint validate-configs check-doc-field-drift test-merge-queue-readiness test-milestone-registry web-ci
     @echo "All checks passed"
 
 # Cut a release: validate tag↔pixi.toml↔CHANGELOG, create tag, push (triggers release.yml)

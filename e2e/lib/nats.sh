@@ -154,7 +154,7 @@ nats_restart() {
         if wait "$old_pid" 2>/dev/null; then :; fi
     fi
     local i
-    for i in $(seq 1 10); do
+    for ((i = 1; i <= 10; i++)); do
         (echo >/dev/tcp/localhost/"${NATS_PORT:?}") 2>/dev/null || break
         sleep 1
     done
