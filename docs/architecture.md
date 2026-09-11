@@ -224,9 +224,21 @@ assignment alone does not establish active execution.
 The local web backend supports `/api/requests` for one current session, worker
 and generation. It first reads Agamemnon's supported session resource, then the
 configured Hephaestus private Unix socket. Worker inventory must agree with the
-canonical owner and current conversation turn before and after the read. This
-initial path requires private same-host attachment; remote private attachment
-remains a separate transport gate.
+canonical owner and current conversation turn before and after the read. Before
+any private file access or socket attachment, the backend also reads the complete
+Agamemnon session, execution and build-job collections. Every configured private
+spool and worker-state root must be separate from every canonical local workspace,
+including other workers' and retained workspaces. Missing records, incomplete
+collections, unknown host identities or unresolved local paths disable private
+access. `ODYSSEUS_EXECUTION_HOST` identifies this host using the controller's host
+name; it defaults to the operating-system hostname. This initial path requires
+private same-host attachment; remote private attachment remains a separate
+transport gate.
+
+The inventory read is a defensive projection of Agamemnon state, not a workspace
+admission authority. Hephaestus must independently exclude all configured private
+roots from future workspace mounts and retain those exclusions across restart.
+Workers cannot rely on a prior web inventory check to admit a new workspace.
 
 Command approvals display the actual pending command. File approvals require
 matching file-change evidence from the worker's private `thread/read` adapter.
@@ -246,7 +258,7 @@ the provider accepted or completed the operation.
 ### Durable research bootstrap
 
 Nestor's legacy `/v1/research` keeps intake state in memory. It cannot satisfy
-Fleet restart durability. The next intake slice adds an explicit, optional
+Fleet restart durability. The Nestor component PR adds an explicit, optional
 GitHub-backed intake adapter while preserving that legacy interface. Its
 proposed metadata namespace stores intake identity, request digest, creation
 intent and confirmed work-issue reference in an operator-configured state

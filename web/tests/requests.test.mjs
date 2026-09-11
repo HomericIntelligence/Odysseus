@@ -95,7 +95,7 @@ async function fixture(t) {
 
 test("private approval reads bind actual socket inventory, request ID type and current turn", async (t) => {
   const { reader, record, calls } = await fixture(t);
-  const [request] = await reader.read(record);
+  const [request] = await reader.read(record, [record.workspace]);
   assert.equal(request.requestId, 19);
   assert.equal(request.kind, "command");
   assert.equal(request.command, "echo synthetic");
@@ -107,23 +107,36 @@ test("private approval reads bind actual socket inventory, request ID type and c
   );
 });
 
+test("private worker socket is excluded from another protected workspace before attachment", async (t) => {
+  const { reader, record, directory, calls } = await fixture(t);
+  await assert.rejects(reader.read(record, [record.workspace, directory]));
+  assert.deepEqual(calls, []);
+});
+
+test("private worker attachment requires a complete workspace inventory including its own", async (t) => {
+  const { reader, record, directory, calls } = await fixture(t);
+  for (const workspaces of [undefined, [], [directory]])
+    await assert.rejects(reader.read(record, workspaces));
+  assert.deepEqual(calls, []);
+});
+
 test("private approval reads reject changed generation, old-turn requests and public sockets", async (t) => {
   const { reader, record, state, directory } = await fixture(t);
   state.generation = 4;
-  await assert.rejects(reader.read(record));
+  await assert.rejects(reader.read(record, [record.workspace]));
   state.generation = 3;
   state.pending.params.turnId = "previous-turn";
-  await assert.rejects(reader.read(record));
+  await assert.rejects(reader.read(record, [record.workspace]));
   state.pending.params.turnId = "turn1";
   await chmod(resolve(directory, "worker.sock"), 0o666);
-  await assert.rejects(reader.read(record));
+  await assert.rejects(reader.read(record, [record.workspace]));
 });
 
 test("file approval without matching private evidence cannot authorize acceptance", async (t) => {
   const { reader, record, state } = await fixture(t);
   state.pending.method = "item/fileChange/requestApproval";
   delete state.pending.params.command;
-  const [request] = await reader.read(record);
+  const [request] = await reader.read(record, [record.workspace]);
   assert.equal(request.kind, "file");
   assert.equal(request.evidenceAvailable, false);
   assert.deepEqual(request.decisions, ["decline", "cancel"]);
@@ -154,15 +167,15 @@ test("file approval binds the displayed changes and excludes mismatched private 
       ],
     },
   };
-  const [first] = await reader.read(record);
+  const [first] = await reader.read(record, [record.workspace]);
   assert.equal(first.evidenceAvailable, true);
   assert.equal(first.changes[0].diff, "+first synthetic change");
   assert.doesNotThrow(() => validateResponse(first, { decision: "accept" }));
   state.evidence.evidence.changes[0].diff = "+second synthetic change";
-  const [changed] = await reader.read(record);
+  const [changed] = await reader.read(record, [record.workspace]);
   assert.notEqual(changed.fingerprint, first.fingerprint);
   state.evidence.requestId = "19";
-  const [mismatch] = await reader.read(record);
+  const [mismatch] = await reader.read(record, [record.workspace]);
   assert.equal(mismatch.evidenceAvailable, false);
   assert.equal(mismatch.changes, undefined);
   assert.throws(() => validateResponse(mismatch, { decision: "accept" }));
@@ -174,7 +187,7 @@ test("a turn changing during the private read invalidates the entire request vie
   state.onInventory = () => {
     if (++reads === 2) state.session.providerTurnId = "turn2";
   };
-  await assert.rejects(reader.read(record));
+  await assert.rejects(reader.read(record, [record.workspace]));
 });
 
 test("user answers preserve provider shape and cannot answer a different question", async (t) => {
@@ -197,7 +210,7 @@ test("user answers preserve provider shape and cannot answer a different questio
       },
     ],
   };
-  const [request] = await reader.read(record);
+  const [request] = await reader.read(record, [record.workspace]);
   assert.equal(request.questions[0].id, "q1");
   assert.doesNotThrow(() =>
     validateResponse(request, { answers: { q1: { answers: ["M1"] } } }),

@@ -110,6 +110,14 @@ disable acceptance. Spool responses privately and dispatch only their references
 through Agamemnon and Keystone. Never expose these private details as flow events.
 The initial same-host Unix attachment does not establish remote private transport.
 
+Before private file or socket access, require complete canonical session,
+execution and build-job inventories and an explicit local host identity. Exclude
+every configured private root from all local workspaces, including other workers
+and retained work. Unknown ownership, paths or inventory completeness must block
+access. Hephaestus must retain the same exclusions across restart and enforce them
+for future workspace mounts. Odysseus projects these boundaries without becoming
+the admission authority.
+
 ### Credentials and recovery
 
 Each runtime independently establishes native Codex authentication and privately

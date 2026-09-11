@@ -30,6 +30,7 @@ and experiment execution remain implementation work.
 | `ODYSSEUS_NATS_CA_FILE` | Optional private CA bundle for the TLS connection |
 | `ODYSSEUS_NATS_ALLOW_LOCAL` | `1` permits a plaintext literal-loopback broker for local testing |
 | `ODYSSEUS_ENABLE_COMMANDS` | `1` explicitly enables supported session commands |
+| `ODYSSEUS_EXECUTION_HOST` | Controller host identity for this machine; defaults to the operating-system hostname |
 | `ODYSSEUS_INPUT_SPOOLS` | JSON mapping of worker IDs to private absolute spool directories |
 | `ODYSSEUS_WORKER_STATE_DIRS` | JSON mapping of worker IDs to private same-host directories containing `worker.sock`, for approvals/questions |
 
@@ -135,6 +136,15 @@ rejected. Failed or uncertain submissions retain files for reconciliation.
 Automatic spool retirement is not implemented; retire inputs only after the
 owning adapter confirms consumption and retention requirements are satisfied.
 
+Before private access, the backend fetches complete controller session, execution
+and build-job inventories and checks every configured private root against all
+local workspaces, including other workers and retained records. Missing host or
+workspace identities, incomplete inventories and unresolved local paths block
+access. Configure `ODYSSEUS_EXECUTION_HOST` if the controller uses a different
+logical name for this machine. A session on another host cannot use local private
+paths. Configure the same private-root exclusions in Hephaestus so future workspace
+mounts cannot overlap them; a web inventory check does not authorize admission.
+
 Remote input requires an authenticated private spool-transfer/attachment service;
 setting a local path does not implement that transport. Workers absent from the
 spool mapping do not expose input controls. Full provider conversation output
@@ -144,7 +154,7 @@ remains implementation work.
 
 Workers configured in both `ODYSSEUS_WORKER_STATE_DIRS` and
 `ODYSSEUS_INPUT_SPOOLS` expose approval and question controls. Both directories
-must be canonical, private and outside the agent workspace. The worker socket
+must be canonical, private and outside every local workspace. The worker socket
 must be user-owned with no group or other access. A local path cannot reach a
 remote cluster worker; an authenticated private attachment service is required
 before remote requests can be enabled.

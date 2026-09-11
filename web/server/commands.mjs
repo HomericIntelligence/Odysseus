@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { open, realpath } from "node:fs/promises";
-import { resolve, sep } from "node:path";
-import { privateDirectory } from "./private-storage.mjs";
+import { open } from "node:fs/promises";
+import { hostname } from "node:os";
+import { isAbsolute, resolve } from "node:path";
+import { privateDirectoryOutsideWorkspaces } from "./private-storage.mjs";
 import { createRequestReader, validateResponse } from "./requests.mjs";
+import { readComponentJson } from "./upstream.mjs";
 
 const operations = [
   "start",
@@ -84,17 +86,8 @@ async function verifyStoredInput(path, data) {
   }
 }
 
-async function storeInput(directory, input, workspace, existingOnly = false) {
-  const spool = await privateDirectory(directory);
-  if (typeof workspace !== "string" || !workspace.startsWith("/"))
-    throw new Error("Current workspace is unavailable");
-  const source = await realpath(workspace);
-  if (
-    source === spool ||
-    source.startsWith(spool + sep) ||
-    spool.startsWith(source + sep)
-  )
-    throw new Error("Private input must be separate from source workspaces");
+async function storeInput(directory, input, workspaces, existingOnly = false) {
+  const spool = await privateDirectoryOutsideWorkspaces(directory, workspaces);
   const reference =
     createHash("sha256").update(input.commandId).digest("hex").slice(0, 32) +
     ".json";
@@ -166,10 +159,14 @@ export function createCommandService({
   apiKey,
   inputSpools = {},
   workerStateDirs = {},
+  executionHost = hostname(),
   requestReader = createRequestReader(workerStateDirs),
   fetchImpl = fetch,
 } = {}) {
   const base = url && apiKey ? endpoint(url) : null;
+  const hostId = /^[A-Za-z0-9_.-]{1,255}$/;
+  if (typeof executionHost !== "string" || !hostId.test(executionHost))
+    throw new Error("Execution host must identify this host in the controller");
   if (
     !inputSpools ||
     Array.isArray(inputSpools) ||
@@ -229,6 +226,63 @@ export function createCommandService({
       throw new Conflict("Owner changed");
     return record;
   };
+  const protectedWorkspaces = async (current) => {
+    if (current.host !== executionHost)
+      throw new Error("Private attachment requires the local execution host");
+    const workspaces = new Set();
+    for (const kind of ["sessions", "executions", "build-jobs"]) {
+      const response = await fetchImpl(new URL(`/v1/fleet/${kind}`, base), {
+        method: "GET",
+        headers,
+        redirect: "error",
+        signal: AbortSignal.timeout(4000),
+      });
+      const inventory = await readComponentJson(response);
+      if (
+        !Array.isArray(inventory?.items) ||
+        !Number.isSafeInteger(inventory.total) ||
+        inventory.total !== inventory.items.length
+      )
+        throw new Error("Protected workspace inventory is incomplete");
+      const identities = new Set();
+      for (const record of inventory.items) {
+        if (
+          !record ||
+          typeof record.id !== "string" ||
+          !id.test(record.id) ||
+          identities.has(record.id) ||
+          typeof record.workerId !== "string" ||
+          !id.test(record.workerId) ||
+          typeof record.host !== "string" ||
+          !hostId.test(record.host) ||
+          typeof record.workspace !== "string" ||
+          !isAbsolute(record.workspace)
+        )
+          throw new Error("Protected workspace identity is unavailable");
+        identities.add(record.id);
+        if (record.host === executionHost) workspaces.add(record.workspace);
+      }
+      if (kind === "sessions") {
+        const listed = inventory.items.find((item) => item.id === current.id);
+        if (
+          !listed ||
+          ["workerId", "generation", "host", "workspace"].some(
+            (field) => listed[field] !== current[field],
+          )
+        )
+          throw new Conflict("Current workspace owner changed");
+      }
+    }
+    const roots = [...workspaces];
+    // Include other workers' configured private roots, and retained workspaces
+    // regardless of their lifecycle state. Future mounts are fenced by workers.
+    for (const directory of new Set([
+      ...Object.values(inputSpools),
+      ...Object.values(workerStateDirs),
+    ]))
+      await privateDirectoryOutsideWorkspaces(directory, roots);
+    return roots;
+  };
   const matchesCommand = (command, input, payload) =>
     command &&
     command.commandId === input.commandId &&
@@ -260,7 +314,8 @@ export function createCommandService({
         return result(400, input, "invalid_request");
       try {
         const record = await fetchCurrent(input);
-        const requests = await requestReader.read(record);
+        const workspaces = await protectedWorkspaces(record);
+        const requests = await requestReader.read(record, workspaces);
         return result(200, input, null, { ...input, requests });
       } catch (error) {
         return result(
@@ -328,13 +383,16 @@ export function createCommandService({
       try {
         // UI snapshots are observational; refresh the actual owner before every mutation.
         const record = await fetchCurrent(input);
+        const workspaces = ["input", "respond"].includes(input.operation)
+          ? await protectedWorkspaces(record)
+          : null;
         let payload =
           input.operation === "input"
             ? {
                 inputRef: await storeInput(
                   inputSpools[input.workerId],
                   input,
-                  record.workspace,
+                  workspaces,
                 ),
               }
             : {};
@@ -356,7 +414,7 @@ export function createCommandService({
               responseRef: await storeInput(
                 inputSpools[input.workerId],
                 input,
-                record.workspace,
+                workspaces,
                 true,
               ),
               requestId: String(input.requestId),
@@ -367,7 +425,7 @@ export function createCommandService({
           }
           if (previous.status !== 404)
             throw new Error("Command history unavailable");
-          const pending = (await requestReader.read(record)).find(
+          const pending = (await requestReader.read(record, workspaces)).find(
             (request) =>
               request.requestId === input.requestId &&
               request.fingerprint === input.requestFingerprint,
@@ -382,7 +440,7 @@ export function createCommandService({
             responseRef: await storeInput(
               inputSpools[input.workerId],
               input,
-              record.workspace,
+              workspaces,
             ),
             requestId: String(input.requestId),
           };

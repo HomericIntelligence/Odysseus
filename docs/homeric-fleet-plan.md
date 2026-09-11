@@ -375,6 +375,14 @@ provider authentication, controller state, and private input spools outside shar
 scratch and outside agent workspaces. Give tools a private environment and exclude
 the worker's `.fleet-runtime` scratch directory from source snapshots and delivery.
 
+Before web access to a private spool or worker socket, fetch complete Agamemnon
+session, execution and build-job inventories. Require an explicit local host
+identity and exclude every configured private root from every local workspace,
+including other workers and retained records. Unknown host/path identities or
+incomplete inventory block access. Hephaestus must also enforce these exclusions
+for future workspace mounts and preserve them across restart; the web check does
+not grant admission.
+
 Use non-root images, private writable homes, read-only image layers where supported,
 and explicit mounts. Never expose the controller's home/environment, SSH agent
 socket, Teleport credentials, OpenBao token, or container-engine socket to agents.
@@ -579,6 +587,9 @@ reads from a configured same-host worker socket. Each read binds current
 controller ownership and the provider turn; file acceptance also binds the
 displayed change evidence. Responses pass through a private spool reference and
 Agamemnon's durable `respond` command. Missing file evidence disables acceptance.
+The web backend now checks private storage against complete controller workspace
+inventories before private access, with explicit same-host binding. Regression
+tests cover other workers, retained workspaces and unavailable inventories.
 Remote private attachment, conversation history and end-to-end authenticated
 model work remain implementation gates.
 

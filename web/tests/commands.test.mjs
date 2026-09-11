@@ -12,6 +12,7 @@ import {
   mkdir,
 } from "node:fs/promises";
 import { resolve } from "node:path";
+import { hostname } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createCommandService } from "../server/commands.mjs";
 
@@ -38,7 +39,9 @@ async function fixture(t, options = {}) {
   const service = createCommandService({
     url: "http://127.0.0.1:59999",
     apiKey: fixtureCredential,
+    executionHost: options.executionHost,
     inputSpools: { w1: spool },
+    workerStateDirs: options.workerStateDirs,
     requestReader: options.requestReader,
     fetchImpl: async (url, init) => {
       calls.push({ url: String(url), ...init });
@@ -46,16 +49,32 @@ async function fixture(t, options = {}) {
         return options.existingCommand
           ? Response.json(options.existingCommand)
           : Response.json({}, { status: 404 });
-      if (init.method !== "POST")
-        return Response.json({
+      if (init.method !== "POST") {
+        const record = {
           id: "s1",
           workerId: "w1",
+          host: hostname(),
           generation: 3,
           claimStatus: "claimed",
           status: "running",
           workspace,
           ...options.record,
-        });
+        };
+        const kind = new URL(url).pathname.match(
+          /^\/v1\/fleet\/(sessions|executions|build-jobs)$/,
+        )?.[1];
+        if (kind) {
+          if (options.inventoryUnavailable)
+            return new Response(null, { status: 503 });
+          const items = kind === "sessions" ? [record] : [];
+          items.push(...(options.peers?.[kind] ?? []));
+          return Response.json({
+            items,
+            total: items.length + (options.missingTotal ?? 0),
+          });
+        }
+        return Response.json(record);
+      }
       if (options.failPost)
         throw new Error("private upstream detail must not escape");
       if (options.status)
@@ -235,6 +254,148 @@ test("private input cannot enter a workspace or an ancestor of a workspace", asy
   }
   assert.equal(calls.filter((c) => c.method === "POST").length, 0);
   assert.deepEqual(await readdir(spool), ["workspace"]);
+});
+
+test("private input is excluded from every worker's protected workspace", async (t) => {
+  for (const kind of ["sessions", "executions", "build-jobs"]) {
+    const options = { peers: {} };
+    const { service, calls, spool } = await fixture(t, options);
+    options.peers[kind] = [
+      { id: "other", workerId: "w2", host: hostname(), workspace: spool },
+    ];
+    const result = await service.submit(request);
+    assert.equal(result.code, 503);
+    assert.equal(result.body.outcome, "not_submitted");
+    assert.equal(calls.filter((call) => call.method === "POST").length, 0);
+    assert.deepEqual(await readdir(spool), []);
+  }
+});
+
+test("uncertain or incomplete protected workspace inventory blocks private input", async (t) => {
+  for (const options of [
+    { inventoryUnavailable: true },
+    { missingTotal: 1 },
+    {
+      peers: {
+        sessions: [{ id: "other", workerId: "w2", workspace: "/unavailable" }],
+      },
+    },
+  ]) {
+    const { service, calls, spool } = await fixture(t, options);
+    assert.equal((await service.submit(request)).code, 503);
+    assert.equal(calls.filter((call) => call.method === "POST").length, 0);
+    assert.deepEqual(await readdir(spool), []);
+  }
+});
+
+test("private request access checks the other workspace before using the reader", async (t) => {
+  const directory = await mkdtemp(
+    fileURLToPath(new URL("../.test-spool-", import.meta.url)),
+  );
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let reads = 0;
+  const options = {
+    workerStateDirs: { w1: directory },
+    requestReader: {
+      workerIds: ["w1"],
+      read: async () => {
+        reads += 1;
+        return [];
+      },
+    },
+    peers: {
+      sessions: [
+        { id: "other", workerId: "w2", host: hostname(), workspace: directory },
+      ],
+    },
+  };
+  const { service } = await fixture(t, options);
+  assert.equal(
+    (await service.requests({ sessionId: "s1", workerId: "w1", generation: 3 }))
+      .code,
+    503,
+  );
+  assert.equal(reads, 0);
+});
+
+test("private access binds the local execution host and excludes remote filesystem paths", async (t) => {
+  const options = {
+    executionHost: "laptop-test",
+    record: { host: "laptop-test" },
+    peers: {
+      executions: [
+        {
+          id: "remote",
+          workerId: "w2",
+          host: "cluster-test",
+          workspace: "/remote-only/synthetic",
+        },
+      ],
+    },
+  };
+  const { service, spool, calls } = await fixture(t, options);
+  assert.equal((await service.submit(request)).code, 202);
+  assert.equal((await readdir(spool)).length, 1);
+  assert.equal(calls.filter((call) => call.method === "GET").length, 4);
+  options.record.host = "cluster-test";
+  const previous = calls.length;
+  assert.equal(
+    (await service.submit({ ...request, commandId: "ui-" + "b".repeat(32) }))
+      .code,
+    503,
+  );
+  assert.equal(
+    calls.slice(previous).some((call) => call.method === "POST"),
+    false,
+  );
+  assert.equal((await readdir(spool)).length, 1);
+});
+
+test("retained and overlapping workspaces remain excluded even after a peer finishes", async (t) => {
+  const options = { peers: { sessions: [] } };
+  const { service, spool, calls } = await fixture(t, options);
+  await mkdir(resolve(spool, "synthetic-workspace"));
+  for (const workspace of [
+    spool,
+    resolve(spool, "synthetic-workspace"),
+    resolve(spool, ".."),
+    "/",
+  ]) {
+    options.peers.sessions = [
+      {
+        id: "retained",
+        workerId: "w2",
+        host: hostname(),
+        workspace,
+        status: "completed",
+        claimStatus: "released",
+      },
+    ];
+    assert.equal((await service.submit(request)).code, 503);
+  }
+  assert.equal(
+    calls.some((call) => call.method === "POST"),
+    false,
+  );
+  assert.deepEqual(await readdir(spool), ["synthetic-workspace"]);
+});
+
+test("a malformed or duplicate peer identity blocks private writes", async (t) => {
+  const options = { peers: { sessions: [] } };
+  const { service, spool, calls } = await fixture(t, options);
+  for (const peer of [
+    { id: "s1", workerId: "w2", host: hostname(), workspace: spool },
+    { id: "other", host: hostname(), workspace: spool },
+    { id: "other", workerId: "w2", host: hostname(), workspace: "relative" },
+  ]) {
+    options.peers.sessions = [peer];
+    assert.equal((await service.submit(request)).code, 503);
+  }
+  assert.equal(
+    calls.some((call) => call.method === "POST"),
+    false,
+  );
+  assert.deepEqual(await readdir(spool), []);
 });
 
 test("a configured shared temporary root is not a private input spool", async (t) => {

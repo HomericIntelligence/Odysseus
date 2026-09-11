@@ -1,5 +1,5 @@
 import { lstat, realpath } from "node:fs/promises";
-import { resolve, sep } from "node:path";
+import { isAbsolute, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 
 export async function privateDirectory(path) {
@@ -28,4 +28,25 @@ export async function privateDirectory(path) {
   )
     throw new Error("Private spool must be an owner-only directory");
   return canonical;
+}
+
+// The caller supplies a fresh, complete controller inventory for this host.
+export async function privateDirectoryOutsideWorkspaces(path, workspaces) {
+  if (!Array.isArray(workspaces) || workspaces.length === 0)
+    throw new Error("Protected workspace inventory is unavailable");
+  const directory = await privateDirectory(path);
+  const contains = (parent, child) =>
+    parent === child ||
+    child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+  for (const workspace of workspaces) {
+    if (
+      typeof workspace !== "string" ||
+      !isAbsolute(workspace) ||
+      (await realpath(workspace)) !== workspace
+    )
+      throw new Error("Protected workspace is not canonical");
+    if (contains(workspace, directory) || contains(directory, workspace))
+      throw new Error("Private storage must be separate from every workspace");
+  }
+  return directory;
 }

@@ -1,8 +1,8 @@
 import { createConnection } from "node:net";
 import { createHash } from "node:crypto";
-import { lstat, realpath } from "node:fs/promises";
-import { resolve, sep } from "node:path";
-import { privateDirectory } from "./private-storage.mjs";
+import { lstat } from "node:fs/promises";
+import { resolve } from "node:path";
+import { privateDirectoryOutsideWorkspaces } from "./private-storage.mjs";
 
 const maximum = 1024 * 1024;
 const methods = {
@@ -250,21 +250,18 @@ export function createRequestReader(workerStateDirs = {}) {
     );
   return {
     workerIds: Object.keys(workerStateDirs),
-    async read(record) {
+    async read(record, workspaces) {
       require(
         Object.hasOwn(workerStateDirs, record.workerId) &&
           ["reserved", "claimed"].includes(record.claimStatus) &&
           ["admitted", "running", "idle", "waiting"].includes(record.status),
       );
-      const directory = await privateDirectory(
-        workerStateDirs[record.workerId],
-      );
-      const workspace = await realpath(record.workspace);
       require(
-        workspace === record.workspace &&
-          workspace !== directory &&
-          !workspace.startsWith(directory + sep) &&
-          !directory.startsWith(workspace + sep),
+        Array.isArray(workspaces) && workspaces.includes(record.workspace),
+      );
+      const directory = await privateDirectoryOutsideWorkspaces(
+        workerStateDirs[record.workerId],
+        workspaces,
       );
       const path = resolve(directory, "worker.sock");
       const deadline = Date.now() + 9000;

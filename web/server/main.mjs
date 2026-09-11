@@ -40,6 +40,7 @@ const commands = createCommandService(
     ? {
         url: process.env.ODYSSEUS_AGAMEMNON_URL,
         apiKey: process.env.AGAMEMNON_API_KEY,
+        executionHost: process.env.ODYSSEUS_EXECUTION_HOST,
         inputSpools: JSON.parse(process.env.ODYSSEUS_INPUT_SPOOLS ?? "{}"),
         workerStateDirs: JSON.parse(
           process.env.ODYSSEUS_WORKER_STATE_DIRS ?? "{}",
