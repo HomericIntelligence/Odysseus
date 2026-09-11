@@ -20,9 +20,10 @@ Odysseus is the meta-repo and user-facing hub. It holds Architecture Decision
 Records, runbooks, canonical configs, and references every other repository as
 a git submodule. Its [Fleet web application](../web/README.md) lives in `web/`:
 the initial implementation provides authenticated work ownership, worker, live
-message observation, GitHub pipeline projection, and scoped session-control views. Agamemnon retains
+message observation, GitHub pipeline projection, scoped session controls, and
+private agent requests. Agamemnon retains
 orchestration authority. The remaining
-interactive/intake flows and infrastructure acceptance gates are tracked in the
+conversation-history/intake flows and infrastructure acceptance gates are tracked in the
 [Fleet implementation plan](homeric-fleet-plan.md).
 
 The web backend uses supported management APIs and Keystone observation
@@ -49,7 +50,7 @@ HTTP management calls do not establish a second task queue.
 | **Scylla** | testing | AI agent ablation benchmarking; evaluates agent architectures across tiered configurations (T0–T6). |
 | **Charybdis** | testing | Chaos and resilience testing. Injects faults via Agamemnon `/v1/chaos/*` endpoints. |
 | **Mnemosyne** | shared | Skills marketplace / team-knowledge memory store for the `advise` and `learn` plugins only. Not an agent-template registry. |
-| **Hephaestus** | shared | Shared utilities, Claude Code plugins, and skills registry. Used across all repos. |
+| **Hephaestus** | shared | Shared automation and skills; Fleet Codex app-server adapter, private worker journal, execution supervision, workspace and issue-stage execution. |
 | **Odyssey** | research | Standalone Mojo ML training framework. Reproduces classic AI/ML research papers; provides reusable tensor ops, autograd, and training infrastructure. Not integrated with the agent mesh; implementations live entirely in-repo as Mojo libraries and executables. |
 | ~~ai-maestro~~ | removed | Removed per [ADR-006](adr/006-decouple-from-ai-maestro.md). No submodule entry and no `infrastructure/ai-maestro/` directory. Do not reintroduce. |
 
@@ -57,10 +58,17 @@ HTTP management calls do not establish a second task queue.
 
 ## Network Topology
 
-All inter-host traffic flows over **Tailscale** — a WireGuard mesh VPN. The
+Established mesh inter-host traffic flows over **Tailscale** — a WireGuard mesh VPN. The
 mesh name is `tail8906b5.ts.net`. No inter-host port is exposed to the public
 internet; every service assumes Tailscale reachability for cross-node
 communication.
+
+Fleet adds externally administered Slurm/Pyxis clusters through the proposed
+[ADR 021](adr/021-fleet-execution-and-web-interface.md). Teleport/SSH establishes
+authenticated allocation attachment for those clusters. It does not imply
+compute-node access from a login-node tunnel. Login-node commands are transient;
+the allocation-local Keystone gateway preserves canonical subjects and ACK
+semantics. These cluster paths require execution and recovery canaries before use.
 
 Intra-host communication uses BlazingMQ (via Keystone) and does not
 traverse the network.
@@ -187,6 +195,94 @@ durable research intake, registration publication, claimed worker execution,
 interviews, and real parent-planner wakeups together. Local consumer replay and
 fixture tests alone do not establish the complete production flow; see the
 [implementation gates](homeric-fleet-plan.md#9-implementation-sequence-and-release-gates).
+
+## Fleet interfaces and state ownership
+
+The Fleet changes are being integrated through separate component PRs. The
+submodule pins remain the last approved integration point; source in a feature
+branch or a local test does not establish a deployed service.
+
+| Record or interface | Owner and storage | Odysseus behavior |
+|---|---|---|
+| Publishable requirements, plans and discussion | Work-repository GitHub issues | Link to the canonical issue and PR |
+| Orchestration graph, claims, generations and command intent | Agamemnon's GitHub-backed records | Read `/v1/fleet` resources; submit supported management commands |
+| Pipeline board and implementation labels | Derived GitHub Project; Hephaestus owns issue-stage labels | Display each source and its freshness separately |
+| Desired pools and execution policy | Myrmidons Git manifests | Display configured and observed state separately |
+| Conversations, pending requests, answers and execution evidence | Hephaestus private runtime storage | Read scoped private evidence through the authenticated backend |
+| Recovery command receipts | Private worker/adapter journals | Display outcomes; never authorize replacement work from a journal |
+| Live message observations | Keystone observations; retained metrics/logs belong to Argus | Render bounded metadata and expose gaps; never consume work for visualization |
+
+Agamemnon's `fleetd` is an execution adapter. It carries durable controller
+commands to workers and journals acknowledgments without becoming another
+scheduler. Sessions sharing one provider process retain independent logical
+agent identities, claims, workspaces and generations. Application-message
+observations connect an item to its reported component, agent, host and stage;
+assignment alone does not establish active execution.
+
+### Private approvals and questions
+
+The local web backend supports `/api/requests` for one current session, worker
+and generation. It first reads Agamemnon's supported session resource, then the
+configured Hephaestus private Unix socket. Worker inventory must agree with the
+canonical owner and current conversation turn before and after the read. This
+initial path requires private same-host attachment; remote private attachment
+remains a separate transport gate.
+
+Command approvals display the actual pending command. File approvals require
+matching file-change evidence from the worker's private `thread/read` adapter.
+The displayed request fingerprint includes those changes; changed evidence
+invalidates a pending web decision. Without matching evidence, acceptance is
+disabled. Agent questions preserve provider question IDs and answer types.
+
+The browser submits a stable command ID to `/api/commands`. The backend checks
+current ownership and pending evidence again, writes the response to the private
+input spool, and calls Agamemnon's session `respond` operation with an opaque
+reference. Keystone carries the canonical command to the owning worker. Raw
+commands, diffs, questions and answers never enter the dashboard observation
+stream or GitHub orchestration metadata. An uncertain response retains its
+original identity for explicit retry; controller acceptance does not prove that
+the provider accepted or completed the operation.
+
+### Durable research bootstrap
+
+Nestor's legacy `/v1/research` keeps intake state in memory. It cannot satisfy
+Fleet restart durability. The next intake slice adds an explicit, optional
+GitHub-backed intake adapter while preserving that legacy interface. Its
+proposed metadata namespace stores intake identity, request digest, creation
+intent and confirmed work-issue reference in an operator-configured state
+repository and branch. Publishable requirements belong to the work issue;
+private interviews and provider authentication do not belong in Git metadata.
+
+A GitHub Contents SHA transition reserves one issue-creation attempt. A crash or
+lost response after reservation remains uncertain until reconciled; elapsed time
+does not permit another create. This record is Nestor's research intake state,
+not Agamemnon's task graph. Live GitHub concurrency and restart tests remain
+required before this bootstrap can admit research work.
+
+Telemachy's initial Fleet registration path requires a marked, pre-existing
+epic and an externally exclusive writer. A local integration test has now passed
+the real producer's exact bytes through a private JetStream broker into the
+native Agamemnon consumer, including lost publication receipt, failed durable
+write, replay, restart and parent wakeup. Its GitHub service is a controlled
+fixture. This evidence does not establish live GitHub writer fencing or the
+complete research-to-implementation flow.
+
+### Execution and delivery gates
+
+Hephaestus is adding a contained exec-server supervisor with immutable image and
+workspace bindings, explicit resource limits, generation checks and independently
+observed process/container cleanup. A normal pinned-provider conversation must
+route every tool operation through that verified environment before admission
+opens. Direct protocol probes and successful image startup do not establish
+normal model routing. Existing non-Fleet integrations remain supported.
+
+Each component PR must pass its local CI/CD, hosted checks and an Athena PR
+review before merge. CI must exercise newly introduced runtime targets, including
+their packaging and sanitizer requirements. Component merges do not update
+Odysseus submodule pins automatically. Image build receipts, SBOMs and exported
+artifact digests bind exact sources; deployment and the 12 + 48 + 48 real-work
+acceptance experiment remain separate gates. Scheduled allocations stay disabled
+until acceptance completes.
 
 ---
 

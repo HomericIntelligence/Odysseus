@@ -3,7 +3,7 @@
 The Fleet web application presents work ownership, the GitHub pipeline projection,
 and observed message flow from Agamemnon and Keystone. It is an initial implementation of the
 [Fleet plan](../docs/homeric-fleet-plan.md); research intake, conversation history,
-approval forms, terminal attachment, workflow views, retained Argus dashboards,
+terminal attachment, workflow views, retained Argus dashboards,
 and experiment execution remain implementation work.
 
 ## Run locally
@@ -31,6 +31,7 @@ and experiment execution remain implementation work.
 | `ODYSSEUS_NATS_ALLOW_LOCAL` | `1` permits a plaintext literal-loopback broker for local testing |
 | `ODYSSEUS_ENABLE_COMMANDS` | `1` explicitly enables supported session commands |
 | `ODYSSEUS_INPUT_SPOOLS` | JSON mapping of worker IDs to private absolute spool directories |
+| `ODYSSEUS_WORKER_STATE_DIRS` | JSON mapping of worker IDs to private same-host directories containing `worker.sock`, for approvals/questions |
 
 Keep secrets in private backend configuration; never commit them or embed them
 in a URL. HTTP cookies are HttpOnly and SameSite Strict, with a 30-minute session
@@ -136,9 +137,39 @@ owning adapter confirms consumption and retention requirements are satisfied.
 
 Remote input requires an authenticated private spool-transfer/attachment service;
 setting a local path does not implement that transport. Workers absent from the
-spool mapping do not expose input controls. Full provider conversation output,
-approval request presentation, and approval responses are not implemented in
-this UI yet.
+spool mapping do not expose input controls. Full provider conversation output
+remains implementation work.
+
+## Private agent requests
+
+Workers configured in both `ODYSSEUS_WORKER_STATE_DIRS` and
+`ODYSSEUS_INPUT_SPOOLS` expose approval and question controls. Both directories
+must be canonical, private and outside the agent workspace. The worker socket
+must be user-owned with no group or other access. A local path cannot reach a
+remote cluster worker; an authenticated private attachment service is required
+before remote requests can be enabled.
+
+The authenticated `/api/requests` read accepts one session, worker and generation.
+It fetches the current controller record and checks private worker inventory
+before and after reading the pending provider requests. Missing ownership,
+changed turns, disconnects or unavailable evidence disable fresh decisions.
+Command approval shows the actual command. File approval shows only changes from
+the matching private worker evidence response; no evidence means no acceptance.
+The response fingerprint binds both the provider request and displayed changes.
+Question forms retain exact provider question IDs and keep secret answers masked.
+
+Answers use the same durable controller path as session commands: the backend
+rechecks the request, writes a scoped private response file, then sends only the
+reference and request ID through Agamemnon's session `respond` operation. A
+decision for changed evidence is rejected. The raw response, command, diff and
+questions are excluded from Fleet snapshots and telemetry.
+
+Drafts and uncertain submissions remain in page memory through sign-in renewal;
+they are not written to browser storage. An explicit retry reuses the command ID
+and exact response. If the provider request has disappeared, only matching
+durable command intent and the retained private file can confirm prior controller
+acceptance. This is not provider completion. Reloading the page clears its private
+drafts; worker/controller records remain available for reconciliation.
 
 ## Verification
 
@@ -147,6 +178,12 @@ Run `just web-test`, `just web-build`, and `just web-format-check`. Run
 existing executable can be selected with `PLAYWRIGHT_CHROMIUM_EXECUTABLE`.
 Browser tests create loopback fixture servers and intercept command requests;
 they do not dispatch real issue work. Tests must build current assets first.
+
+The private-request tests use actual local Unix sockets with synthetic worker
+inventory. They cover owner/turn changes, evidence-bound file decisions, typed
+request IDs and exact question answers. Browser tests cover private request
+presentation, missing evidence, explicit retry and sign-in renewal. These tests
+do not establish remote attachment or authenticated provider acceptance.
 
 The independent local integration canary has exercised actual Keystone gateway
 observations and the JavaScript writer/Python private-input reader. Positive

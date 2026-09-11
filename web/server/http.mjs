@@ -40,6 +40,7 @@ export function createDashboardServer({
   const sessions = new Map();
   let streams = 0;
   let pendingCommands = 0;
+  let pendingReads = 0;
   const server = createServer(async (request, response) => {
     response.setHeader("x-content-type-options", "nosniff");
     response.setHeader("referrer-policy", "no-referrer");
@@ -100,9 +101,34 @@ export function createDashboardServer({
               enabled: false,
               operations: [],
               inputWorkerIds: [],
+              approvalWorkerIds: [],
             },
           },
         );
+      if (request.method === "GET" && url.pathname === "/api/requests") {
+        if (!commands?.requests)
+          return json(response, 503, { error: "not_configured" });
+        const fields = ["sessionId", "workerId", "generation"];
+        if (
+          [...url.searchParams.keys()].length !== fields.length ||
+          fields.some((key) => url.searchParams.getAll(key).length !== 1)
+        )
+          return json(response, 400, { error: "invalid_request" });
+        if (pendingReads >= 4) return json(response, 429, { error: "busy" });
+        pendingReads++;
+        try {
+          const result = await commands.requests({
+            sessionId: url.searchParams.get("sessionId"),
+            workerId: url.searchParams.get("workerId"),
+            generation: Number(url.searchParams.get("generation")),
+          });
+          return json(response, result.code, result.body);
+        } catch {
+          return json(response, 503, { error: "unavailable" });
+        } finally {
+          pendingReads--;
+        }
+      }
       if (request.method === "POST" && url.pathname === "/api/commands") {
         if (!origin) return json(response, 403, { error: "Origin required" });
         if (!commands) return json(response, 503, { error: "not_configured" });

@@ -287,6 +287,242 @@ test("generation zero cannot enable session commands", async ({ page }) => {
   await expect(page.getByLabel("Session input")).toHaveCount(0);
 });
 
+test("private command approval retains the exact response after an uncertain submission", async ({
+  page,
+}) => {
+  const sent = [];
+  await page.route("**/api/requests?*", (route) =>
+    route.fulfill({
+      json: {
+        sessionId: "session-one",
+        workerId: "worker-one",
+        generation: 3,
+        requests: [
+          {
+            requestId: 19,
+            fingerprint: "a".repeat(64),
+            kind: "command",
+            command: "echo synthetic approval",
+            details: "Synthetic approval fixture",
+            decisions: ["accept", "decline", "cancel"],
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/api/commands", (route) => {
+    const input = route.request().postDataJSON();
+    sent.push(input);
+    return route.fulfill({
+      status: sent.length === 1 ? 503 : 202,
+      json:
+        sent.length === 1
+          ? {
+              commandId: input.commandId,
+              error: "unavailable",
+              outcome: "unknown",
+            }
+          : { commandId: input.commandId, status: "submitted" },
+    });
+  });
+  await login(page, {
+    operations: ["respond"],
+    approvalWorkerIds: ["worker-one"],
+  });
+  await expect(page.getByLabel("Private agent requests")).toContainText(
+    "echo synthetic approval",
+  );
+  await page
+    .getByRole("button", { name: "Allow command", exact: true })
+    .click();
+  await expect(page.getByLabel("Session commands")).toContainText(
+    "Outcome unknown",
+  );
+  await page
+    .getByRole("button", { name: "Retry same request", exact: true })
+    .click();
+  await expect(page.getByLabel("Session commands")).toContainText(
+    "Submitted to controller",
+  );
+  expect(sent).toHaveLength(2);
+  expect(sent[1]).toEqual(sent[0]);
+  expect(sent[0]).toMatchObject({
+    operation: "respond",
+    requestId: 19,
+    requestFingerprint: "a".repeat(64),
+    response: { decision: "accept" },
+  });
+});
+
+test("file requests without private evidence permit decline but never approval", async ({
+  page,
+}) => {
+  await page.route("**/api/requests?*", (route) =>
+    route.fulfill({
+      json: {
+        sessionId: "session-one",
+        workerId: "worker-one",
+        generation: 3,
+        requests: [
+          {
+            requestId: "file-1",
+            fingerprint: "b".repeat(64),
+            kind: "file",
+            details: "No diff supplied",
+            decisions: ["decline", "cancel"],
+            evidenceAvailable: false,
+          },
+        ],
+      },
+    }),
+  );
+  await login(page, {
+    operations: ["respond"],
+    approvalWorkerIds: ["worker-one"],
+  });
+  await expect(page.getByLabel("Private agent requests")).toContainText(
+    "File change evidence is unavailable",
+  );
+  await expect(
+    page.getByRole("button", { name: "Allow file changes", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Decline", exact: true }),
+  ).toBeEnabled();
+});
+
+test("agent questions retain private answers through sign-in renewal", async ({
+  page,
+}) => {
+  let signedOut = false;
+  const sent = [];
+  await page.route("**/api/snapshot", (route) =>
+    signedOut
+      ? route.fulfill({
+          status: 401,
+          json: { error: "Local sign-in required" },
+        })
+      : route.continue(),
+  );
+  await page.route("**/api/requests?*", (route) =>
+    route.fulfill({
+      json: {
+        sessionId: "session-one",
+        workerId: "worker-one",
+        generation: 3,
+        requests: [
+          {
+            requestId: "question-1",
+            fingerprint: "c".repeat(64),
+            kind: "input",
+            details: "Synthetic interview",
+            decisions: [],
+            questions: [
+              {
+                id: "target",
+                header: "Target",
+                question: "Which fixture target?",
+                isOther: false,
+                isSecret: false,
+                options: [
+                  { label: "M1", description: "First fixture" },
+                  { label: "M2", description: "Second fixture" },
+                ],
+              },
+              {
+                id: "note",
+                header: "Note",
+                question: "Private fixture note?",
+                isOther: true,
+                isSecret: true,
+                options: null,
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/api/commands", (route) => {
+    const input = route.request().postDataJSON();
+    sent.push(input);
+    return route.fulfill({
+      status: 202,
+      json: { commandId: input.commandId, status: "submitted" },
+    });
+  });
+  await login(page, {
+    operations: ["respond"],
+    approvalWorkerIds: ["worker-one"],
+  });
+  await page.getByLabel("Which fixture target?").selectOption("M2");
+  await page
+    .getByLabel("Private fixture note?")
+    .fill("Synthetic private answer");
+  await expect(page.getByLabel("Private fixture note?")).toHaveAttribute(
+    "type",
+    "password",
+  );
+  signedOut = true;
+  server.closeAllConnections();
+  await expect(page.getByLabel("Local access token")).toBeVisible();
+  await expect(page.getByLabel("Private agent requests")).toHaveCount(0);
+  signedOut = false;
+  await page.getByLabel("Local access token").fill(fixtureCredential);
+  await page.getByRole("button", { name: "Open mission control" }).click();
+  await expect(page.getByLabel("Private fixture note?")).toHaveValue(
+    "Synthetic private answer",
+  );
+  await page.getByRole("button", { name: "Send answers", exact: true }).click();
+  await expect(page.getByLabel("Session commands")).toContainText(
+    "Submitted to controller",
+  );
+  expect(sent).toHaveLength(1);
+  expect(sent[0].response).toEqual({
+    answers: {
+      target: { answers: ["M2"] },
+      note: { answers: ["Synthetic private answer"] },
+    },
+  });
+  await expect(
+    page.getByRole("button", { name: "Send answers", exact: true }),
+  ).toBeDisabled();
+});
+
+test("private requests from another generation cannot enable approval", async ({
+  page,
+}) => {
+  await page.route("**/api/requests?*", (route) =>
+    route.fulfill({
+      json: {
+        sessionId: "session-one",
+        workerId: "worker-one",
+        generation: 2,
+        requests: [
+          {
+            requestId: 19,
+            fingerprint: "a".repeat(64),
+            kind: "command",
+            command: "echo synthetic",
+            details: "Old fixture",
+            decisions: ["accept"],
+          },
+        ],
+      },
+    }),
+  );
+  await login(page, {
+    operations: ["respond"],
+    approvalWorkerIds: ["worker-one"],
+  });
+  await expect(page.getByLabel("Private agent requests")).toContainText(
+    "Private requests are unavailable",
+  );
+  await expect(
+    page.getByRole("button", { name: "Allow command", exact: true }),
+  ).toHaveCount(0);
+});
+
 test("mobile session controls stay visible and submit only the selected cancellation request", async ({
   page,
 }) => {

@@ -1,10 +1,18 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { open, lstat, realpath } from "node:fs/promises";
+import { open, realpath } from "node:fs/promises";
 import { resolve, sep } from "node:path";
-import { tmpdir } from "node:os";
+import { privateDirectory } from "./private-storage.mjs";
+import { createRequestReader, validateResponse } from "./requests.mjs";
 
-const operations = ["start", "input", "interrupt", "cancel", "resume"];
+const operations = [
+  "start",
+  "input",
+  "respond",
+  "interrupt",
+  "cancel",
+  "resume",
+];
 const id = /^[A-Za-z0-9_-]{1,128}$/;
 const commandId = /^ui-[0-9a-f]{32}$/;
 const maximum = 128 * 1024;
@@ -35,35 +43,48 @@ function endpoint(url) {
   return base;
 }
 
-async function privateDirectory(path) {
-  const canonical = await realpath(path);
-  // The pinned native provider grants access to shared system scratch paths.
-  if (
-    canonical !== resolve(path) ||
-    [
-      "/tmp",
-      "/private/tmp",
-      "/var/tmp",
-      "/private/var/tmp",
-      "/private/var/folders",
-      await realpath(tmpdir()),
-    ].some((root) => canonical === root || canonical.startsWith(root + sep))
-  )
-    throw new Error(
-      "Private spool must be canonical and outside shared scratch",
-    );
-  const info = await lstat(canonical);
-  if (
-    !info.isDirectory() ||
-    info.isSymbolicLink() ||
-    info.uid !== process.getuid() ||
-    info.mode & 0o077
-  )
-    throw new Error("Private spool must be an owner-only directory");
-  return canonical;
+async function verifyStoredInput(path, data) {
+  const existing = await open(
+    path,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
+  try {
+    const before = await existing.stat();
+    if (
+      !before.isFile() ||
+      before.nlink !== 1 ||
+      before.uid !== process.getuid() ||
+      before.mode & 0o077 ||
+      before.size > maximum
+    )
+      throw new Error("Unsafe private input");
+    const buffer = Buffer.alloc(maximum + 1);
+    let size = 0;
+    while (size < buffer.length) {
+      const read = await existing.read(
+        buffer,
+        size,
+        buffer.length - size,
+        null,
+      );
+      if (!read.bytesRead) break;
+      size += read.bytesRead;
+    }
+    const after = await existing.stat();
+    if (
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      size > maximum
+    )
+      throw new Error("Private input changed");
+    if (!data.equals(buffer.subarray(0, size)))
+      throw new Conflict("Input identity reused");
+  } finally {
+    await existing.close();
+  }
 }
 
-async function storeInput(directory, input, workspace) {
+async function storeInput(directory, input, workspace, existingOnly = false) {
   const spool = await privateDirectory(directory);
   if (typeof workspace !== "string" || !workspace.startsWith("/"))
     throw new Error("Current workspace is unavailable");
@@ -84,12 +105,21 @@ async function storeInput(directory, input, workspace) {
       workerId: input.workerId,
       generation: input.generation,
       sessionId: input.sessionId,
-      kind: "input",
-      text: input.text,
+      ...(input.operation === "respond"
+        ? {
+            kind: "response",
+            requestId: input.requestId,
+            response: input.response,
+          }
+        : { kind: "input", text: input.text }),
     }),
   );
   if (data.length > maximum) throw new Error("Private input too large");
   const path = resolve(spool, reference);
+  if (existingOnly) {
+    await verifyStoredInput(path, data);
+    return reference;
+  }
   let file;
   try {
     file = await open(
@@ -104,44 +134,7 @@ async function storeInput(directory, input, workspace) {
     await file.sync();
   } catch (error) {
     if (error.code !== "EEXIST") throw error;
-    const existing = await open(
-      path,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
-    try {
-      const before = await existing.stat();
-      if (
-        !before.isFile() ||
-        before.nlink !== 1 ||
-        before.uid !== process.getuid() ||
-        before.mode & 0o077 ||
-        before.size > maximum
-      )
-        throw new Error("Unsafe private input");
-      const buffer = Buffer.alloc(maximum + 1);
-      let size = 0;
-      while (size < buffer.length) {
-        const read = await existing.read(
-          buffer,
-          size,
-          buffer.length - size,
-          null,
-        );
-        if (!read.bytesRead) break;
-        size += read.bytesRead;
-      }
-      const after = await existing.stat();
-      if (
-        before.size !== after.size ||
-        before.mtimeMs !== after.mtimeMs ||
-        size > maximum
-      )
-        throw new Error("Private input changed");
-      if (!data.equals(buffer.subarray(0, size)))
-        throw new Conflict("Input identity reused");
-    } finally {
-      await existing.close();
-    }
+    await verifyStoredInput(path, data);
   } finally {
     await file?.close();
   }
@@ -172,6 +165,8 @@ export function createCommandService({
   url,
   apiKey,
   inputSpools = {},
+  workerStateDirs = {},
+  requestReader = createRequestReader(workerStateDirs),
   fetchImpl = fetch,
 } = {}) {
   const base = url && apiKey ? endpoint(url) : null;
@@ -187,11 +182,19 @@ export function createCommandService({
     throw new Error(
       "Input spools must map worker IDs to private absolute directories",
     );
+  const approvalWorkers = requestReader.workerIds.filter((worker) =>
+    Object.hasOwn(inputSpools, worker),
+  );
   const capabilities = {
     sessionCommands: {
       enabled: Boolean(base),
-      operations: base ? operations : [],
+      operations: base
+        ? operations.filter(
+            (operation) => operation !== "respond" || approvalWorkers.length,
+          )
+        : [],
       inputWorkerIds: base ? Object.keys(inputSpools) : [],
+      approvalWorkerIds: base ? approvalWorkers : [],
     },
   };
   const headers = {
@@ -199,8 +202,74 @@ export function createCommandService({
     Accept: "application/json",
     "Content-Type": "application/json",
   };
+  const scopeValid = (input) =>
+    input &&
+    id.test(input.sessionId) &&
+    id.test(input.workerId) &&
+    Number.isSafeInteger(input.generation) &&
+    input.generation >= 1;
+  const fetchCurrent = async (input) => {
+    const response = await fetchImpl(
+      new URL(`/v1/fleet/sessions/${input.sessionId}`, base),
+      {
+        method: "GET",
+        headers,
+        redirect: "error",
+        signal: AbortSignal.timeout(4000),
+      },
+    );
+    if (response.status === 404) throw new Conflict("Missing session");
+    if (!response.ok) throw new Error("Controller unavailable");
+    const record = await boundedJson(response);
+    if (
+      record.id !== input.sessionId ||
+      record.workerId !== input.workerId ||
+      record.generation !== input.generation
+    )
+      throw new Conflict("Owner changed");
+    return record;
+  };
+  const matchesCommand = (command, input, payload) =>
+    command &&
+    command.commandId === input.commandId &&
+    command.idempotencyKey === input.commandId &&
+    command.targetKind === "sessions" &&
+    command.targetId === input.sessionId &&
+    command.workerId === input.workerId &&
+    command.generation === input.generation &&
+    command.operation === input.operation &&
+    command.payload &&
+    typeof command.payload === "object" &&
+    !Array.isArray(command.payload) &&
+    Object.keys(command.payload).length === Object.keys(payload).length &&
+    Object.entries(payload).every(
+      ([key, value]) =>
+        Object.hasOwn(command.payload, key) && command.payload[key] === value,
+    );
   return {
     capabilities,
+    async requests(input) {
+      if (!base || !approvalWorkers.includes(input?.workerId))
+        return result(503, input, "not_configured");
+      if (
+        !scopeValid(input) ||
+        Object.keys(input).some(
+          (key) => !["sessionId", "workerId", "generation"].includes(key),
+        )
+      )
+        return result(400, input, "invalid_request");
+      try {
+        const record = await fetchCurrent(input);
+        const requests = await requestReader.read(record);
+        return result(200, input, null, { ...input, requests });
+      } catch (error) {
+        return result(
+          error instanceof Conflict ? 409 : 503,
+          input,
+          error instanceof Conflict ? "conflict" : "unavailable",
+        );
+      }
+    },
     async submit(input) {
       if (!base) return result(503, input, "not_configured");
       if (
@@ -222,11 +291,26 @@ export function createCommandService({
               "generation",
               "operation",
               ...(input.operation === "input" ? ["text"] : []),
+              ...(input.operation === "respond"
+                ? ["requestId", "requestFingerprint", "response"]
+                : []),
             ].includes(key),
         ) ||
         (input.operation === "input" &&
           (typeof input.text !== "string" ||
             !input.text.trim() ||
+            Buffer.byteLength(JSON.stringify(input)) > maximum - 1024)) ||
+        (input.operation === "respond" &&
+          ((!Number.isSafeInteger(input.requestId) &&
+            !(
+              typeof input.requestId === "string" &&
+              input.requestId.length > 0 &&
+              input.requestId.length <= 256
+            )) ||
+            !/^[0-9a-f]{64}$/.test(input.requestFingerprint) ||
+            !input.response ||
+            typeof input.response !== "object" ||
+            Array.isArray(input.response) ||
             Buffer.byteLength(JSON.stringify(input)) > maximum - 1024))
       )
         return result(400, input, "invalid_request");
@@ -235,28 +319,16 @@ export function createCommandService({
         !Object.hasOwn(inputSpools, input.workerId)
       )
         return result(503, input, "not_configured");
+      if (
+        input.operation === "respond" &&
+        !approvalWorkers.includes(input.workerId)
+      )
+        return result(503, input, "not_configured");
       let submitted = false;
       try {
         // UI snapshots are observational; refresh the actual owner before every mutation.
-        const current = await fetchImpl(
-          new URL(`/v1/fleet/sessions/${input.sessionId}`, base),
-          {
-            method: "GET",
-            headers,
-            redirect: "error",
-            signal: AbortSignal.timeout(4000),
-          },
-        );
-        if (current.status === 404) return result(409, input, "conflict");
-        if (!current.ok) throw new Error("Controller unavailable");
-        const record = await boundedJson(current);
-        if (
-          record.id !== input.sessionId ||
-          record.workerId !== input.workerId ||
-          record.generation !== input.generation
-        )
-          return result(409, input, "conflict");
-        const payload =
+        const record = await fetchCurrent(input);
+        let payload =
           input.operation === "input"
             ? {
                 inputRef: await storeInput(
@@ -266,6 +338,55 @@ export function createCommandService({
                 ),
               }
             : {};
+        if (input.operation === "respond") {
+          // An uncertain retry may outlive the private provider request. Only
+          // the exact durable intent plus its retained private bytes can confirm it.
+          const previous = await fetchImpl(
+            new URL(`/v1/fleet/commands/${input.commandId}`, base),
+            {
+              method: "GET",
+              headers,
+              redirect: "error",
+              signal: AbortSignal.timeout(4000),
+            },
+          );
+          if (previous.ok) {
+            const retained = await boundedJson(previous);
+            payload = {
+              responseRef: await storeInput(
+                inputSpools[input.workerId],
+                input,
+                record.workspace,
+                true,
+              ),
+              requestId: String(input.requestId),
+            };
+            if (!matchesCommand(retained.command, input, payload))
+              throw new Conflict("Intent changed");
+            return result(202, input, null, { status: "submitted" });
+          }
+          if (previous.status !== 404)
+            throw new Error("Command history unavailable");
+          const pending = (await requestReader.read(record)).find(
+            (request) =>
+              request.requestId === input.requestId &&
+              request.fingerprint === input.requestFingerprint,
+          );
+          if (!pending) throw new Conflict("Request changed");
+          try {
+            validateResponse(pending, input.response);
+          } catch {
+            return result(400, input, "invalid_request");
+          }
+          payload = {
+            responseRef: await storeInput(
+              inputSpools[input.workerId],
+              input,
+              record.workspace,
+            ),
+            requestId: String(input.requestId),
+          };
+        }
         submitted = true;
         const response = await fetchImpl(
           new URL(
@@ -292,17 +413,7 @@ export function createCommandService({
           throw new Error("Command acceptance uncertain");
         const accepted = await boundedJson(response);
         const command = accepted.command;
-        if (
-          !command ||
-          command.commandId !== input.commandId ||
-          command.idempotencyKey !== input.commandId ||
-          command.targetKind !== "sessions" ||
-          command.targetId !== input.sessionId ||
-          command.workerId !== input.workerId ||
-          command.generation !== input.generation ||
-          command.operation !== input.operation ||
-          JSON.stringify(command.payload) !== JSON.stringify(payload)
-        )
+        if (!matchesCommand(command, input, payload))
           throw new Error("Command confirmation mismatch");
         return result(202, input, null, { status: "submitted" });
       } catch (error) {

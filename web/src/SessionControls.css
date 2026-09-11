@@ -107,6 +107,56 @@
 .session-command-receipt button {
   align-self: flex-start;
 }
+.private-requests,
+.private-request,
+.private-question {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.private-request {
+  padding: 14px;
+  border: 1px solid #52674e;
+  border-radius: 7px;
+}
+.private-request p,
+.private-requests > p {
+  font-size: 12px;
+}
+.private-request pre {
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  background: #101916;
+  font-size: 12px;
+}
+.private-request form,
+.private-request-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.private-request form {
+  flex-direction: column;
+}
+.private-request input,
+.private-request select {
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  color: #e3ebe5;
+  background: #101916;
+  border: 1px solid #52674e;
+  border-radius: 7px;
+  font: inherit;
+}
+.private-request input:focus-visible,
+.private-request select:focus-visible {
+  outline: 2px solid #b9e7ae;
+  outline-offset: 3px;
+}
 @media (max-width: 900px) {
   .session-controls-body {
     grid-template-columns: minmax(0, 1fr);

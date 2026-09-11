@@ -39,8 +39,13 @@ async function fixture(t, options = {}) {
     url: "http://127.0.0.1:59999",
     apiKey: fixtureCredential,
     inputSpools: { w1: spool },
+    requestReader: options.requestReader,
     fetchImpl: async (url, init) => {
       calls.push({ url: String(url), ...init });
+      if (new URL(url).pathname.startsWith("/v1/fleet/commands/"))
+        return options.existingCommand
+          ? Response.json(options.existingCommand)
+          : Response.json({}, { status: 404 });
       if (init.method !== "POST")
         return Response.json({
           id: "s1",
@@ -63,10 +68,11 @@ async function fixture(t, options = {}) {
         {
           command: {
             ...body,
+            payload: Object.fromEntries(Object.entries(body.payload).sort()),
             targetKind: "sessions",
             targetId: "s1",
             workerId: "w1",
-            operation: request.operation,
+            operation: new URL(url).pathname.split("/").at(-1),
           },
           status: "pending",
         },
@@ -102,6 +108,118 @@ test("private text is durably spooled before only scoped references reach Agamem
       text: request.text,
     },
   );
+});
+
+test("approval responses retain typed IDs privately and send only references to the controller", async (t) => {
+  const pending = {
+    requestId: 19,
+    fingerprint: "f".repeat(64),
+    kind: "command",
+    decisions: ["accept", "decline"],
+  };
+  const requestReader = { workerIds: ["w1"], read: async () => [pending] };
+  const { service, calls, spool } = await fixture(t, { requestReader });
+  const input = {
+    ...request,
+    operation: "respond",
+    requestId: 19,
+    requestFingerprint: pending.fingerprint,
+    response: { decision: "accept" },
+  };
+  delete input.text;
+  assert.equal((await service.submit(input)).code, 202);
+  const post = calls.find((call) => call.method === "POST");
+  const command = JSON.parse(post.body);
+  assert.deepEqual(Object.keys(command.payload).sort(), [
+    "requestId",
+    "responseRef",
+  ]);
+  assert.equal(command.payload.requestId, "19");
+  const body = JSON.parse(
+    await readFile(resolve(spool, command.payload.responseRef), "utf8"),
+  );
+  assert.equal(body.kind, "response");
+  assert.equal(body.requestId, 19);
+  assert.deepEqual(body.response, { decision: "accept" });
+  assert.equal(post.body.includes('"decision"'), false);
+  assert.equal(post.body.includes(pending.fingerprint), false);
+});
+
+test("changed approval identity cannot create an authorized response", async (t) => {
+  const requestReader = {
+    workerIds: ["w1"],
+    read: async () => [
+      {
+        requestId: 19,
+        fingerprint: "a".repeat(64),
+        kind: "command",
+        decisions: ["accept"],
+      },
+    ],
+  };
+  const { service, calls, spool } = await fixture(t, { requestReader });
+  const input = {
+    ...request,
+    operation: "respond",
+    requestId: 19,
+    requestFingerprint: "b".repeat(64),
+    response: { decision: "accept" },
+  };
+  delete input.text;
+  assert.equal((await service.submit(input)).code, 409);
+  assert.equal(
+    calls.some((call) => call.method === "POST"),
+    false,
+  );
+  assert.deepEqual(await readdir(spool), []);
+});
+
+test("a retained durable approval can confirm an uncertain retry after the provider request disappears", async (t) => {
+  const pending = {
+    requestId: "request-1",
+    fingerprint: "e".repeat(64),
+    kind: "command",
+    decisions: ["accept"],
+  };
+  const options = {
+    failPost: true,
+    requestReader: { workerIds: ["w1"], read: async () => [pending] },
+  };
+  const { service, calls, spool } = await fixture(t, options);
+  const input = {
+    ...request,
+    operation: "respond",
+    requestId: pending.requestId,
+    requestFingerprint: pending.fingerprint,
+    response: { decision: "accept" },
+  };
+  delete input.text;
+  assert.equal((await service.submit(input)).body.outcome, "unknown");
+  const posted = JSON.parse(calls.find((call) => call.method === "POST").body);
+  options.existingCommand = {
+    command: {
+      ...posted,
+      targetKind: "sessions",
+      targetId: "s1",
+      workerId: "w1",
+      operation: "respond",
+      payload: Object.fromEntries(Object.entries(posted.payload).sort()),
+    },
+    status: "completed",
+  };
+  options.requestReader.read = async () => {
+    throw new Error("Request has already been answered");
+  };
+  assert.equal((await service.submit(input)).code, 202);
+  assert.equal(calls.filter((call) => call.method === "POST").length, 1);
+  assert.equal(
+    (await service.submit({ ...input, response: { decision: "decline" } }))
+      .code,
+    409,
+  );
+  for (const name of await readdir(spool)) await rm(resolve(spool, name));
+  assert.equal((await service.submit(input)).code, 503);
+  assert.deepEqual(await readdir(spool), []);
 });
 
 test("private input cannot enter a workspace or an ancestor of a workspace", async (t) => {

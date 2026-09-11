@@ -1,4 +1,9 @@
 import { useEffect, useId, useRef, useState } from "react";
+import {
+  PrivateRequests,
+  type PrivateResponse,
+  type RequestDraft,
+} from "./PrivateRequests";
 import "./SessionControls.css";
 
 export type SessionControlItem = {
@@ -11,7 +16,8 @@ export type SessionControlItem = {
   status?: string;
 };
 
-type Operation = "start" | "input" | "interrupt" | "cancel" | "resume";
+type Operation =
+  "start" | "input" | "respond" | "interrupt" | "cancel" | "resume";
 type Command = {
   commandId: string;
   sessionId: string;
@@ -19,12 +25,16 @@ type Command = {
   generation: number;
   operation: Operation;
   text?: string;
+  requestId?: string | number;
+  requestFingerprint?: string;
+  response?: PrivateResponse;
 };
 type Capabilities = {
   key: string;
   enabled: boolean;
   operations: Operation[];
   inputWorkerIds: string[];
+  approvalWorkerIds: string[];
 };
 type Pending = {
   command: Readonly<Command>;
@@ -40,6 +50,7 @@ type Receipt = {
 const labels: Record<Operation, string> = {
   start: "Start session",
   input: "Send input",
+  respond: "Answer agent request",
   interrupt: "Request interruption",
   cancel: "Request cancellation",
   resume: "Resume session",
@@ -73,6 +84,11 @@ export function useSessionControls({
   const [capabilityError, setCapabilityError] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [draft, setDraft] = useState({ key: "", text: "" });
+  const [requestDraft, setRequestDraft] = useState<RequestDraft>({
+    key: "",
+    answers: {},
+  });
+  const [answered, setAnswered] = useState<string[]>([]);
   const [pending, setPending] = useState<Pending | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const pendingRef = useRef<Readonly<Command> | null>(null);
@@ -104,7 +120,12 @@ export function useSessionControls({
           !Array.isArray(data.inputWorkerIds) ||
           !data.inputWorkerIds.every(
             (value: unknown) => typeof value === "string",
-          )
+          ) ||
+          (data.approvalWorkerIds !== undefined &&
+            (!Array.isArray(data.approvalWorkerIds) ||
+              !data.approvalWorkerIds.every(
+                (value: unknown) => typeof value === "string",
+              )))
         )
           throw new Error("invalid capabilities");
         if (!controller.signal.aborted)
@@ -115,6 +136,7 @@ export function useSessionControls({
               data.operations.includes(operation),
             ),
             inputWorkerIds: data.inputWorkerIds,
+            approvalWorkerIds: data.approvalWorkerIds ?? [],
           });
       })
       .catch(() => {
@@ -131,7 +153,9 @@ export function useSessionControls({
       available &&
       capabilities?.operations.includes(operation) &&
       (operation !== "input" ||
-        capabilities.inputWorkerIds.includes(item?.workerId ?? "")),
+        capabilities.inputWorkerIds.includes(item?.workerId ?? "")) &&
+      (operation !== "respond" ||
+        capabilities.approvalWorkerIds.includes(item?.workerId ?? "")),
     );
   const inputSupported = supported("input");
   const text = draft.key === key ? draft.text : "";
@@ -169,6 +193,14 @@ export function useSessionControls({
       if (response.status === 202 && matches && result.status === "submitted") {
         pendingRef.current = null;
         setPending(null);
+        if (command.operation === "respond") {
+          const responseKey =
+            commandIdentity(command) + command.requestFingerprint;
+          setAnswered((values) => [...values.slice(-127), responseKey]);
+          setRequestDraft((value) =>
+            value.key === responseKey ? { key: "", answers: {} } : value,
+          );
+        }
         if (command.operation === "input")
           setDraft((value) =>
             value.key === commandIdentity(command)
@@ -213,7 +245,14 @@ export function useSessionControls({
     }
   }
 
-  function submit(operation: Operation) {
+  function submit(
+    operation: Operation,
+    response?: {
+      requestId: string | number;
+      requestFingerprint: string;
+      response: PrivateResponse;
+    },
+  ) {
     if (!canSubmit(operation) || !item || pendingRef.current || sending.current)
       return;
     const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -226,6 +265,7 @@ export function useSessionControls({
       generation: item.generation!,
       operation,
       ...(operation === "input" ? { text } : {}),
+      ...(operation === "respond" ? response : {}),
     });
     pendingRef.current = command;
     setReceipt(null);
@@ -392,11 +432,30 @@ export function useSessionControls({
               <p>Private input is not configured for this worker.</p>
             )
           )}
+          {supported("respond") && item && (
+            <PrivateRequests
+              scope={{
+                sessionId: item.id,
+                workerId: item.workerId!,
+                generation: item.generation!,
+              }}
+              enabled={Boolean(live && knownEligibility(item, "respond"))}
+              disabled={!canSubmit("respond")}
+              refresh={refresh}
+              answered={answered}
+              draft={requestDraft}
+              onDraft={setRequestDraft}
+              onRespond={(requestId, requestFingerprint, response) =>
+                submit("respond", { requestId, requestFingerprint, response })
+              }
+            />
+          )}
           <div className="session-control-actions">
             {operations
               .filter(
                 (operation) =>
                   operation !== "input" &&
+                  operation !== "respond" &&
                   capabilities.operations.includes(operation),
               )
               .map((operation) => (

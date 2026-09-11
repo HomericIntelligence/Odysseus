@@ -162,6 +162,49 @@ test("command submission requires an authenticated same-origin JSON request and 
   assert.equal(submitted.length, 1);
 });
 
+test("private request details require sign-in and return only the selected owner scope", async (t) => {
+  const calls = [];
+  const { url } = await fixture(t, {
+    commands: {
+      requests: async (scope) => {
+        calls.push(scope);
+        return {
+          code: 200,
+          body: {
+            ...scope,
+            requests: [
+              {
+                requestId: 19,
+                kind: "command",
+                command: "synthetic private command",
+              },
+            ],
+          },
+        };
+      },
+    },
+  });
+  const endpoint = `${url}/api/requests?sessionId=s1&workerId=w1&generation=3`;
+  assert.equal((await fetch(endpoint)).status, 401);
+  const cookie = await login(url);
+  const response = await fetch(endpoint, { headers: { cookie } });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(calls, [{ sessionId: "s1", workerId: "w1", generation: 3 }]);
+  assert.equal(
+    (await response.json()).requests[0].command,
+    "synthetic private command",
+  );
+  assert.equal(
+    (await fetch(`${endpoint}&workerId=w2`, { headers: { cookie } })).status,
+    400,
+  );
+  const snapshot = await (
+    await fetch(`${url}/api/snapshot`, { headers: { cookie } })
+  ).text();
+  assert.equal(snapshot.includes("synthetic private command"), false);
+});
+
 test("cross-origin login/stream and arbitrary Host requests are rejected", async (t) => {
   const { url } = await fixture(t);
   assert.equal(

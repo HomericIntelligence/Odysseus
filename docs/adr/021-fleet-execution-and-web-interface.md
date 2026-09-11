@@ -63,6 +63,15 @@ and incomplete hydration; fence the active writer before replacement execution.
 Private append-only receipts support recovery without becoming another task
 authority. Do not introduce a separate SQLite task/control store.
 
+Nestor's legacy in-memory intake does not authorize Fleet research admission.
+Add an explicit GitHub-backed bootstrap for intake identity, request digest,
+creation intent and work-issue reference. Use deterministic metadata paths in an
+operator-configured state repository and SHA-conditional transitions to grant
+one issue-creation attempt. An uncertain create requires reconciliation; it does
+not grant a new attempt. Requirements belong to the work issue and private
+interviews remain outside Git metadata. Nestor owns only research intake state;
+Agamemnon owns the resulting orchestration graph and worker admission.
+
 Display Projects health, last rebuild attempt/success, implementation labels, and
 current Fleet ownership as separate fields. A recent health read cannot refresh
 the underlying rebuild or approve issue work. Stale controller reads disable
@@ -92,6 +101,14 @@ observations outside GitHub.
 
 Diagnostic terminal attachment passes through the backend. Codex app-server
 messages remain authoritative for conversation control and approvals.
+
+The authenticated web backend may read scoped pending requests and file-change
+evidence through a configured private worker attachment. Bind session, worker,
+generation, current thread/turn and request identity on every read and response.
+File acceptance must also bind the displayed changes. If evidence is unavailable,
+disable acceptance. Spool responses privately and dispatch only their references
+through Agamemnon and Keystone. Never expose these private details as flow events.
+The initial same-host Unix attachment does not establish remote private transport.
 
 ### Credentials and recovery
 

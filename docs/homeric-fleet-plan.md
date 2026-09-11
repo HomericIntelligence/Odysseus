@@ -9,7 +9,8 @@ Accepted ADRs remain unchanged; architectural extensions require new Proposed AD
 and the existing repository review process.
 
 The initial [web application](../web/README.md) now implements ownership views,
-observed message flow, and scoped session controls. It is one integration slice;
+observed message flow, scoped session controls, and private approval/question
+forms. It is one integration slice;
 the acceptance target and remaining phases below still apply.
 
 ## 1. Required outcome
@@ -68,9 +69,8 @@ Telemachy does not allocate workers or provide an alternate scheduler.
 
 ### Odysseus web application
 
-Deliver the web application explicitly: the inspected checkout has a terminal
-console, while its architecture describes Odysseus as the user-facing hub. Build
-a React/TypeScript frontend with these connected views:
+Continue the React/TypeScript web application alongside the existing terminal
+console, with these connected views:
 
 - Research intake and live interviews.
 - Agamemnon task/dependency trees linked to work issues, orchestration records,
@@ -146,6 +146,7 @@ metadata and links, not Git object internals or terminal transcripts.
 | Data | Durable owner/location |
 |---|---|
 | Requirements, implementation plans, developer discussion | Work-repository issues |
+| Research intake identity, creation intent, request digest and work-issue reference | Proposed Nestor GitHub intake metadata namespace; explicit configured repository/branch, distinct from Agamemnon task state |
 | Orchestration graph, assignments, claims, generations, admission decisions, and task state | Agamemnon's GitHub-backed records, linked to work issues |
 | Implementation and review state labels | Hephaestus-managed GitHub labels |
 | Pipeline board | GitHub Project projected from issue-backed state |
@@ -550,6 +551,21 @@ Fleet work. Telemachy's producer must obtain a durable publish acknowledgment an
 reconcile uncertain GitHub issue creation without recreating epics or children.
 Consumer replay and parent wakeups cannot compensate for an unconfirmed producer.
 
+Implement the research bootstrap under Nestor's explicit Fleet intake interface.
+Use an operator-configured GitHub state repository and branch for deterministic
+intake metadata paths. A SHA-conditional transition reserves one creation
+attempt; competing writers and uncertain outcomes cannot issue another create.
+Store only identities, request digests, phase and confirmed issue references in
+that metadata. Publishable requirements stay in the work issue; private interview
+content stays private. This addition is a Proposed architecture extension with
+live GitHub write/concurrency and restart tests still required.
+
+The real Telemachy producer and native Agamemnon consumer have passed a local
+exact-byte integration test through a private JetStream broker. Lost publisher
+receipt, failed durable write, duplicate delivery, restart and canonical child
+completion/parent wakeup are covered with a controlled GitHub fixture. Retain
+this evidence separately from production admission and complete workflow tests.
+
 The initial Fleet registration adapter uses an explicitly marked, pre-existing
 epic issue to hold registration phases and frozen workflow identity. Uncertain
 child creation is reconciled across open and closed issues; absence cannot
@@ -557,3 +573,19 @@ authorize another create after a lost response. An exclusive registration writer
 is a required deployment condition. Automatic first-epic creation and enforced
 writer handoff remain intake/recovery work, and must be completed for the full
 research-to-implementation acceptance flow.
+
+Private command/file approval and question forms now use authenticated backend
+reads from a configured same-host worker socket. Each read binds current
+controller ownership and the provider turn; file acceptance also binds the
+displayed change evidence. Responses pass through a private spool reference and
+Agamemnon's durable `respond` command. Missing file evidence disables acceptance.
+Remote private attachment, conversation history and end-to-end authenticated
+model work remain implementation gates.
+
+Every implementation or CI repair PR must pass its repository's local CI/CD,
+hosted checks and the Athena PR review before merge. Repair broken checks in a
+repo-specific subtask, then rerun them against the final reviewed head. Keep
+component architecture and interface documentation current with each change.
+Review findings, disabled runtime tests, failed packaging and baseline CI failures
+must be resolved before claiming that the affected PR is ready. Preserve
+submodule integration approval and the separate runtime acceptance gates.
