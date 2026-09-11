@@ -47,7 +47,8 @@ cleanup_pids() {
 # Wait until a TCP port is accepting connections
 wait_for_port() {
     local port="$1" max="${2:-30}" name="${3:-service}"
-    for i in $(seq 1 "$max"); do
+    local attempt
+    for ((attempt = 1; attempt <= max; attempt++)); do
         (echo >/dev/tcp/localhost/"$port") 2>/dev/null && return 0
         sleep 1
     done

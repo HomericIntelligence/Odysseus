@@ -176,8 +176,9 @@ assert_retired_github_script() {
   local script=$1
   shift
   local status=0
-  local call_log="$tmp_dir/retired-$(basename "$script").calls"
-  local output="$tmp_dir/retired-$(basename "$script").log"
+  local call_log output
+  call_log="$tmp_dir/retired-$(basename "$script").calls"
+  output="$tmp_dir/retired-$(basename "$script").log"
   : >"$call_log"
   if PATH="$tmp_dir/bin:$PATH" GH_CALL_LOG="$call_log" \
       "$script" "$@" >"$output" 2>&1; then
@@ -1162,6 +1163,7 @@ run_live_update() {
   local put_count_file=$6
   local get_count_file=$7
   local evidence_file="$tmp_dir/evidence-${repos//,/-}.json"
+  local policy_source_path=${FLEET_RULESET_POLICY_FILE:-}
   local repository_state_file=${GH_REPOSITORY_STATE:-"$tmp_dir/repository-${repos//,/-}.json"}
   local repository_state_dir=""
   local settings_count_file=${GH_SETTINGS_PATCH_COUNT_FILE:-"$tmp_dir/settings-${repos//,/-}.count"}
@@ -1279,7 +1281,7 @@ run_live_update() {
     GH_FAIL_RULESET_LIST_AT="${GH_FAIL_RULESET_LIST_AT:-}" \
     GH_CORRUPT_POLICY_SOURCE_AT_RULESET_LIST="${GH_CORRUPT_POLICY_SOURCE_AT_RULESET_LIST:-}" \
     GH_CORRUPT_EVIDENCE_SOURCE_AT_RULESET_LIST="${GH_CORRUPT_EVIDENCE_SOURCE_AT_RULESET_LIST:-}" \
-    GH_POLICY_SOURCE_PATH="${FLEET_RULESET_POLICY_FILE:-}" \
+    GH_POLICY_SOURCE_PATH="$policy_source_path" \
     GH_EVIDENCE_SOURCE_PATH="$evidence_file" \
     GH_RULESET_LIST_EXTRA_AT="${GH_RULESET_LIST_EXTRA_AT:-}" \
     GH_RULESET_LIST_DUPLICATE_BASELINE_AT="${GH_RULESET_LIST_DUPLICATE_BASELINE_AT:-}" \
@@ -1345,7 +1347,7 @@ run_live_update() {
     GH_MAIN_SHA_OVERRIDE="${GH_MAIN_SHA_OVERRIDE:-}" \
     REAL_JQ="$REAL_JQ_BIN" \
     JQ_FAIL_PROVENANCE_REPO="${JQ_FAIL_PROVENANCE_REPO:-}" \
-    FLEET_RULESET_POLICY_FILE="${FLEET_RULESET_POLICY_FILE:-}" \
+    FLEET_RULESET_POLICY_FILE="$policy_source_path" \
     RULESET_SNAPSHOT_DIR="$snapshot_dir" \
     tools/github/apply-repo-rulesets.sh "${RULESET_MODE:---active}" --repos "$repos" \
       --evidence-file "$evidence_file" \
@@ -2202,7 +2204,7 @@ assert_remote_evidence_rejected() {
   local value=$3
   local state_file="$tmp_dir/evidence-$name-state.json"
   local pre_file="$tmp_dir/evidence-$name-pre.json"
-  local snapshots="$tmp_dir/evidence-$name-snapshots"
+  local evidence_snapshots="$tmp_dir/evidence-$name-snapshots"
   local output_file="$tmp_dir/evidence-$name.log"
   local put_count="$tmp_dir/evidence-$name-put-count"
   local get_count="$tmp_dir/evidence-$name-get-count"
@@ -2212,7 +2214,7 @@ assert_remote_evidence_rejected() {
   cp "$state_file" "$pre_file"
   export "$variable=$value"
   if run_live_update "$myrmidons_fixture" Myrmidons "$state_file" \
-      "$snapshots" "$output_file" "$put_count" "$get_count"; then
+      "$evidence_snapshots" "$output_file" "$put_count" "$get_count"; then
     accepted=true
   fi
   unset "$variable"

@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
 # shellcheck source=../e2e/lib/common.sh
 source "$ROOT/e2e/lib/common.sh"
-cd "$ROOT"
+cd "$ROOT" || exit 1
 
 SCHEMA="configs/schemas/dispatch-envelope.hi-v1.schema.json"
 

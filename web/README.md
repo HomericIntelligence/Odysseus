@@ -173,9 +173,13 @@ drafts; worker/controller records remain available for reconciliation.
 
 ## Verification
 
-Run `just web-test`, `just web-build`, and `just web-format-check`. Run
-`just web-browser-test` with a compatible Playwright Chromium installation; an
-existing executable can be selected with `PLAYWRIGHT_CHROMIUM_EXECUTABLE`.
+Run `just web-browser-install` once to install Playwright Chromium and its
+platform dependencies, then `just web-ci` for formatting, unit tests, build and
+browser tests. These same gates run in the required hosted web job and the
+repository's `pixi run --locked ci` recipe. An existing Chromium executable can
+be selected with `PLAYWRIGHT_CHROMIUM_EXECUTABLE`. Individual recipes remain
+`just web-test`, `just web-build`, `just web-format-check` and
+`just web-browser-test`.
 Browser tests create loopback fixture servers and intercept command requests;
 they do not dispatch real issue work. Tests must build current assets first.
 
