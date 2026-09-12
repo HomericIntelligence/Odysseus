@@ -52,6 +52,13 @@ const server = createDashboardServer({
   view,
   token,
   commands,
+  research:
+    process.env.ODYSSEUS_ENABLE_RESEARCH_INTAKE === "1"
+      ? {
+          url: process.env.ODYSSEUS_NESTOR_URL,
+          token: process.env.NESTOR_AUTH_TOKEN,
+        }
+      : undefined,
   staticDir: resolve(dirname(fileURLToPath(import.meta.url)), "../dist"),
 });
 const port = Number(process.env.ODYSSEUS_WEB_PORT ?? 8765);

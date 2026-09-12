@@ -2,7 +2,8 @@
 
 The Fleet web application presents work ownership, the GitHub pipeline projection,
 and observed message flow from Agamemnon and Keystone. It is an initial implementation of the
-[Fleet plan](../docs/homeric-fleet-plan.md); research intake, conversation history,
+[Fleet plan](../docs/homeric-fleet-plan.md). A Research intake view now submits
+publishable requirements through Nestor's supported durable intake API. Conversation history,
 terminal attachment, workflow views, retained Argus dashboards,
 and experiment execution remain implementation work.
 
@@ -29,6 +30,9 @@ and experiment execution remain implementation work.
 | `ODYSSEUS_NATS_CREDS_FILE` | Private NATS credentials file for the observation subscription |
 | `ODYSSEUS_NATS_CA_FILE` | Optional private CA bundle for the TLS connection |
 | `ODYSSEUS_NATS_ALLOW_LOCAL` | `1` permits a plaintext literal-loopback broker for local testing |
+| `ODYSSEUS_ENABLE_RESEARCH_INTAKE` | `1` enables the authenticated Nestor intake proxy |
+| `ODYSSEUS_NESTOR_URL` | Nestor HTTP endpoint; HTTPS except for loopback HTTP |
+| `NESTOR_AUTH_TOKEN` | Backend-only bearer credential for Nestor |
 | `ODYSSEUS_ENABLE_COMMANDS` | `1` explicitly enables supported session commands |
 | `ODYSSEUS_EXECUTION_HOST` | Controller host identity for this machine; defaults to the operating-system hostname |
 | `ODYSSEUS_INPUT_SPOOLS` | JSON mapping of worker IDs to private absolute spool directories |
@@ -110,6 +114,19 @@ work. A disabled or absent projection does not establish an empty backlog.
 Configure the existing ProjectV2 and explicit field/option mapping in Agamemnon
 using its `AGAMEMNON_PROJECTS_CONFIG` contract. The web backend uses its existing
 Agamemnon credential. No Project, permission, or configuration is created here.
+
+## Research intake
+
+Choose **Research intake** to submit publishable requirements to Nestor. The
+browser retains an immutable request before the first submission and preserves
+it across reloads for explicit retries. Status inspection is read-only. A link
+appears only after Nestor confirms the matching issue; uncertain responses keep
+the request locked. Other tabs adopt the retained request instead of creating a
+new identity. Storage failure prevents submission.
+
+This endpoint records a research issue. It does not dispatch research agents or
+complete research. See the [intake API and recovery guide](../docs/research-intake-api.md)
+for configuration, bounds, statuses and the browser retention scope.
 
 ## Session commands and private input
 

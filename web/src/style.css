@@ -892,9 +892,12 @@ tbody tr:hover {
   }
   nav {
     display: flex;
+    flex-wrap: wrap;
     gap: 5px;
   }
   nav button {
+    flex: 1 1 auto;
+    width: auto;
     margin: 0;
     justify-content: center;
     padding: 10px;
@@ -976,4 +979,50 @@ tbody tr:hover {
   .packet {
     display: none;
   }
+}
+
+.research-content {
+  max-width: 850px;
+  padding: 0 26px 26px;
+}
+.research-content form {
+  display: grid;
+  gap: 10px;
+  margin: 24px 0;
+}
+.research-content label {
+  margin-top: 8px;
+  font-weight: 600;
+}
+.research-content input,
+.research-content textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #334b46;
+  border-radius: 8px;
+  background: #10211e;
+  color: #edf4ed;
+  font: inherit;
+}
+.research-content textarea {
+  resize: vertical;
+  min-height: 160px;
+}
+.research-content input:disabled,
+.research-content textarea:disabled {
+  opacity: 0.8;
+}
+.research-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+.research-status {
+  border-top: 1px solid #334b46;
+  padding: 20px 0;
+  overflow-wrap: anywhere;
+}
+.research-status a {
+  color: #b9df9e;
 }

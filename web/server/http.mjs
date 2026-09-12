@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
+import { createIntakeService } from "./intakes.mjs";
 
 const hash = (value) => createHash("sha256").update(value).digest();
 const equal = (left, right) =>
@@ -34,13 +35,16 @@ export function createDashboardServer({
   staticDir,
   sessionTtlMs = 1800000,
   commands,
+  research,
 } = {}) {
   if (!view || !token)
     throw new Error("View and private UI token are required");
+  const intakes = research ? createIntakeService(research) : null;
   const sessions = new Map();
   let streams = 0;
   let pendingCommands = 0;
   let pendingReads = 0;
+  let pendingIntakes = 0;
   const server = createServer(async (request, response) => {
     response.setHeader("x-content-type-options", "nosniff");
     response.setHeader("referrer-policy", "no-referrer");
@@ -93,18 +97,68 @@ export function createDashboardServer({
       if (!sessions.has(cookie))
         return json(response, 401, { error: "Local sign-in required" });
       if (request.method === "GET" && url.pathname === "/api/capabilities")
-        return json(
-          response,
-          200,
-          commands?.capabilities ?? {
+        return json(response, 200, {
+          ...(commands?.capabilities ?? {
             sessionCommands: {
               enabled: false,
               operations: [],
               inputWorkerIds: [],
               approvalWorkerIds: [],
             },
-          },
-        );
+          }),
+          researchIntake: { enabled: Boolean(intakes) },
+        });
+      if (
+        url.pathname === "/api/research/intakes" &&
+        request.method === "POST"
+      ) {
+        if (!origin) return json(response, 403, { error: "Origin required" });
+        if (!intakes)
+          return json(response, 503, {
+            error: "not_configured",
+            outcome: "not_submitted",
+          });
+        if (pendingIntakes >= 4)
+          return json(response, 429, {
+            error: "busy",
+            outcome: "not_submitted",
+          });
+        pendingIntakes++;
+        try {
+          const input = await body(request, 65536);
+          const result = await intakes.submit(input);
+          return json(response, result.code, result.body);
+        } catch {
+          return json(response, 400, {
+            error: "invalid_request",
+            outcome: "not_submitted",
+          });
+        } finally {
+          pendingIntakes--;
+        }
+      }
+      if (
+        url.pathname.startsWith("/api/research/intakes/") &&
+        request.method === "GET"
+      ) {
+        if (!intakes) return json(response, 503, { error: "not_configured" });
+        if (
+          [...url.searchParams.keys()].length !== 1 ||
+          url.searchParams.getAll("requestDigest").length !== 1
+        )
+          return json(response, 400, { error: "invalid_request" });
+        if (pendingIntakes >= 4) return json(response, 429, { error: "busy" });
+        pendingIntakes++;
+        try {
+          const result = await intakes.inspect(
+            url.pathname.slice("/api/research/intakes/".length),
+            url.searchParams.get("requestDigest"),
+          );
+          return json(response, result.code, result.body);
+        } finally {
+          pendingIntakes--;
+        }
+      }
       if (request.method === "GET" && url.pathname === "/api/requests") {
         if (!commands?.requests)
           return json(response, 503, { error: "not_configured" });
