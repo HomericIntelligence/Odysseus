@@ -281,6 +281,25 @@ This interface does not dispatch research workers or maintain another queue.
 See the [API and recovery contract](research-intake-api.md). Local transport and
 browser fixtures establish the interface behavior, not live GitHub admission.
 
+The separately enabled import path submits only a confirmed intake ID and request
+digest to Agamemnon's `/v1/fleet/research-intakes`. Agamemnon rereads Nestor and
+owns the deterministic durable Pending L3 task and immutable provenance; import
+does not dispatch work. Odysseus retains one explicit browser reference for
+uncertain-response recovery. It creates no backend task queue or alternate issue.
+The same browser lock coordinates import, retry and intake replacement; no reload
+or sign-in automatically repeats a POST.
+
+Known-task reads validate intrinsic task/provenance identity, then compare the
+exact raw Fleet owner and reread the relevant task fields. The bounded projection
+excludes private content and workspace paths. This consistency check is not an
+atomic snapshot or a new admission authority. Assignment, current claim, terminal
+retained claim, manual resolution and fresh activity remain separate. A partial
+read cannot mark all Agamemnon resources fresh or manufacture an execution link.
+Only actual adapter HTTP request/response observations enter the existing flow
+stream; worker-generation and activity predicates remain unchanged. Compatible
+service deployment, live GitHub persistence/restart and worker admission still
+require their separate acceptance evidence.
+
 Telemachy's initial Fleet registration path requires a marked, pre-existing
 epic and an externally exclusive writer. A local integration test has now passed
 the real producer's exact bytes through a private JetStream broker into the

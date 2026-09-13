@@ -13,6 +13,16 @@ observed message flow, scoped session controls, and private approval/question
 forms. It is one integration slice;
 the acceptance target and remaining phases below still apply.
 
+The research bootstrap also provides an opt-in confirmed-intake import and
+known-task status view. Nestor owns the work issue; Agamemnon owns the durable
+Pending L3 task, provenance and later execution admission. Odysseus retains one
+browser recovery reference and validates read-only task/owner projections.
+Import performs no dispatch. Only observed HTTP traffic enters its flow view,
+and imported or assigned tasks are not counted as active agents. See the
+[import and recovery contract](research-intake-api.md). These component interfaces
+do not establish live GitHub writer fencing, research interviews, epic promotion,
+worker acceptance, or the combined 108-agent result required below.
+
 ## 1. Required outcome
 
 Extend HomericIntelligence into Homeric Fleet using its existing component

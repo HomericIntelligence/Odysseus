@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { clearResolvedImport, ResearchImport } from "./ResearchImport";
+import type { ResearchViewProps } from "./ResearchImport";
 
 type IntakeRequest = {
   schema: "hi/nestor/intake-request/v1";
@@ -106,8 +108,9 @@ function recordFor(
   return value as IntakeRecord;
 }
 
-export function ResearchIntake() {
+export function ResearchIntake(view: ResearchViewProps) {
   const [enabled, setEnabled] = useState(false);
+  const [importEnabled, setImportEnabled] = useState(false);
   const [capability, setCapability] = useState("Checking intake availability…");
   const [workRepository, setRepository] = useState("");
   const [title, setTitle] = useState("");
@@ -117,6 +120,7 @@ export function ResearchIntake() {
   const [message, setMessage] = useState("No intake submitted.");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [importUnresolved, setImportUnresolved] = useState(false);
   const sending = useRef(false);
   useEffect(() => {
     try {
@@ -139,6 +143,7 @@ export function ResearchIntake() {
         const value = await response.json();
         if (!abort.signal.aborted) {
           setEnabled(value.researchIntake?.enabled === true);
+          setImportEnabled(value.researchImport?.enabled === true);
           setCapability(
             value.researchIntake?.enabled === true
               ? "Nestor intake is configured."
@@ -222,13 +227,19 @@ export function ResearchIntake() {
           )
             throw new Error("retained intake changed");
           if (mode === "new") {
-            if (record?.phase !== "created")
+            if (record?.phase !== "created" || !record.issue)
               throw new Error("intake is unconfirmed");
+            await clearResolvedImport({
+              intakeId: retained.request.intakeId,
+              requestDigest: retained.requestDigest,
+              issue: record.issue,
+            });
             localStorage.removeItem(storageKey);
             if (localStorage.getItem(storageKey) !== null)
               throw new Error("storage write failed");
             setRetained(null);
             setRecord(null);
+            setImportUnresolved(false);
             setRepository("");
             setTitle("");
             setBody("");
@@ -347,7 +358,7 @@ export function ResearchIntake() {
                 {record?.phase === "created" ? (
                   <button
                     type="button"
-                    disabled={!enabled || busy}
+                    disabled={!enabled || busy || importUnresolved}
                     onClick={() => void operate("new")}
                   >
                     New research intake
@@ -385,6 +396,38 @@ export function ResearchIntake() {
             </p>
           )}
         </div>
+        {retained && record?.phase === "created" && record.issue && (
+          <ResearchImport
+            {...view}
+            enabled={importEnabled}
+            busy={busy}
+            selection={{
+              intakeId: retained.request.intakeId,
+              requestDigest: retained.requestDigest,
+              issue: record.issue,
+            }}
+            withSelectionLock={async (action) => {
+              if (!navigator.locks)
+                throw new Error("browser coordination unavailable");
+              await navigator.locks.request(
+                storageKey,
+                { ifAvailable: true },
+                async (lock) => {
+                  if (
+                    !lock ||
+                    JSON.stringify(readRetained()) !==
+                      JSON.stringify(retained) ||
+                    (await digest(retained.request)) !== retained.requestDigest
+                  )
+                    throw new Error("retained intake changed or busy");
+                  await action();
+                },
+              );
+            }}
+            onBusyChange={setBusy}
+            onUnresolvedChange={setImportUnresolved}
+          />
+        )}
         <p className="fine-print">
           Research dispatch is not implemented by this intake endpoint.
         </p>
