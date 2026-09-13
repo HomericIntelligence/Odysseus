@@ -468,7 +468,7 @@ if [[ $DRY_RUN -eq 0 ]]; then
     # Commit message varies by mode:
     #   - default (fresh split): "feat: initial carve-out of …"
     #   - --recover: notes this commit completes an earlier broken Phase C
-    local _commit_msg
+    _commit_msg=""
     if [[ $RECOVER -eq 1 ]]; then
         _commit_msg="feat(carve-out): complete Hephaestus→Athena migration (@ADR-016)
 

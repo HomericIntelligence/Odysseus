@@ -19,7 +19,6 @@ HERMES_IP="100.73.61.56"
 EPI_IP="100.92.173.32"
 HERMES_SSH="hermes"
 EPI_SSH="epimetheus"
-ODYSSEUS_REMOTE="~/Odysseus"
 
 # Colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
@@ -176,8 +175,9 @@ ok "hermes stack started"
 # ── Step 3: Launch hello-myrmidon on epimetheus ──────────────────────────────
 info "Step 3: Launching hello-myrmidon worker on epimetheus"
 
-ssh "$EPI_SSH" bash -s <<REMOTE_MYRMIDON
+ssh "$EPI_SSH" bash -s -- "$HERMES_IP" <<'REMOTE_MYRMIDON'
 set -euo pipefail
+HERMES_IP=$1
 
 # Clone Odysseus if not present
 if [ ! -d ~/Odysseus ]; then
@@ -202,15 +202,15 @@ sleep 1
 
 # Launch
 echo "  Starting hello-myrmidon → NATS on ${HERMES_IP}:4222"
-NATS_URL="nats://${HERMES_IP}:4222" \\
-  nohup python3 provisioning/Myrmidons/hello-world/main.py \\
+NATS_URL="nats://${HERMES_IP}:4222" \
+  nohup python3 provisioning/Myrmidons/hello-world/main.py \
   > /tmp/hello-myrmidon.log 2>&1 &
-MYRM_PID=\$!
+MYRM_PID=$!
 sleep 3
 
 # Verify it's still running
-if kill -0 \$MYRM_PID 2>/dev/null; then
-  echo "  hello-myrmidon running (PID \$MYRM_PID)"
+if kill -0 "$MYRM_PID" 2>/dev/null; then
+  echo "  hello-myrmidon running (PID $MYRM_PID)"
   echo "  Log tail:"
   tail -5 /tmp/hello-myrmidon.log | sed 's/^/    /'
 else

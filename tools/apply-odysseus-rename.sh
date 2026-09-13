@@ -278,7 +278,7 @@ case "$MODE" in
         echo
         echo "── Next steps (operator, per AGENTS.md) ──"
         echo "  1. Inspect: git diff"
-        echo "  2. Verify upstream renames: for each \\`<X>\\` in REMAP, run"
+        echo '  2. Verify upstream renames: for each `<X>` in REMAP, run'
         echo "       git ls-remote https://github.com/HomericIntelligence/<X>.git"
         echo "     (must return a non-empty commit hash)."
         echo "  3. Regenerate ecosystem CI table:"

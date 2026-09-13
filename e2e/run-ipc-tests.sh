@@ -9,7 +9,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ODYSSEUS_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # ─── Parse arguments ─────────────────────────────────────────────────────────
 TOPOLOGY="t1"
@@ -53,7 +52,6 @@ export AGAMEMNON_PORT NATS_PORT NATS_MONITOR_PORT HERMES_PORT IPC_TOPOLOGY
 TESTS_DIR="$SCRIPT_DIR/tests"
 TOTAL_PASS=0
 TOTAL_FAIL=0
-TOTAL_SKIP=0
 
 run_test_script() {
     local script="$1"

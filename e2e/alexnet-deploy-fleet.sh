@@ -111,7 +111,10 @@ if [[ "$SKIP_BUILD" != "1" ]]; then
     fi
 
     cd "$WORKSPACE"
-    export USER_ID=$(id -u) GROUP_ID=$(id -g) USER_NAME=${USER:-dev}
+    USER_ID=$(id -u)
+    GROUP_ID=$(id -g)
+    USER_NAME=${USER:-dev}
+    export USER_ID GROUP_ID USER_NAME
 
     # podman compose may hang on hosts missing rootlessport (epimetheus is
     # documented in e2e-walkthrough-report.md). Fall back to podman build
@@ -247,8 +250,7 @@ if [[ "$SKIP_LAUNCH" != "1" ]]; then
                 # double-quoted string interpolates EPOCHS/BATCH_SIZE into the
                 # remote command's prefix. Net effect on remote: clean
                 # `EPOCHS=N BATCH_SIZE=M bash ~/alexnet-fleet-scripts/...`.
-                EPOCHS="$EPOCHS" BATCH_SIZE="$BATCH_SIZE" MAX_BATCHES="$MAX_BATCHES" \
-                    "${SSH_BASE[@]}" "$ip" "EPOCHS='$EPOCHS' BATCH_SIZE='$BATCH_SIZE' MAX_BATCHES='$MAX_BATCHES' bash ~/alexnet-fleet-scripts/alexnet-train.sh" &
+                "${SSH_BASE[@]}" "$ip" "EPOCHS='$EPOCHS' BATCH_SIZE='$BATCH_SIZE' MAX_BATCHES='$MAX_BATCHES' bash ~/alexnet-fleet-scripts/alexnet-train.sh" &
             fi
         done
         wait

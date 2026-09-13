@@ -1,0 +1,5 @@
+node_modules/
+.test-spool-*/
+dist/
+test-results/
+playwright-report/

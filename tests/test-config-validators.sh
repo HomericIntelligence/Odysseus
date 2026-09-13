@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
 # shellcheck source=../e2e/lib/common.sh
 source "$ROOT/e2e/lib/common.sh"
-cd "$ROOT"
+cd "$ROOT" || exit 1
 
 info "validators accept the real configs (positive)"
 if python3 scripts/validate_nats_config.py >/dev/null; then pass "NATS validator accepts configs/nats/*.conf"; else fail "NATS validator rejected real configs"; fi

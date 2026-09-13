@@ -27,7 +27,7 @@ set -uo pipefail
 
 # Resolve repo root so the script works from any cwd.
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit 1
 
 GARBAGE_MARKER='Claude returned empty output'
 

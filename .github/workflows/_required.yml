@@ -45,12 +45,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install yamllint
-        run: pip install yamllint
+      - name: Install locked lint toolchain
+        uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347  # v0.10.1
+        with:
+          pixi-version: v0.67.2
+
+      - name: Run canonical root lint
+        run: pixi run --locked just lint
 
       - name: Lint YAML (configs/ and .github/workflows/)
         run: |
-          yamllint -d relaxed configs/ .github/workflows/
+          pixi run --locked yamllint -d relaxed configs/ .github/workflows/
 
       - name: Validate Nomad HCL syntax
         run: |
@@ -64,15 +69,10 @@ jobs:
             fi
           done
 
-      - name: Validate all JSON files in configs/
+      - name: Validate tracked source JSON
         run: |
-          json_files=$(find . -path './.git' -prune -o -name "*.json" -print)
-          if [ -z "$json_files" ]; then
-            echo "No JSON files found"
-          else
-            echo "$json_files" | xargs -I{} jq . {} > /dev/null
-            echo "All JSON OK"
-          fi
+          git ls-files -z -- '*.json' | xargs -0 -r jq empty --
+          echo "All tracked source JSON OK"
 
       - name: Validate tools/github shell scripts are valid bash
         run: |
@@ -265,32 +265,74 @@ jobs:
           bash tests/test-justfile-recipes.sh
           bash tests/test-config-validators.sh
 
+      - name: Check documentation workflow fields
+        run: just check-doc-field-drift
+
       - name: Check submodule URLs are reachable
         run: |
-          git submodule foreach 'git ls-remote --exit-code origin HEAD > /dev/null && echo "OK: $name" || echo "WARN: $name unreachable"'
+          git submodule foreach "git ls-remote --exit-code origin HEAD > /dev/null && echo \"OK: \$name\""
+
+  web-checks:
+    name: web-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up supported Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
+
+      - name: Install locked web dependencies
+        run: just web-install
+
+      - name: Install Chromium for local fixture tests
+        run: just web-browser-install
+
+      - name: Validate web formatting, unit tests, build and browser behavior
+        run: just web-ci
+
+      - name: Preserve browser fixture results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: web-browser-results
+          path: web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
 
   test:
     # Aggregate test gate for the canonical 8-category CI naming scheme
     # (docs/ci-naming-convention.md). The split suites above (unit-tests,
-    # integration-tests) remain as sub-checks; this job emits the canonical
+    # integration-tests, web-checks) remain as sub-checks; this job emits the canonical
     # `test` check-run so the Ecosystem CI Status board's **test** column can
-    # target a single name. It is a pure gate: it fans-in the two suites and
-    # fails if either failed.
+    # target a single name. It is a pure gate: it fans-in all three suites and
+    # fails unless each succeeds.
     name: test
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [unit-tests, integration-tests]
+    needs: [unit-tests, integration-tests, web-checks]
     if: ${{ always() }}
     steps:
-      - name: Aggregate unit-tests + integration-tests results
+      - name: Aggregate unit, integration and web results
         run: |
           set -euo pipefail
           unit="${{ needs.unit-tests.result }}"
           integ="${{ needs.integration-tests.result }}"
+          web="${{ needs.web-checks.result }}"
           echo "unit-tests:        $unit"
           echo "integration-tests: $integ"
-          if [ "$unit" != "success" ] || [ "$integ" != "success" ]; then
-            echo "::error::Aggregate test gate failed (unit=$unit integration=$integ)"
+          echo "web-checks:        $web"
+          if [ "$unit" != "success" ] || [ "$integ" != "success" ] || [ "$web" != "success" ]; then
+            echo "::error::Aggregate test gate failed (unit=$unit integration=$integ web=$web)"
             exit 1
           fi
           echo "OK: all test suites passed"
@@ -366,7 +408,7 @@ jobs:
 
       - name: Validate GitHub Actions workflow YAML against schema
         run: |
-          find .github/workflows -name "*.yml" | xargs check-jsonschema \
+          find .github/workflows -name "*.yml" -print0 | xargs -0 check-jsonschema \
             --schemafile https://json.schemastore.org/github-workflow
 
       - name: Validate ruleset JSON and review-count policy
