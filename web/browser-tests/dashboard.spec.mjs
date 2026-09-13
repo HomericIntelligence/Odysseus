@@ -1,10 +1,77 @@
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { FleetView } from "../server/view.mjs";
 import { createDashboardServer } from "../server/http.mjs";
 
 const fixtureCredential = randomBytes(24).toString("base64url");
+const buildContract = JSON.parse(
+  readFileSync(
+    new URL("../tests/fixtures/agamemnon-build-contract.json", import.meta.url),
+    "utf8",
+  ),
+);
+
+test("subordinate build details separate the tool owner, retained parent and controller lifecycle", async ({
+  page,
+}) => {
+  const raw = buildContract.persistedGrantDocument.record;
+  view.setResources("build-jobs", [raw]);
+  await login(page);
+  await page.getByRole("button", { name: raw.id, exact: true }).click();
+  const details = page.getByLabel("Item and trace details");
+  await expect(details).toContainText("tool-worker-1");
+  await expect(details).toContainText("tool-allocation-1");
+  await expect(
+    details.getByRole("heading", { name: "Retained parent" }),
+  ).toBeVisible();
+  await expect(details).toContainText("parent-agent");
+  await expect(details).toContainText("real-parent-task");
+  await expect(details).toContainText("authorized");
+  await expect(details).toContainText("unknown");
+  await expect(
+    page.locator(".stats > div").first().locator("strong"),
+  ).toHaveText("0/ 108 target");
+  await expect(page.locator(".packet")).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText("/work/parent-source");
+  await expect(
+    details.getByRole("button", { name: "Start session" }),
+  ).toHaveCount(0);
+  view.setResources("build-jobs", [buildContract.terminalResponse.record]);
+  await expect(details).toContainText("cancelled");
+  await expect(details).toContainText("tool-worker-1");
+});
+
+test("malformed build identity stays visible with a display key and no private path", async ({
+  page,
+}) => {
+  const raw = structuredClone(buildContract.admission.record);
+  raw.id = "/private/sentinel";
+  raw.build.snapshotWorkspace = `${raw.id}-attempt-1`;
+  view.setResources("build-jobs", [raw]);
+  await login(page);
+  const unavailable = page.getByRole("button", {
+    name: "Build identity unavailable",
+    exact: true,
+  });
+  await expect(unavailable).toBeVisible();
+  await unavailable.click();
+  const details = page.getByLabel("Item and trace details");
+  await expect(
+    details.locator("dt", { hasText: /^display key$/ }),
+  ).toBeVisible();
+  await expect(details).toContainText("unavailable");
+  await expect(details).toContainText("unknown");
+  await expect(page.locator("body")).not.toContainText("/private/sentinel");
+  await expect(
+    details.getByRole("button", { name: "Start session" }),
+  ).toHaveCount(0);
+  await expect(
+    details.getByRole("button", { name: "Send input", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.locator(".packet")).toHaveCount(0);
+});
 
 let view, server, url;
 const session = () => ({

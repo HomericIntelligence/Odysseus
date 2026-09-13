@@ -63,6 +63,50 @@ async function login(page, capability = {}) {
     .click();
 }
 
+test("build workspace refusal is visible for private requests and retains an uncertain command", async ({
+  page,
+}) => {
+  let submissions = 0;
+  await page.route("**/api/requests?*", (route) =>
+    route.fulfill({
+      status: 503,
+      json: { error: "unavailable", reason: "build_workspace_unresolved" },
+    }),
+  );
+  await page.route("**/api/commands", (route) => {
+    submissions++;
+    const request = route.request().postDataJSON();
+    return route.fulfill({
+      status: 503,
+      json: {
+        commandId: request.commandId,
+        error: "unavailable",
+        outcome: "not_submitted",
+        reason: "build_workspace_unresolved",
+      },
+    });
+  });
+  await login(page, {
+    operations: ["input", "respond"],
+    approvalWorkerIds: ["worker-one"],
+  });
+  await expect(page.getByLabel("Private agent requests")).toContainText(
+    "Build workspace placement is unresolved",
+  );
+  await page.getByLabel("Session input").fill("Retained private text");
+  await page.getByRole("button", { name: "Send input", exact: true }).click();
+  await expect(page.getByLabel("Session commands")).toContainText(
+    "Build workspace placement is unresolved",
+  );
+  await expect(page.getByLabel("Retained private request")).toHaveValue(
+    "Retained private text",
+  );
+  await expect(
+    page.getByRole("button", { name: "Retry same request" }),
+  ).toBeVisible();
+  expect(submissions).toBe(1);
+});
+
 test("uncertain input preserves command identity and never follows a changed selection", async ({
   page,
 }) => {

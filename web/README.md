@@ -53,6 +53,17 @@ unique. A failed poll retains the previous records with an unavailable-source
 indicator. The UI links the canonical session, logical agent, role, worker,
 execution, host, pool, allocation, stage, and generation where reported.
 
+Subordinate build rows show their tool worker and allocation. Item details keep
+the retained parent task, agent, worker and generation in a separate group.
+Controller status and update time describe durable lifecycle changes; an
+`authorized` build still has unknown observed activity. Tool host placement is
+not reported by this protocol. No provider-worker lookup fills it in, and parent
+identity does not create a child agent. Raw paths, policy bodies and grants never
+enter the browser projection. Malformed typed ownership remains unavailable.
+An invalid typed build ID is replaced by a stable opaque display key and the
+label "Build identity unavailable". The key cannot name a controller resource
+or be used as command scope; neither the raw ID nor its snapshot path is shown.
+
 Controller reads expire after 15 seconds even if the browser's snapshot stream
 continues. Retained ownership and activity are marked explicitly in item details;
 stale records cannot enable commands. Selecting an owner reveals and focuses the
@@ -177,6 +188,16 @@ access. Configure `ODYSSEUS_EXECUTION_HOST` if the controller uses a different
 logical name for this machine. A session on another host cannot use local private
 paths. Configure the same private-root exclusions in Hephaestus so future workspace
 mounts cannot overlap them; a web inventory check does not authorize admission.
+
+If a typed subordinate build is present, the current controller protocol cannot
+supply its absolute protected placement. Private input, responses and request
+reads remain unavailable, including after a terminal build is retained. The UI
+shows "Build workspace placement is unresolved" from a fixed backend reason;
+private files and socket readers are not accessed. A failed retry retains the
+original command identity and any earlier uncertain outcome. Do not work around
+this gate by adding generic host/workspace fields or removing retained records.
+The separate inventory dependency and its acceptance criteria are in
+`docs/homeric-fleet-plan.md`, under "Heavy laptop tools".
 
 Remote input requires an authenticated private spool-transfer/attachment service;
 setting a local path does not implement that transport. Workers absent from the

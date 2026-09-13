@@ -1,0 +1,2 @@
+# Preserve the exact producer export; the contract tests parse and exercise it.
+tests/fixtures/agamemnon-build-contract.json
