@@ -676,7 +676,17 @@ function App() {
           </section>
         )}
         {tab === "Research intake" ? (
-          <ResearchIntake />
+          <ResearchIntake
+            items={items}
+            sessions={snapshot?.resources.sessions ?? []}
+            observations={snapshot?.observations ?? []}
+            ownershipLive={ownershipLive}
+            onSelect={(item) => {
+              setSelected(item);
+              setPacket(null);
+            }}
+            onPacket={showPacket}
+          />
         ) : tab === "Pipeline" ? (
           <ProjectsPanel
             projection={snapshot?.projects}

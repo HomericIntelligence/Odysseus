@@ -3,6 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { createIntakeService } from "./intakes.mjs";
+import { createResearchImportService } from "./research-imports.mjs";
 
 const hash = (value) => createHash("sha256").update(value).digest();
 const equal = (left, right) =>
@@ -36,10 +37,14 @@ export function createDashboardServer({
   sessionTtlMs = 1800000,
   commands,
   research,
+  researchImport,
 } = {}) {
   if (!view || !token)
     throw new Error("View and private UI token are required");
   const intakes = research ? createIntakeService(research) : null;
+  const imports = researchImport
+    ? createResearchImportService(researchImport)
+    : null;
   const sessions = new Map();
   let streams = 0;
   let pendingCommands = 0;
@@ -107,7 +112,51 @@ export function createDashboardServer({
             },
           }),
           researchIntake: { enabled: Boolean(intakes) },
+          researchImport: { enabled: Boolean(imports) },
         });
+      if (
+        url.pathname.startsWith("/api/research/tasks/") &&
+        request.method === "GET"
+      ) {
+        if (
+          url.search ||
+          request.headers["transfer-encoding"] ||
+          Number(request.headers["content-length"] ?? 0) !== 0
+        )
+          return json(response, 400, {
+            error: "invalid_request",
+            outcome: "not_submitted",
+          });
+        if (!imports)
+          return json(response, 503, {
+            error: "not_configured",
+            outcome: "not_submitted",
+          });
+        const result = await imports.readTask(
+          url.pathname.slice("/api/research/tasks/".length),
+        );
+        return json(response, result.code, result.body);
+      }
+      if (
+        url.pathname === "/api/research/imports" &&
+        request.method === "POST"
+      ) {
+        if (!origin) return json(response, 403, { error: "Origin required" });
+        if (!imports)
+          return json(response, 503, {
+            error: "not_configured",
+            outcome: "not_submitted",
+          });
+        try {
+          const result = await imports.submit(await body(request, 4096));
+          return json(response, result.code, result.body);
+        } catch {
+          return json(response, 400, {
+            error: "invalid_request",
+            outcome: "not_submitted",
+          });
+        }
+      }
       if (
         url.pathname === "/api/research/intakes" &&
         request.method === "POST"
