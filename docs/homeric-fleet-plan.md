@@ -427,6 +427,60 @@ If the local source changes after submission, mark the result stale. Linux resul
 do not establish macOS-specific behavior. Build workers do not need ChatGPT
 credentials, and heavy jobs consume the separate tool allocations above.
 
+### Typed ownership projection and private-access dependency
+
+The web projection reads subordinate tool ownership from `build.allocation` and
+shows the retained parent relationship separately. Parent and child generations
+have separate meanings. The opaque snapshot workspace ID is not an absolute
+filesystem path. Controller admission and a durable run grant remain distinct
+from observed execution; these records do not add running agents or flow packets.
+Private paths, policy bodies and grants are excluded from the browser.
+
+Malformed typed build IDs remain visible only under an opaque display key, with
+identity and ownership unavailable. The key is stable across resource polls,
+distinct from other malformed rows and outside the controller ID namespace.
+The browser labels it as a display key; it cannot address controller work. Both
+the raw invalid ID and its snapshot workspace are omitted.
+
+The current build protocol supplies no tool host or absolute protected path.
+Odysseus therefore retains its private-access refusal for every unresolved typed
+build, including terminal records. A fixed public reason explains that condition.
+This ownership increment does not restore private input or approval access while
+such records exist.
+
+The following host/workspace-inventory contract is a separate proposed dependency;
+it is not implemented by this web increment:
+
+1. Agamemnon must expose a supported, authenticated backend inventory that binds
+   protected placement to owner kind, build ID, tool worker, allocation,
+   generation, attempt and opaque workspace ID. Specify schema versioning and
+   completeness/revision semantics before implementation. Do not silently extend
+   the closed, digest-bound build v1 policy.
+2. Placement must derive from qualified operator configuration and authenticated
+   supervisor facts, with explicit handling of old generations and retained
+   workspaces. A parent source path, a provider-worker lookup or an absent record
+   cannot establish the tool's location or cleanup. Private paths must remain
+   confined to supported backend interfaces and private runtime storage.
+3. Producer tests must cover conflicting or stale bindings, missing inventory,
+   restart, retained workspaces, incomplete cleanup and unsupported versions.
+   Real supervisor evidence must establish each claimed placement; a run grant
+   alone cannot supply it.
+4. Consumer tests must verify complete coverage of every canonical protected
+   workspace, current and retained. Local overlaps and missing/ambiguous placement
+   must refuse private reads, writes and socket attachment. Exclude a remote path
+   only from an explicit matching host binding. Test replacement generations,
+   races during inventory reads and unrelated worker private roots.
+5. An independently executed producer/consumer fixture must prove these bindings
+   before the web backend enables private access with typed builds. Workers must
+   still enforce private-root exclusions on future mounts and across restart;
+   the web projection never authorizes a workspace.
+
+The current ownership regression fixture is the unchanged controlled Agamemnon
+export at `ef39b3506bb29debe7e728f33e8d80c0923a330c`, stored as
+`web/tests/fixtures/agamemnon-build-contract.json`. Its SHA-256 is
+`079117d07c3c2a2d33c0b93242af3737dc4caa2afe8642b8ad88324973bd16b8`.
+It describes synthetic controller boundaries, not a live build or qualification.
+
 ## 7. Lifecycle and recovery
 
 Specify legal pool transitions from stopped/scheduled through submission, queue,

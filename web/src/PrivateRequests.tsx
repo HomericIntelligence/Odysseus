@@ -62,6 +62,7 @@ export function PrivateRequests({
     key: string;
     requests: Request[];
     status: "loading" | "ready" | "unavailable";
+    buildWorkspaceUnresolved?: boolean;
   }>({ key: "", requests: [], status: "loading" });
   const [reload, setReload] = useState(0);
   useEffect(() => {
@@ -90,8 +91,22 @@ export function PrivateRequests({
             requestController.signal,
           ]),
         });
-        if (!response.ok) throw new Error("Private requests unavailable");
         const data = await response.json();
+        if (
+          response.status === 503 &&
+          data.error === "unavailable" &&
+          data.reason === "build_workspace_unresolved"
+        ) {
+          if (!controller.signal.aborted)
+            setState({
+              key,
+              requests: [],
+              status: "unavailable",
+              buildWorkspaceUnresolved: true,
+            });
+          return;
+        }
+        if (!response.ok) throw new Error("Private requests unavailable");
         if (
           data.sessionId !== scope.sessionId ||
           data.workerId !== scope.workerId ||
@@ -147,7 +162,11 @@ export function PrivateRequests({
       ) : !current || state.status === "loading" ? (
         <p>Checking current requests…</p>
       ) : state.status === "unavailable" ? (
-        <p>Private requests are unavailable. Refresh to try again.</p>
+        <p>
+          {state.buildWorkspaceUnresolved
+            ? "Build workspace placement is unresolved. Private access is unavailable."
+            : "Private requests are unavailable. Refresh to try again."}
+        </p>
       ) : (
         !state.requests.length && <p>No pending agent requests.</p>
       )}

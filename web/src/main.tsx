@@ -39,6 +39,8 @@ type Item = {
   historical?: boolean;
   sourceStale?: boolean;
   lastReportedActivity?: string;
+  buildType?: string;
+  parent?: Record<string, string | number>;
   [key: string]: unknown;
 };
 type Packet = {
@@ -782,10 +784,16 @@ function App() {
                           </small>
                         </td>
                         <td>
-                          {display(item.agentId)}
+                          {display(
+                            item.buildType === "subordinate"
+                              ? item.workerId
+                              : item.agentId,
+                          )}
                           <small>
                             {display(item.host)}
-                            {item.workerId ? ` / ${item.workerId}` : ""}
+                            {item.workerId && item.buildType !== "subordinate"
+                              ? ` / ${item.workerId}`
+                              : ""}
                           </small>
                         </td>
                         <td>
@@ -928,6 +936,9 @@ function App() {
                 "hmasRole",
                 "executionDomain",
                 "component",
+                ...(selected.buildType === "subordinate"
+                  ? ["status", "updatedAt", "ownershipState"]
+                  : []),
                 "activity",
                 ...(selected?.sourceStale ? ["lastReportedActivity"] : []),
                 "stage",
@@ -944,11 +955,38 @@ function App() {
                 "lastActivityAt",
               ].map((key) => (
                 <div key={key}>
-                  <dt>{key.replace(/([A-Z])/g, " $1")}</dt>
+                  <dt>
+                    {key === "id" && selected.identityState === "unavailable"
+                      ? "display key"
+                      : key.replace(/([A-Z])/g, " $1")}
+                  </dt>
                   <dd>{display(selected[key])}</dd>
                 </div>
               ))}
             </dl>
+            {selected.buildType === "subordinate" && (
+              <p>
+                Controller status does not establish observed tool activity.
+                Tool host placement is not reported by this protocol.
+              </p>
+            )}
+            {selected.parent && (
+              <>
+                <h3>Retained parent</h3>
+                <p>
+                  Recorded when this build was admitted. Current parent
+                  ownership must be checked before any action.
+                </p>
+                <dl>
+                  {Object.entries(selected.parent).map(([key, value]) => (
+                    <div key={key}>
+                      <dt>{key.replace(/([A-Z])/g, " $1")}</dt>
+                      <dd>{display(value)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </>
+            )}
           </>
         )}
         {packet && (
