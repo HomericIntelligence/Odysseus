@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { clearResolvedImport, ResearchImport } from "./ResearchImport";
 import type { ResearchViewProps } from "./ResearchImport";
+import { IssueIntake } from "./IssueIntake";
 
 type IntakeRequest = {
   schema: "hi/nestor/intake-request/v1";
@@ -111,6 +112,7 @@ function recordFor(
 export function ResearchIntake(view: ResearchViewProps) {
   const [enabled, setEnabled] = useState(false);
   const [importEnabled, setImportEnabled] = useState(false);
+  const [issueImportEnabled, setIssueImportEnabled] = useState(false);
   const [capability, setCapability] = useState("Checking intake availability…");
   const [workRepository, setRepository] = useState("");
   const [title, setTitle] = useState("");
@@ -144,6 +146,7 @@ export function ResearchIntake(view: ResearchViewProps) {
         if (!abort.signal.aborted) {
           setEnabled(value.researchIntake?.enabled === true);
           setImportEnabled(value.researchImport?.enabled === true);
+          setIssueImportEnabled(value.issueImport?.enabled === true);
           setCapability(
             value.researchIntake?.enabled === true
               ? "Nestor intake is configured."
@@ -290,148 +293,152 @@ export function ResearchIntake(view: ResearchViewProps) {
   }
 
   return (
-    <section className="panel research-panel" aria-label="Research intake">
-      <div className="panel-heading">
-        <div>
-          <h2>Start with an idea</h2>
-          <p>Record publishable research requirements through Nestor.</p>
+    <>
+      <IssueIntake {...view} enabled={issueImportEnabled} />
+      <section className="panel research-panel" aria-label="Research intake">
+        <div className="panel-heading">
+          <div>
+            <h2>Start with an idea</h2>
+            <p>Record publishable research requirements through Nestor.</p>
+          </div>
         </div>
-      </div>
-      <div className="research-content">
-        <p>{capability}</p>
-        <p className="fine-print">
-          The title and requirements will be published to the work repository's
-          GitHub issue. This browser retains the exact request across reloads
-          for safe retries. Keep credentials and private interviews out of this
-          form.
-        </p>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void operate("submit");
-          }}
-        >
-          <label htmlFor="research-repository">Work repository</label>
-          <input
-            id="research-repository"
-            placeholder="HomericIntelligence/Odysseus"
-            value={retained?.request.workRepository ?? workRepository}
-            disabled={Boolean(retained) || busy}
-            onChange={(e) => setRepository(e.target.value)}
-            required
-          />
-          <label htmlFor="research-title">Research title</label>
-          <input
-            id="research-title"
-            value={retained?.request.title ?? title}
-            disabled={Boolean(retained) || busy}
-            onChange={(e) => setTitle(e.target.value)}
-            required
-          />
-          <label htmlFor="research-body">Publishable requirements</label>
-          <textarea
-            id="research-body"
-            rows={7}
-            value={retained?.request.body ?? body}
-            disabled={Boolean(retained) || busy}
-            onChange={(e) => setBody(e.target.value)}
-          />
-          <div className="research-actions">
-            {!retained && (
-              <button
-                className="primary"
-                type="submit"
-                disabled={!enabled || busy}
-              >
-                Submit research intake
-              </button>
-            )}
-            {retained && (
-              <>
+        <div className="research-content">
+          <p>{capability}</p>
+          <p className="fine-print">
+            The title and requirements will be published to the work
+            repository's GitHub issue. This browser retains the exact request
+            across reloads for safe retries. Keep credentials and private
+            interviews out of this form.
+          </p>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void operate("submit");
+            }}
+          >
+            <label htmlFor="research-repository">Work repository</label>
+            <input
+              id="research-repository"
+              placeholder="HomericIntelligence/Odysseus"
+              value={retained?.request.workRepository ?? workRepository}
+              disabled={Boolean(retained) || busy}
+              onChange={(e) => setRepository(e.target.value)}
+              required
+            />
+            <label htmlFor="research-title">Research title</label>
+            <input
+              id="research-title"
+              value={retained?.request.title ?? title}
+              disabled={Boolean(retained) || busy}
+              onChange={(e) => setTitle(e.target.value)}
+              required
+            />
+            <label htmlFor="research-body">Publishable requirements</label>
+            <textarea
+              id="research-body"
+              rows={7}
+              value={retained?.request.body ?? body}
+              disabled={Boolean(retained) || busy}
+              onChange={(e) => setBody(e.target.value)}
+            />
+            <div className="research-actions">
+              {!retained && (
                 <button
-                  type="button"
+                  className="primary"
+                  type="submit"
                   disabled={!enabled || busy}
-                  onClick={() => void operate("inspect")}
                 >
-                  Check intake status
+                  Submit research intake
                 </button>
-                {record?.phase === "created" ? (
-                  <button
-                    type="button"
-                    disabled={!enabled || busy || importUnresolved}
-                    onClick={() => void operate("new")}
-                  >
-                    New research intake
-                  </button>
-                ) : (
+              )}
+              {retained && (
+                <>
                   <button
                     type="button"
                     disabled={!enabled || busy}
-                    onClick={() => void operate("submit")}
+                    onClick={() => void operate("inspect")}
                   >
-                    Retry same intake
+                    Check intake status
                   </button>
-                )}
-              </>
-            )}
-          </div>
-        </form>
-        {error && (
-          <p className="warning" role="alert">
-            {error}
-          </p>
-        )}
-        <div
-          className="research-status"
-          role="status"
-          aria-label="Research intake status"
-        >
-          <strong>{message}</strong>
-          {retained && <p className="mono">{retained.request.intakeId}</p>}
-          {record?.phase === "created" && record.issue && (
-            <p>
-              <a href={record.issue.url} target="_blank" rel="noreferrer">
-                Open research issue
-              </a>
+                  {record?.phase === "created" ? (
+                    <button
+                      type="button"
+                      disabled={!enabled || busy || importUnresolved}
+                      onClick={() => void operate("new")}
+                    >
+                      New research intake
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={!enabled || busy}
+                      onClick={() => void operate("submit")}
+                    >
+                      Retry same intake
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          </form>
+          {error && (
+            <p className="warning" role="alert">
+              {error}
             </p>
           )}
+          <div
+            className="research-status"
+            role="status"
+            aria-label="Research intake status"
+          >
+            <strong>{message}</strong>
+            {retained && <p className="mono">{retained.request.intakeId}</p>}
+            {record?.phase === "created" && record.issue && (
+              <p>
+                <a href={record.issue.url} target="_blank" rel="noreferrer">
+                  Open research issue
+                </a>
+              </p>
+            )}
+          </div>
+          {retained && record?.phase === "created" && record.issue && (
+            <ResearchImport
+              {...view}
+              enabled={importEnabled}
+              busy={busy}
+              selection={{
+                intakeId: retained.request.intakeId,
+                requestDigest: retained.requestDigest,
+                issue: record.issue,
+              }}
+              withSelectionLock={async (action) => {
+                if (!navigator.locks)
+                  throw new Error("browser coordination unavailable");
+                await navigator.locks.request(
+                  storageKey,
+                  { ifAvailable: true },
+                  async (lock) => {
+                    if (
+                      !lock ||
+                      JSON.stringify(readRetained()) !==
+                        JSON.stringify(retained) ||
+                      (await digest(retained.request)) !==
+                        retained.requestDigest
+                    )
+                      throw new Error("retained intake changed or busy");
+                    await action();
+                  },
+                );
+              }}
+              onBusyChange={setBusy}
+              onUnresolvedChange={setImportUnresolved}
+            />
+          )}
+          <p className="fine-print">
+            Research dispatch is not implemented by this intake endpoint.
+          </p>
         </div>
-        {retained && record?.phase === "created" && record.issue && (
-          <ResearchImport
-            {...view}
-            enabled={importEnabled}
-            busy={busy}
-            selection={{
-              intakeId: retained.request.intakeId,
-              requestDigest: retained.requestDigest,
-              issue: record.issue,
-            }}
-            withSelectionLock={async (action) => {
-              if (!navigator.locks)
-                throw new Error("browser coordination unavailable");
-              await navigator.locks.request(
-                storageKey,
-                { ifAvailable: true },
-                async (lock) => {
-                  if (
-                    !lock ||
-                    JSON.stringify(readRetained()) !==
-                      JSON.stringify(retained) ||
-                    (await digest(retained.request)) !== retained.requestDigest
-                  )
-                    throw new Error("retained intake changed or busy");
-                  await action();
-                },
-              );
-            }}
-            onBusyChange={setBusy}
-            onUnresolvedChange={setImportUnresolved}
-          />
-        )}
-        <p className="fine-print">
-          Research dispatch is not implemented by this intake endpoint.
-        </p>
-      </div>
-    </section>
+      </section>
+    </>
   );
 }

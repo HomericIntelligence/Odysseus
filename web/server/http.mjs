@@ -3,7 +3,11 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { createIntakeService } from "./intakes.mjs";
-import { createResearchImportService } from "./research-imports.mjs";
+import {
+  createIssueImportService,
+  createResearchImportService,
+  parseIssueImportJson,
+} from "./research-imports.mjs";
 
 const hash = (value) => createHash("sha256").update(value).digest();
 const equal = (left, right) =>
@@ -15,7 +19,8 @@ const json = (response, status, data) => {
   });
   response.end(JSON.stringify(data));
 };
-async function body(request, limit = 4096) {
+
+async function body(request, limit = 4096, uniqueKeys = false) {
   if (!request.headers["content-type"]?.startsWith("application/json"))
     throw new Error("Expected JSON");
   const chunks = [];
@@ -25,9 +30,10 @@ async function body(request, limit = 4096) {
     if (size > limit) throw new Error("Body too large");
     chunks.push(chunk);
   }
-  return JSON.parse(
-    new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)),
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(
+    Buffer.concat(chunks),
   );
+  return uniqueKeys ? parseIssueImportJson(text) : JSON.parse(text);
 }
 
 export function createDashboardServer({
@@ -38,12 +44,16 @@ export function createDashboardServer({
   commands,
   research,
   researchImport,
+  issueImport,
 } = {}) {
   if (!view || !token)
     throw new Error("View and private UI token are required");
   const intakes = research ? createIntakeService(research) : null;
   const imports = researchImport
     ? createResearchImportService(researchImport)
+    : null;
+  const issueImports = issueImport
+    ? createIssueImportService(issueImport)
     : null;
   const sessions = new Map();
   let streams = 0;
@@ -113,7 +123,87 @@ export function createDashboardServer({
           }),
           researchIntake: { enabled: Boolean(intakes) },
           researchImport: { enabled: Boolean(imports) },
+          ...(issueImports ? { issueImport: { enabled: true } } : {}),
         });
+      if (
+        (url.pathname === "/api/issue-intakes" && request.method === "POST") ||
+        (request.method === "GET" &&
+          (url.pathname.startsWith("/api/issue-intakes/") ||
+            url.pathname.startsWith("/api/tasks/")))
+      ) {
+        if (request.method === "POST" && !origin)
+          return json(response, 403, { error: "Origin required" });
+        if (
+          request.method === "GET" &&
+          (request.headers["transfer-encoding"] ||
+            Number(request.headers["content-length"] ?? 0) !== 0)
+        )
+          return json(response, 400, {
+            error: "invalid_request",
+            outcome: "not_submitted",
+          });
+        const registry = url.pathname === "/api/issue-intakes/repositories";
+        const task = url.pathname.startsWith("/api/tasks/");
+        let selection;
+        if (request.method === "GET" && !registry && !task) {
+          const parts = url.pathname
+            .slice("/api/issue-intakes/".length)
+            .split("/");
+          try {
+            decodeURIComponent(url.search);
+            if (
+              parts.length !== 2 ||
+              !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(parts[0]) ||
+              !/^[1-9][0-9]{0,9}$/.test(parts[1]) ||
+              Number(parts[1]) > 2147483647 ||
+              (url.search &&
+                ([...url.searchParams.keys()].length !== 1 ||
+                  url.searchParams.getAll("planCommentId").length !== 1))
+            )
+              throw new Error("Invalid selection");
+            selection = [
+              parts[0],
+              Number(parts[1]),
+              url.search ? url.searchParams.get("planCommentId") : undefined,
+            ];
+          } catch {
+            return json(response, 400, {
+              error: "invalid_request",
+              outcome: "not_submitted",
+            });
+          }
+        } else if (url.search) {
+          return json(response, 400, {
+            error: "invalid_request",
+            outcome: "not_submitted",
+          });
+        }
+        if (!issueImports)
+          return json(response, 503, {
+            error: "not_configured",
+            outcome: "not_submitted",
+          });
+        let result;
+        if (request.method === "POST") {
+          try {
+            result = await issueImports.submit(await body(request, 4096, true));
+          } catch {
+            return json(response, 400, {
+              error: "invalid_request",
+              outcome: "not_submitted",
+            });
+          }
+        } else if (task) {
+          result = await issueImports.readTask(
+            url.pathname.slice("/api/tasks/".length),
+          );
+        } else if (selection) {
+          result = await issueImports.inspect(...selection);
+        } else {
+          result = await issueImports.repositories();
+        }
+        return json(response, result.code, result.body);
+      }
       if (
         url.pathname.startsWith("/api/research/tasks/") &&
         request.method === "GET"

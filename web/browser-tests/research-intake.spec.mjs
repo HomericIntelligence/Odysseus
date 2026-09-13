@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import { FleetView } from "../server/view.mjs";
 import { createDashboardServer } from "../server/http.mjs";
 
@@ -109,6 +110,648 @@ async function fill(page) {
     .getByLabel("Publishable requirements")
     .fill("Requirements with κόσμος and 🧭.");
 }
+
+test("planned issue action uses registered repositories without Nestor or an automatic import", async ({
+  page,
+}) => {
+  const controllerCalls = [];
+  const registry = {
+    schema: "hi/agamemnon/issue-repositories/v1",
+    repositories: [
+      { key: "1first", repository: "Example/First", repositoryId: "R_first" },
+      { key: "second", repository: "Example/Second", repositoryId: "R_second" },
+    ],
+  };
+  const isolated = createDashboardServer({
+    view: new FleetView(),
+    token,
+    staticDir: resolve("dist"),
+    issueImport: {
+      url: "http://127.0.0.1:9876/operator-base",
+      apiKey: randomBytes(24).toString("hex"),
+      fetchImpl: async (target, options) => {
+        controllerCalls.push({
+          path: new URL(target).pathname,
+          method: options.method,
+        });
+        return new Response(JSON.stringify(registry), { status: 200 });
+      },
+    },
+  });
+  await new Promise((done) => isolated.listen(0, "127.0.0.1", done));
+  try {
+    await page.goto(`http://127.0.0.1:${isolated.address().port}`);
+    await page.getByLabel("Local access token").fill(token);
+    await page.getByRole("button", { name: "Open mission control" }).click();
+    await page
+      .getByRole("button", { name: "Research intake", exact: true })
+      .click();
+    await expect(
+      page.getByText("Research intake is not configured on this backend.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    const panel = page.getByRole("region", {
+      name: "Planned issue intake",
+      exact: true,
+    });
+    await expect(panel).toBeVisible();
+    const repositories = panel.getByLabel("Planned issue repository");
+    await expect(repositories).toBeEnabled();
+    await expect(repositories.getByRole("option")).toHaveText([
+      "Select a registered repository",
+      "Example/First",
+      "Example/Second",
+    ]);
+    await repositories.selectOption("second");
+    await panel.getByLabel("Issue number", { exact: true }).fill("42");
+    await expect(
+      panel.getByRole("button", { name: "Inspect planned issue", exact: true }),
+    ).toBeEnabled();
+    expect(controllerCalls).toEqual([
+      { path: "/v1/fleet/issue-intakes/repositories", method: "GET" },
+    ]);
+    await page.reload();
+    await page
+      .getByRole("button", { name: "Research intake", exact: true })
+      .click();
+    await expect(
+      page.getByRole("region", { name: "Planned issue intake", exact: true }),
+    ).toBeVisible();
+    expect(controllerCalls.every((call) => call.method === "GET")).toBe(true);
+  } finally {
+    isolated.closeAllConnections();
+    await new Promise((done) => isolated.close(done));
+  }
+});
+
+async function plannedBrowserFixture(override) {
+  const controllerCalls = [];
+  const issue = {
+    repository: "Example/Project",
+    number: 42,
+    url: "https://github.com/Example/Project/issues/42",
+  };
+  const plan = { kind: "issue_body", digest: "a".repeat(64) };
+  const routing = {
+    domain: "pipeline",
+    hmasRole: "task-agent",
+    stage: "implementation",
+  };
+  const inspection = {
+    schema: "hi/agamemnon/issue-inspection/v1",
+    repositoryKey: "project",
+    repositoryId: "R_project",
+    issueId: "I_work",
+    issue,
+    title: "Implement the selected plan",
+    state: "open",
+    plan,
+    observedAt: "2026-09-13T06:00:00Z",
+  };
+  // Controlled schema example, not actual controller-produced evidence.
+  const imported = {
+    schema: "hi/agamemnon/issue-import-receipt/v1",
+    taskId:
+      "issue-25074367d8e8ec5e691f3246b29ff0a062128d856eab137b7f6c8885715188e2",
+    state: "Pending",
+    issue,
+    routing,
+    provenance: {
+      schema: "hi/agamemnon/issue-intake/v1",
+      forge: "github",
+      repositoryId: "R_project",
+      issueId: "I_work",
+      issue,
+      plan,
+      routing,
+      observedAt: inspection.observedAt,
+    },
+  };
+  const { document, claim, resource } = taskOwner(imported);
+  document.task.delivery = { issueIntake: imported.provenance };
+  let postCount = 0;
+  const ownedView = new FleetView();
+  const isolated = createDashboardServer({
+    view: ownedView,
+    token,
+    staticDir: resolve("dist"),
+    issueImport: {
+      url: "http://127.0.0.1:9876/operator-base",
+      apiKey: randomBytes(24).toString("hex"),
+      observe: (event) => ownedView.observe(event),
+      fetchImpl: async (target, options) => {
+        const path = new URL(target).pathname;
+        controllerCalls.push({
+          path,
+          method: options.method,
+          body: options.body,
+        });
+        if (options.method === "POST") {
+          postCount++;
+          if (override)
+            return override(
+              { path, ...options },
+              { imported, inspection, document, resource },
+            );
+          return postCount === 1
+            ? new Response("uncertain", { status: 503 })
+            : new Response(JSON.stringify(imported), { status: 200 });
+        }
+        let body;
+        if (path.endsWith("/repositories"))
+          body = {
+            schema: "hi/agamemnon/issue-repositories/v1",
+            repositories: [
+              {
+                key: "project",
+                repository: issue.repository,
+                repositoryId: "R_project",
+              },
+            ],
+          };
+        else if (path === "/v1/fleet/issue-intakes/project/42")
+          body = inspection;
+        else if (path.startsWith("/v1/tasks/")) body = document;
+        else body = resource;
+        return new Response(JSON.stringify(body), { status: 200 });
+      },
+    },
+  });
+  await new Promise((done) => isolated.listen(0, "127.0.0.1", done));
+  const address = `http://127.0.0.1:${isolated.address().port}`;
+  return {
+    isolated,
+    address,
+    controllerCalls,
+    imported,
+    inspection,
+    document,
+    claim,
+    resource,
+    ownedView,
+    get postCount() {
+      return postCount;
+    },
+    async close() {
+      isolated.closeAllConnections();
+      await new Promise((done) => isolated.close(done));
+    },
+  };
+}
+
+test("planned issue keeps an uncertain import across reload and shows only the exact canonical owner", async ({
+  page,
+}) => {
+  const fixture = await plannedBrowserFixture();
+  const {
+    address,
+    controllerCalls,
+    imported,
+    inspection,
+    claim,
+    resource,
+    ownedView,
+  } = fixture;
+  const issue = inspection.issue;
+  const plan = inspection.plan;
+  try {
+    await page.goto(address);
+    await page.getByLabel("Local access token").fill(token);
+    await page.getByRole("button", { name: "Open mission control" }).click();
+    await page
+      .getByRole("button", { name: "Research intake", exact: true })
+      .click();
+    const panel = page.getByRole("region", {
+      name: "Planned issue intake",
+      exact: true,
+    });
+    await expect(panel).toBeVisible();
+    await panel.getByLabel("Planned issue repository").selectOption("project");
+    await panel.getByLabel("Issue number", { exact: true }).fill("42");
+    await panel
+      .getByRole("button", { name: "Inspect planned issue", exact: true })
+      .click();
+    await expect(
+      panel.getByRole("link", { name: "Open planned issue", exact: true }),
+    ).toHaveAttribute("href", issue.url);
+    expect(fixture.postCount).toBe(0);
+    let retainedBeforeSend;
+    await page.route("**/api/issue-intakes", async (route) => {
+      if (route.request().method() === "POST")
+        retainedBeforeSend = await page.evaluate(() =>
+          localStorage.getItem("odysseus.issue-import.v1"),
+        );
+      await route.continue();
+    });
+    await panel
+      .getByRole("button", { name: "Import planned issue", exact: true })
+      .click();
+    const status = panel.getByRole("status", {
+      name: "Planned issue task status",
+      exact: true,
+    });
+    await expect(status).toContainText(/unknown/i);
+    expect(fixture.postCount).toBe(1);
+    const original = controllerCalls.find(
+      (call) => call.method === "POST",
+    ).body;
+    expect(JSON.parse(retainedBeforeSend).reference).toEqual(
+      JSON.parse(original),
+    );
+    await expect(panel.getByLabel("Planned issue repository")).toBeDisabled();
+    await page.reload();
+    await page
+      .getByRole("button", { name: "Research intake", exact: true })
+      .click();
+    await expect(status).toContainText(/unknown/i);
+    expect(fixture.postCount).toBe(1);
+    await panel
+      .getByRole("button", { name: "Retry same import", exact: true })
+      .click();
+    await expect(status).toContainText(imported.taskId);
+    expect(fixture.postCount).toBe(2);
+    expect(
+      controllerCalls.filter((call) => call.method === "POST")[1].body,
+    ).toBe(original);
+    ownedView.setResources("sessions", [resource]);
+    ownedView.setSource("agamemnon", "connected");
+    const [response] = await Promise.all([
+      page.waitForResponse(
+        (value) => value.url() === `${address}/api/tasks/${imported.taskId}`,
+      ),
+      panel
+        .getByRole("button", { name: "Refresh task status", exact: true })
+        .click(),
+    ]);
+    expect(response.status()).toBe(200);
+    expect((await response.json()).owner.workerId).toBe(claim.workerId);
+    const owner = panel.getByRole("region", {
+      name: "Planned issue task owner",
+      exact: true,
+    });
+    await expect(owner).toContainText(claim.workerId);
+    const navigate = owner.getByRole("button", {
+      name: "Open owner session",
+      exact: true,
+    });
+    await expect(navigate).toBeEnabled();
+    ownedView.setResources("sessions", [
+      { ...resource, generation: claim.generation + 1 },
+    ]);
+    await expect(navigate).toBeDisabled();
+    expect(
+      controllerCalls.filter((call) => call.method === "POST"),
+    ).toHaveLength(2);
+    expect(controllerCalls.slice(-3).map((call) => call.path)).toEqual([
+      `/v1/tasks/${imported.taskId}/state`,
+      `/v1/fleet/sessions/${claim.targetId}`,
+      `/v1/tasks/${imported.taskId}/state`,
+    ]);
+    for (const secret of [
+      claim.workspace,
+      plan.digest,
+      "private task description",
+    ])
+      await expect(page.getByText(secret, { exact: false })).toHaveCount(0);
+    await panel
+      .getByRole("button", {
+        name: "Choose another planned issue",
+        exact: true,
+      })
+      .click();
+    await expect(panel.getByLabel("Planned issue repository")).toBeEnabled();
+    await expect(
+      panel.getByRole("link", { name: "Open planned issue", exact: true }),
+    ).toHaveCount(0);
+    expect(
+      await page.evaluate(() =>
+        localStorage.getItem("odysseus.issue-import.v1"),
+      ),
+    ).toBeNull();
+    expect(fixture.postCount).toBe(2);
+  } finally {
+    await fixture.close();
+  }
+});
+
+async function inspectPlanned(page, fixture) {
+  await page.goto(fixture.address);
+  await page.getByLabel("Local access token").fill(token);
+  await page.getByRole("button", { name: "Open mission control" }).click();
+  await page
+    .getByRole("button", { name: "Research intake", exact: true })
+    .click();
+  const panel = page.getByRole("region", {
+    name: "Planned issue intake",
+    exact: true,
+  });
+  await panel.getByLabel("Planned issue repository").selectOption("project");
+  await panel.getByLabel("Issue number", { exact: true }).fill("42");
+  await panel
+    .getByRole("button", { name: "Inspect planned issue", exact: true })
+    .click();
+  await expect(
+    panel.getByRole("link", { name: "Open planned issue", exact: true }),
+  ).toBeVisible();
+  return panel;
+}
+
+test("planned issue conflict after a known receipt survives reload without replacement or automatic POST", async ({
+  page,
+}) => {
+  let attempts = 0;
+  const fixture = await plannedBrowserFixture((_call, { imported }) => {
+    attempts++;
+    return attempts === 1
+      ? Response.json(imported, { status: 201 })
+      : Response.json({ error: "import_conflict" }, { status: 409 });
+  });
+  try {
+    const panel = await inspectPlanned(page, fixture);
+    const status = panel.getByRole("status", {
+      name: "Planned issue task status",
+      exact: true,
+    });
+    const retained = () =>
+      page.evaluate(() =>
+        JSON.parse(localStorage.getItem("odysseus.issue-import.v1")),
+      );
+    await panel
+      .getByRole("button", { name: "Import planned issue", exact: true })
+      .click();
+    await expect(status).toContainText(fixture.imported.taskId);
+    const confirmed = await retained();
+    expect(confirmed.receipt).toEqual(fixture.imported);
+    expect(confirmed.outcome).toBe("confirmed");
+    const original = fixture.controllerCalls.find(
+      (call) => call.method === "POST",
+    ).body;
+    await panel
+      .getByRole("button", { name: "Retry same import", exact: true })
+      .click();
+    await expect(status).toContainText(/conflict/i);
+    expect(fixture.postCount).toBe(2);
+    const conflict = await retained();
+    expect(conflict).toEqual({ ...confirmed, outcome: "conflict" });
+    await expect(
+      panel.getByRole("button", {
+        name: "Choose another planned issue",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await expect(panel.getByLabel("Planned issue repository")).toBeDisabled();
+    await expect(
+      panel.getByLabel("Issue number", { exact: true }),
+    ).toBeDisabled();
+    await page.reload();
+    await page
+      .getByRole("button", { name: "Research intake", exact: true })
+      .click();
+    await expect(status).toContainText(/conflict/i);
+    await expect(status).toContainText(fixture.imported.taskId);
+    await expect(
+      panel.getByRole("button", { name: "Retry same import", exact: true }),
+    ).toBeEnabled();
+    expect(await retained()).toEqual(conflict);
+    expect(fixture.postCount).toBe(2);
+    await expect(
+      panel.getByRole("button", {
+        name: "Choose another planned issue",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await expect(panel.getByLabel("Planned issue repository")).toBeDisabled();
+    await panel
+      .getByRole("button", { name: "Retry same import", exact: true })
+      .click();
+    await expect.poll(() => fixture.postCount).toBe(3);
+    await expect(status).toContainText(/conflict/i);
+    expect(await retained()).toEqual(conflict);
+    expect(
+      fixture.controllerCalls
+        .filter((call) => call.method === "POST")
+        .map((call) => call.body),
+    ).toEqual([original, original, original]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+for (const mode of ["throws", "drops writes", "changed selection"]) {
+  test(`planned issue storage ${mode} prevents any import`, async ({
+    page,
+  }) => {
+    const fixture = await plannedBrowserFixture();
+    try {
+      const panel = await inspectPlanned(page, fixture);
+      await page.evaluate((failure) => {
+        if (failure === "changed selection") {
+          const stored = JSON.parse(
+            localStorage.getItem("odysseus.issue-import.v1"),
+          );
+          stored.reference.issueId = "I_conflicting";
+          localStorage.setItem(
+            "odysseus.issue-import.v1",
+            JSON.stringify(stored),
+          );
+        } else
+          Storage.prototype.setItem = () => {
+            if (failure === "throws")
+              throw new Error("controlled storage failure");
+          };
+      }, mode);
+      await panel
+        .getByRole("button", { name: "Import planned issue", exact: true })
+        .click();
+      await expect(panel.getByRole("alert")).toContainText(
+        /storage|selection/i,
+      );
+      expect(fixture.postCount).toBe(0);
+    } finally {
+      await fixture.close();
+    }
+  });
+}
+
+test("planned issue competing tabs cannot send while another import owns the selection lock", async ({
+  page,
+  context,
+}) => {
+  let release;
+  const held = new Promise((done) => {
+    release = done;
+  });
+  const fixture = await plannedBrowserFixture(async (_call, { imported }) => {
+    await held;
+    return new Response(JSON.stringify(imported), { status: 201 });
+  });
+  let other;
+  try {
+    const panel = await inspectPlanned(page, fixture);
+    await panel
+      .getByRole("button", { name: "Import planned issue", exact: true })
+      .click();
+    await expect.poll(() => fixture.postCount).toBe(1);
+    other = await context.newPage();
+    await other.goto(fixture.address);
+    await other
+      .getByRole("button", { name: "Research intake", exact: true })
+      .click();
+    const otherPanel = other.getByRole("region", {
+      name: "Planned issue intake",
+      exact: true,
+    });
+    await otherPanel
+      .getByRole("button", { name: "Retry same import", exact: true })
+      .click();
+    await expect(otherPanel.getByRole("alert")).toContainText(
+      /storage|selection/i,
+    );
+    expect(fixture.postCount).toBe(1);
+    release();
+    await expect(
+      panel.getByRole("status", {
+        name: "Planned issue task status",
+        exact: true,
+      }),
+    ).toContainText(fixture.imported.taskId);
+    expect(fixture.postCount).toBe(1);
+  } finally {
+    release();
+    await other?.close();
+    await fixture.close();
+  }
+});
+
+test("actual controller planned issue export displays a reserved owner without inventing worker execution", async ({
+  page,
+}) => {
+  const raw = readFileSync(
+    new URL("../tests/fixtures/agamemnon-issue-contract.json", import.meta.url),
+  );
+  expect(sha(raw)).toBe(
+    "b68d8ff2e4f5e2ca9d7a3e0384fd886702fab4f9f035b9461ee1cc1151dc4612",
+  );
+  const producer = JSON.parse(raw);
+  const controllerCalls = [];
+  const currentView = new FleetView();
+  let claimed = false;
+  const isolated = createDashboardServer({
+    view: currentView,
+    token,
+    staticDir: resolve("dist"),
+    issueImport: {
+      url: "http://127.0.0.1:9876",
+      apiKey: randomBytes(24).toString("hex"),
+      observe: (event) => currentView.observe(event),
+      fetchImpl: async (url, options) => {
+        const path = new URL(url).pathname;
+        controllerCalls.push({
+          path,
+          method: options.method,
+          body: options.body,
+        });
+        if (options.method === "POST") {
+          expect(JSON.parse(options.body)).toEqual(producer.importRequest);
+          return new Response(
+            JSON.stringify(
+              claimed ? producer.replayReceipt : producer.importReceipt,
+            ),
+            { status: claimed ? 200 : 201 },
+          );
+        }
+        const body = path.endsWith("/repositories")
+          ? producer.registry
+          : path.startsWith("/v1/fleet/issue-intakes/")
+            ? producer.inspection
+            : path.startsWith("/v1/tasks/")
+              ? claimed
+                ? producer.claimedTask
+                : producer.pendingTask
+              : producer.session;
+        return new Response(JSON.stringify(body), { status: 200 });
+      },
+    },
+  });
+  await new Promise((done) => isolated.listen(0, "127.0.0.1", done));
+  try {
+    await page.goto(`http://127.0.0.1:${isolated.address().port}`);
+    await page.getByLabel("Local access token").fill(token);
+    await page.getByRole("button", { name: "Open mission control" }).click();
+    await page
+      .getByRole("button", { name: "Research intake", exact: true })
+      .click();
+    const panel = page.getByRole("region", {
+      name: "Planned issue intake",
+      exact: true,
+    });
+    await panel
+      .getByLabel("Planned issue repository")
+      .selectOption(producer.importRequest.repositoryKey);
+    await panel
+      .getByLabel("Issue number", { exact: true })
+      .fill(String(producer.importRequest.issueNumber));
+    await panel
+      .getByRole("button", { name: "Inspect planned issue", exact: true })
+      .click();
+    await expect(
+      panel.getByRole("link", { name: "Open planned issue", exact: true }),
+    ).toHaveAttribute("href", producer.inspection.issue.url);
+    expect(controllerCalls.every((call) => call.method === "GET")).toBe(true);
+    await panel
+      .getByRole("button", { name: "Import planned issue", exact: true })
+      .click();
+    const status = panel.getByRole("status", {
+      name: "Planned issue task status",
+      exact: true,
+    });
+    await expect(status).toContainText(producer.importReceipt.taskId);
+    await panel
+      .getByRole("button", { name: "Refresh task status", exact: true })
+      .click();
+    await expect(status).toContainText("Current task state: Pending");
+    const owner = panel.getByRole("region", {
+      name: "Planned issue task owner",
+      exact: true,
+    });
+    await expect(owner).toContainText("No current owner claim.");
+    claimed = true;
+    currentView.setResources("sessions", [producer.session]);
+    currentView.setSource("agamemnon", "connected");
+    await panel
+      .getByRole("button", { name: "Retry same import", exact: true })
+      .click();
+    await expect(status).toContainText("Confirmed import receipt: Delegated");
+    await panel
+      .getByRole("button", { name: "Refresh task status", exact: true })
+      .click();
+    await expect(status).toContainText("Current task state: Delegated");
+    await expect(owner).toContainText(producer.session.workerId);
+    await expect(owner).toContainText("admitted / reserved");
+    await expect(
+      owner.getByRole("button", { name: "Open owner session", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      panel
+        .getByRole("region", { name: "Planned issue task trace", exact: true })
+        .getByRole("button")
+        .first(),
+    ).toBeVisible();
+    for (const hidden of [
+      producer.session.workspace,
+      producer.importRequest.plan.digest,
+      producer.pendingTask.task.description,
+    ])
+      await expect(page.getByText(hidden, { exact: false })).toHaveCount(0);
+    expect(
+      controllerCalls.filter((call) => call.method === "POST"),
+    ).toHaveLength(2);
+  } finally {
+    isolated.closeAllConnections();
+    await new Promise((done) => isolated.close(done));
+  }
+});
 
 test("phone intake keeps every navigation action within the viewport", async ({
   page,
@@ -525,6 +1168,26 @@ test("research task refresh is explicit GET only and retains the historical rece
   await expect(
     page.getByText("synthetic private upstream failure", { exact: false }),
   ).toHaveCount(0);
+});
+
+test("research import waits through the controller import budget without changing owner-read deadlines", async ({
+  page,
+}) => {
+  test.setTimeout(30000);
+  const record = await confirmCurrentIntake(page);
+  const imported = importedReceipt(record);
+  importReply = async () => {
+    await new Promise((done) => setTimeout(done, 16000));
+    return { code: 201, body: imported };
+  };
+  await page
+    .getByRole("button", { name: "Import research task", exact: true })
+    .click();
+  await expect(
+    page.getByRole("status", { name: "Research task status", exact: true }),
+  ).toContainText(imported.taskId, { timeout: 22000 });
+  expect(importCalls).toHaveLength(1);
+  expect(importCalls[0].method).toBe("POST");
 });
 
 test("research import conflict after a known receipt preserves the reference and blocks replacement", async ({
