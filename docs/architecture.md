@@ -271,6 +271,16 @@ does not permit another create. This record is Nestor's research intake state,
 not Agamemnon's task graph. Live GitHub concurrency and restart tests remain
 required before this bootstrap can admit research work.
 
+Odysseus now provides an opt-in Research intake form and authenticated backend
+proxy for `POST /v1/research/intakes` and the corresponding status read. The
+browser retains publishable request content and identity before submission;
+explicit retries preserve both, and read-only status checks compare the retained
+request digest. Nestor credentials stay on the backend. Only a matching
+`created` record with a confirmed issue receipt becomes a link in the UI.
+This interface does not dispatch research workers or maintain another queue.
+See the [API and recovery contract](research-intake-api.md). Local transport and
+browser fixtures establish the interface behavior, not live GitHub admission.
+
 Telemachy's initial Fleet registration path requires a marked, pre-existing
 epic and an externally exclusive writer. A local integration test has now passed
 the real producer's exact bytes through a private JetStream broker into the

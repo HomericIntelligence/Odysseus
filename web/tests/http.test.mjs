@@ -144,7 +144,7 @@ test("command submission requires an authenticated same-origin JSON request and 
     await (
       await fetch(`${url}/api/capabilities`, { headers: { cookie } })
     ).json(),
-    commands.capabilities,
+    { ...commands.capabilities, researchIntake: { enabled: false } },
   );
   const accepted = await send({ cookie, origin: url });
   assert.equal(accepted.status, 202);

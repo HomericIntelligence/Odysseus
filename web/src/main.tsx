@@ -9,6 +9,7 @@ import {
 } from "./selectors";
 import { useSessionControls } from "./SessionControls";
 import { ProjectsPanel } from "./ProjectsPanel";
+import { ResearchIntake } from "./ResearchIntake";
 import type { ProjectsProjection } from "./pipeline";
 import "./style.css";
 
@@ -472,20 +473,24 @@ function App() {
         </a>
         <div className="workspace-label">YOUR WORKSPACE</div>
         <nav aria-label="Main navigation">
-          {["System flow", "Work items", "Workers", "Pipeline"].map(
-            (name, i) => (
-              <button
-                key={name}
-                className={tab === name ? "nav-active" : ""}
-                onClick={() => setTab(name)}
-              >
-                <span className="nav-icon" aria-hidden="true">
-                  {["⌘", "▤", "▦", "⇢"][i]}
-                </span>
-                {name}
-              </button>
-            ),
-          )}
+          {[
+            "System flow",
+            "Work items",
+            "Workers",
+            "Pipeline",
+            "Research intake",
+          ].map((name, i) => (
+            <button
+              key={name}
+              className={tab === name ? "nav-active" : ""}
+              onClick={() => setTab(name)}
+            >
+              <span className="nav-icon" aria-hidden="true">
+                {["⌘", "▤", "▦", "⇢"][i]}
+              </span>
+              {name}
+            </button>
+          ))}
         </nav>
         <div className="workspace-label components-label">COMPONENTS</div>
         <div className="component-list">
@@ -602,7 +607,7 @@ function App() {
             {snapshot.truncatedResources ? "Resource view is truncated." : ""}
           </div>
         ) : null}
-        {tab !== "Pipeline" && (
+        {tab !== "Pipeline" && tab !== "Research intake" && (
           <div className="toolbar">
             <div className="search">
               <span>⌕</span>
@@ -670,7 +675,9 @@ function App() {
             </div>
           </section>
         )}
-        {tab === "Pipeline" ? (
+        {tab === "Research intake" ? (
+          <ResearchIntake />
+        ) : tab === "Pipeline" ? (
           <ProjectsPanel
             projection={snapshot?.projects}
             sourceStatus={snapshot?.sources.projects?.status}

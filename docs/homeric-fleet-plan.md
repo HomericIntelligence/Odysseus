@@ -568,6 +568,15 @@ that metadata. Publishable requirements stay in the work issue; private intervie
 content stays private. This addition is a Proposed architecture extension with
 live GitHub write/concurrency and restart tests still required.
 
+The Odysseus Research intake slice now supplies a form and authenticated backend
+proxy to Nestor's explicit Fleet intake/status API. It retains the same
+publishable request and identity in browser storage before submission and across
+reloads, rejects changed retries, and displays an issue link only after Nestor
+confirms a matching receipt. It neither dispatches research agents nor stores a
+second work queue. The [intake API guide](research-intake-api.md) documents its
+recovery scope. Live GitHub durability and research/interview execution remain
+acceptance gates.
+
 The real Telemachy producer and native Agamemnon consumer have passed a local
 exact-byte integration test through a private JetStream broker. Lost publisher
 receipt, failed durable write, duplicate delivery, restart and canonical child
