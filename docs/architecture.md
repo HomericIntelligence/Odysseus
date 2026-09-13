@@ -289,6 +289,22 @@ uncertain-response recovery. It creates no backend task queue or alternate issue
 The same browser lock coordinates import, retry and intake replacement; no reload
 or sign-in automatically repeats a POST.
 
+An independently enabled planned-issue action uses Agamemnon's registered work
+repository projection and `/v1/fleet/issue-intakes` inspection/import interface.
+It accepts an existing issue and an explicitly selected body/comment snapshot,
+without requiring Nestor. Agamemnon owns neutral `issueIntake` provenance, the
+native-identity task key and shared deduplication with research imports. Odysseus
+keeps only a typed browser recovery reference and projects the neutral
+`/api/tasks/{taskId}` status through the same owner checks. Import does not approve
+a plan, dispatch a worker or acquire an issue-writer claim. Controller-side
+pre-create fencing and positive uncertainty reconciliation remain necessary;
+browser timeout or an empty status read cannot replace that authority.
+
+Both import POSTs allow forty seconds in the BFF and forty-five in the browser,
+including response body consumption. Read-only owner operations retain the
+five-second BFF budget. An owned reader is cancelled and released on deadline or
+failure; increasing the import budget does not extend unrelated Fleet polling.
+
 Known-task reads validate intrinsic task/provenance identity, then compare the
 exact raw Fleet owner and reread the relevant task fields. The bounded projection
 excludes private content and workspace paths. This consistency check is not an
