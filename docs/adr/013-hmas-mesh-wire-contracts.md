@@ -4,6 +4,11 @@
 
 **Extends:** [ADR 005](005-nats-subject-schema.md)
 
+> **Proposal status:** The wire contracts, ownership rules, and migration below
+> are candidate target architecture. Checked-in schemas, service interfaces,
+> and verified live-state readbacks remain the authorities for current
+> behavior until this ADR is accepted and implemented.
+
 ---
 
 ## Context
@@ -23,10 +28,10 @@ but the connective wire contracts between them were never defined:
   research dispatch queue, and no lease/heartbeat/idempotency contract for
   workers.
 
-This ADR defines the authoritative wire contracts for the HMAS mesh pipeline:
-subject grammar, JetStream consumer configuration, payload envelopes, task
-sizing and overrun re-adjustment, event-vs-store ownership, the interview
-relay, and epic conventions.
+This proposal would define wire contracts for the HMAS mesh pipeline: subject
+grammar, JetStream consumer configuration, payload envelopes, task sizing and
+overrun re-adjustment, event-vs-store ownership, the interview relay, and epic
+conventions.
 
 ## Decision
 
@@ -85,7 +90,7 @@ This adds the `started` verb to ADR-005's list. Workers publish `started`
 immediately after claiming (payload carries `agent_id` and `exec_host` — this
 IS the assignment record; assignment happens at claim, not at dispatch).
 
-**Ownership rule (normative):**
+**Proposed ownership rule (would become normative if accepted):**
 
 - **Workers publish events.** They never write Agamemnon's store directly.
 - **Only Agamemnon writes its backing store** (GitHub Issues/Projects).
@@ -208,7 +213,7 @@ Every payload carries `exec_host`.
 | `homeric-tasks` | `hi.tasks.>` | exists; state events |
 | `homeric-agents` | `hi.agents.>` | exists |
 | `homeric-logs` | `hi.logs.>` | exists |
-| `homeric-pipeline` | `hi.pipeline.>` | made authoritative; limits-based retention (multiple readers) |
+| `homeric-pipeline` | `hi.pipeline.>` | would become authoritative if accepted and implemented; limits-based retention (multiple readers) |
 
 ### 10. State machine mapping
 
@@ -257,7 +262,8 @@ One row per pipeline phase — owner / storage / trigger:
 
 - ADR-005's verb list grows by `started`; existing subscribers using `>`
   wildcards are unaffected.
-- The `homeric-pipeline` stream becomes authoritative for `hi.pipeline.>`;
+- If accepted and implemented, the `homeric-pipeline` stream becomes
+  authoritative for `hi.pipeline.>`;
   consumers that used core NATS keep working (stream capture is additive).
 
 ## References

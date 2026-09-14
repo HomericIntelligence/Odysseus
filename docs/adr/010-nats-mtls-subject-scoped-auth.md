@@ -2,6 +2,11 @@
 
 **Status:** Proposed
 
+> **Proposal status:** The identity and authorization contract below becomes
+> binding only if this ADR is accepted and implemented. The checked-in NATS
+> configuration and verified live-state readbacks remain the authorities for
+> current behavior.
+
 ---
 
 ## Context
@@ -36,9 +41,9 @@ subsequent ADR.
 - **Leaf remote (outbound):** leaf nodes present a client cert+key when connecting to the hub, so
   the hub can authenticate the leaf.
 
-### 2. Cert identity convention (binding contract for `verify_and_map`)
+### 2. Proposed cert identity convention for `verify_and_map`
 
-Every client and leaf node certificate **MUST** carry:
+If this ADR is accepted, every client and leaf node certificate **MUST** carry:
 
 1. A Common Name of the form `CN=<role>.homeric`
 2. A DNS Subject Alternative Name equal to `<role>.homeric`

@@ -1,5 +1,9 @@
 # Runbook: NATS Credential Rotation and Compromise Response
 
+> **Governance status:** ADRs 008–010 are Proposed at this revision. This
+> runbook describes the checked-in configuration and must be paired with a live
+> readback before an operational change; the proposals are design context.
+
 This runbook covers the **operational lifecycle** of the NATS mutual-TLS credentials after
 they are first provisioned:
 

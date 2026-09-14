@@ -2,6 +2,11 @@
 
 **Status:** Proposed
 
+> **Proposal status:** The ecosystem-wide adoption and enforcement below are
+> proposed. Odysseus's evidence-integrity policy in `AGENTS.md` applies as a
+> direct repository rule independently of this ADR; implemented repository
+> policies and gates remain the authorities for current behavior.
+
 ---
 
 ## Context
@@ -44,9 +49,9 @@ removed.
 
 ## Decision
 
-Adopt a **runnable-evidence policy** for any claim of a measured metric,
-convergence result, or successful training/benchmark run. The policy has four
-binding parts:
+We propose adopting a **runnable-evidence policy** for any claim of a measured
+metric, convergence result, or successful training/benchmark run. If accepted,
+the policy would have four parts:
 
 1. **A committed log file is never evidence.** A metric claim is treated as
    **unproven** unless it is backed by output produced by a gate the agent does
@@ -74,10 +79,10 @@ binding parts:
    agent that reports a metric it did not measure has failed it, regardless of
    how plausible the number is.
 
-This ADR governs; the enforcement mechanisms (AGENTS.md policy sections, the
-strict-rubric dimension, a required CI smoke of the training entrypoints, and
-the decoupled-run task pattern) are implemented in the respective repositories
-and reference this ADR.
+If accepted, this ADR would govern ecosystem-wide adoption. Current enforcement
+comes from policies and gates implemented directly in each repository. Future
+implementations may reference this ADR without treating proposal status as
+proof that a gate exists or has run.
 
 ## Consequences
 
@@ -89,8 +94,8 @@ and reference this ADR.
   from a channel the agent does not control.
 - The genuine long-running result is captured out-of-band and gated on its own,
   so real evidence still lands, just through an honest path.
-- The policy is a single referenceable decision, so AGENTS.md sections, rubric
-  dimensions, and CI jobs across repos share one source of truth.
+- If accepted, the policy becomes a single referenceable decision for
+  repository contracts, rubric dimensions, and CI jobs.
 
 **Negative:**
 

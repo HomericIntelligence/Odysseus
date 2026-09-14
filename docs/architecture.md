@@ -5,6 +5,14 @@
 > HomericIntelligence components and is fully removed from the meta-repo
 > (no entry in `.gitmodules`, no `infrastructure/ai-maestro/` directory).
 > See [ADR-006](adr/006-decouple-from-ai-maestro.md).
+>
+> **Current state versus proposals.** Only ADRs marked Accepted are binding
+> architectural decisions. ADRs 008–010, 012–014, and 017–022 are Proposed at
+> this revision. The role-addressed mesh, end-to-end pipeline, state mapping,
+> SLO targets, and distributed Hephaestus material below describe proposed or
+> partially implemented target state, not proof of deployment. Checked-in
+> service interfaces, schemas, configuration, and verified live readbacks are
+> the authorities for current behavior.
 
 ---
 
@@ -28,15 +36,15 @@ a git submodule. Odysseus itself contains no application code.
 |-----------|----------|------|
 | **Odysseus** | meta | User interface, observability hub, and meta-repo. Bidirectional with user. Consumes Argus dashboards. |
 | **Agamemnon** | control | Planning, coordination, and HMAS orchestration (L0–L3). GitHub Issues/Projects is the backing store. Does not perform research or expose a user UI. |
-| **Nestor** | control | Thin C++ intake/status/dispatch service for research. Accepts ideas (`POST /v1/research`), dispatches them to the research myrmidon pool, tracks status. Research, interviewing, and ideation run in research-pool myrmidons — never inside Nestor itself (LLM work never runs inside C++ services; see [ADR-013](adr/013-hmas-mesh-wire-contracts.md)). |
+| **Nestor** | control | Thin C++ intake/status/dispatch service for research. Accepts ideas (`POST /v1/research`), dispatches them to the research myrmidon pool, tracks status. Proposed ADR-013 places research, interviewing, and ideation in research-pool myrmidons rather than inside Nestor ([proposal](adr/013-hmas-mesh-wire-contracts.md)); verify the live service before relying on that target. |
 | **Keystone** | transport | Invisible transport layer. BlazingMQ for intra-host (<500 ns, >2 M msg/sec); NATS JetStream (nats.c v3.12.0) for cross-host over Tailscale. Components talk *through* Keystone, never *to* it. |
 | **Hermes** | infrastructure | External message delivery bridge. Routes external-service events into NATS and delivers outbound messages to external services. |
 | **Argus** | infrastructure | Observability: Prometheus metrics, Loki log aggregation, Grafana dashboards, Promtail scraping. Feeds Odysseus dashboards. |
 | **AchaeanFleet** | infrastructure | Container image library. All agent and service images. Built by Proteus; run on the `homeric-mesh` Podman network. |
-| **Myrmidons repo** | provisioning | GitOps source of truth. YAML manifests describe desired agent state; Agamemnon API reconciliation applies them. Also holds all agent templates and container specs. Multi-host scheduling via Nomad is deferred to a future phase (see [ADR-009](adr/009-defer-multi-host-nomad-scheduling.md)); currently supports `local` and `docker` deployment types only. |
-| **Telemachy** | provisioning | Declarative workflow engine + work description and epic registration. Turns workflow YAML into GitHub epics with child issues and publishes `hi.pipeline.epic.*.registered` ([ADR-013](adr/013-hmas-mesh-wire-contracts.md)). Used programmatically by Agamemnon, Nestor, and research myrmidons. Not a user-facing service. |
+| **Myrmidons repo** | provisioning | GitOps source of truth. YAML manifests describe desired agent state; Agamemnon API reconciliation applies them. Also holds all agent templates and container specs. Multi-host scheduling via Nomad is deferred to a future phase (see [Proposed ADR-021](adr/021-defer-multi-host-nomad-scheduling.md)); currently supports `local` and `docker` deployment types only. |
+| **Telemachy** | provisioning | Declarative workflow engine + work description and epic registration. Proposed ADR-013 assigns it workflow-to-epic registration and `hi.pipeline.epic.*.registered` publication ([proposal](adr/013-hmas-mesh-wire-contracts.md)); verify current consumers and deployment before treating that target as live. |
 | **Proteus** | ci-cd | CI/CD. Dagger TypeScript pipelines. Builds AchaeanFleet images; dispatches `agamemnon-apply` on merge. |
-| **Myrmidons (workers)** | workers | The worker pool: all nodes that can run myrmidon agents. Pull-based from role-addressed queues `hi.myrmidon.{domain}.{role}.task.>` ([ADR-013](adr/013-hmas-mesh-wire-contracts.md)); myrmidon roles ARE the HMAS agentic roles at every level, crossed with domain (e.g. `research.chief-architect` vs `pipeline.chief-architect`). Multi-host clustering via Nomad is deferred to a future phase (see [ADR-009](adr/009-defer-multi-host-nomad-scheduling.md)). |
+| **Myrmidons (workers)** | workers | Proposed ADR-013 targets a pull-based worker pool on role-addressed queues `hi.myrmidon.{domain}.{role}.task.>` with domain-crossed HMAS roles ([proposal](adr/013-hmas-mesh-wire-contracts.md)). Verify reconciler and worker state before treating that pool as deployed. Multi-host clustering via Nomad is also only proposed for a future phase (see [Proposed ADR-021](adr/021-defer-multi-host-nomad-scheduling.md)). |
 | **Scylla** | testing | AI agent ablation benchmarking; evaluates agent architectures across tiered configurations (T0–T6). |
 | **Charybdis** | testing | Chaos and resilience testing. Injects faults via Agamemnon `/v1/chaos/*` endpoints. |
 | **Mnemosyne** | shared | Skills marketplace / team-knowledge memory store for the `advise` and `learn` plugins only. Not an agent-template registry. |
@@ -59,6 +67,9 @@ traverse the network.
 ---
 
 ## System Diagram
+
+The diagram includes target-state edges from Proposed ADRs 013 and 020. It is a
+coordination view, not a live-deployment readback.
 
 ```
   ┌─────────────────────────────────────────────────────────────────────┐
@@ -123,10 +134,12 @@ traverse the network.
 
 ---
 
-## Pipeline Flow
+## Proposed Pipeline Flow
 
-The full HMAS pipeline, end to end (wire contracts in
-[ADR-013](adr/013-hmas-mesh-wire-contracts.md)):
+The following end-to-end target is proposed by
+[ADR-013](adr/013-hmas-mesh-wire-contracts.md) and
+[ADR-020](adr/020-mesh-distributed-hephaestus-loop.md). It must not be used as
+evidence that every stage is deployed:
 
 ```
  1. User submits a high-level task via the Odysseus console
@@ -174,10 +187,10 @@ around every task.
 
 ---
 
-## Task State Machine
+## Proposed Mesh State Mapping
 
-Two state systems cooperate, mapped one-to-one in
-[ADR-013](adr/013-hmas-mesh-wire-contracts.md) §10:
+Proposed ADR-013 defines the following one-to-one mapping. Each service's
+checked-in implementation remains the current behavioral authority:
 
 - **Agamemnon TaskStateMachine** (per HMAS node):
   `Pending → Decomposing → Delegated → InProgress → Completed`, with
@@ -215,8 +228,9 @@ to Keystone itself; the transport is resolved at startup via configuration.
 
 All subjects use the `hi.` namespace prefix.
 
-See [ADR-013](adr/013-hmas-mesh-wire-contracts.md) for consumer settings,
-payload envelopes, and migration notes.
+See [Proposed ADR-013](adr/013-hmas-mesh-wire-contracts.md) for candidate
+consumer settings and migration rationale. The checked-in schema and service
+implementations determine current payload behavior.
 
 | Subject pattern | Publishers | Subscribers | Notes |
 |-----------------|-----------|-------------|-------|
@@ -242,13 +256,13 @@ Argus provides the full observability stack:
 - **Loki + Promtail** — aggregates structured logs from all components via
   `hi.logs.>`.
 - **Grafana** — dashboards surfaced to Odysseus for user-facing visibility.
-- **SLOs / SLAs** — Service-level objectives for availability, task success,
-  NATS event latency, reconnect time, and throughput are defined in
+- **SLOs / SLAs** — Candidate service-level objectives for availability, task
+  success, NATS event latency, reconnect time, and throughput are proposed in
   [ADR-012](adr/012-slo-sla-definitions.md). Alert rules for the SLIs that are
   measurable today live in Argus (`rules/slo_alerts.yml`); see
   [runbooks/slo-alerting-rules.md](runbooks/slo-alerting-rules.md). Latency and
   reconnect SLOs are gated on instrumentation that Argus does not yet
-  emit (ADR-012, Tier 2).
+  emit (Proposed ADR-012, Tier 2).
 
 Argus does not control or coordinate components; it is read-only with respect
 to the rest of the system.
@@ -267,7 +281,7 @@ Mnemosyne).
 **Current state:** Myrmidons supports single-host deployments with `local` and
 `docker` deployment types. Multi-host agent scheduling via Nomad is deferred to
 a future phase and is tracked in
-[ADR-009](adr/009-defer-multi-host-nomad-scheduling.md).
+[Proposed ADR-021](adr/021-defer-multi-host-nomad-scheduling.md).
 
 ### AchaeanFleet
 All container images are defined and versioned in AchaeanFleet. Images run on

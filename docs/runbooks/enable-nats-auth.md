@@ -1,8 +1,13 @@
 # Runbook: Enable NATS Mutual-TLS Authentication and Authorization
 
-This runbook enables the `verify_and_map` authentication and subject-scoped `accounts {}`
-authorization defined in ADR-010. Follow these steps top-to-bottom on every host before
-restarting NATS with the updated `configs/nats/server.conf` and `configs/nats/leaf.conf`.
+This runbook enables the `verify_and_map` authentication and subject-scoped
+`accounts {}` authorization implemented by the checked-in NATS configuration.
+Follow these steps top-to-bottom on every host before restarting NATS with the
+updated `configs/nats/server.conf` and `configs/nats/leaf.conf`.
+
+**Governance status:** ADRs 008–010 are Proposed at this revision. This runbook
+operates the checked-in configuration; the proposals provide design context
+and do not prove the live state of any host.
 
 > **Already enabled?** For the operational lifecycle of these credentials — routine cert
 > rotation, CA rotation, and suspected-compromise / revocation response — see

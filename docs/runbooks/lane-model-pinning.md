@@ -1,4 +1,9 @@
-# Runbook: Lane Model Pinning (ADR-020 §4)
+# Runbook: Lane Model Pinning
+
+The checked-in `configs/lane-models.yaml` records current operator-confirmed
+configuration. [ADR-020](../adr/020-mesh-distributed-hephaestus-loop.md) §4 is
+still Proposed and supplies target-state context; it is not the authority for
+the current pins or proof that the distributed loop is deployed.
 
 Pins the four automation-lane model IDs as configuration so loop launches and
 Myrmidons manifests never rely on opencode's ambient default. The canonical
@@ -55,6 +60,7 @@ other contributors.
 
 ## Scope notes
 
-- `e2e/claude-myrmidon.py` is untouched (deprecated at M4, ADR-020 §9).
+- `e2e/claude-myrmidon.py` remains live. Proposed ADR-020 §9 describes a
+  possible M4 transition, but the harness is not retired by proposal text.
 - The workflow registry points at the canonical file via
   `workflows/m0-contracts.yaml` (`lane_models: configs/lane-models.yaml`).

@@ -2,6 +2,11 @@
 
 **Status:** Proposed
 
+> **Proposal status:** The lane, placement, client wiring, and router policies
+> below are desired state. They are not a deployed or binding architecture
+> claim; current images, manifests, service configuration, and live readbacks
+> remain authoritative.
+
 ---
 
 ## Context
@@ -50,11 +55,12 @@ host carries a GTX 1080 that the stock CPU-only image does not use.
 
 ## Decision
 
-**Lemonade is adopted as the mesh's private inference lane — an optional,
-additive serving substrate for open-weight models and OpenAI-compatible
-client flows.** It does not replace the Anthropic cloud lane for Claude models
-(proprietary weights); it replaces the cloud API for everything that can run
-on open weights, and it gives Odyssey-trained models a deployment path.
+**If accepted, Lemonade becomes the mesh's private inference lane — an
+optional, additive serving substrate for open-weight models and
+OpenAI-compatible client flows.** It does not replace the Anthropic cloud lane
+for Claude models (proprietary weights); it replaces the cloud API for
+everything that can run on open weights, and it gives Odyssey-trained models a
+deployment path.
 
 ### 1. Placement
 
@@ -118,7 +124,7 @@ Grafana dashboards alongside all other components.
 - **Scylla** gains a local-vs-cloud ablation axis (same prompt, local
   open-weight vs cloud Claude judge) on its T0–T6 tiers.
 
-### 4. ADR-013 alignment (normative)
+### 4. Proposed ADR-013 alignment
 
 Lemonade is a **serving sidecar — compute substrate, not orchestration**. The
 ADR-013 principle that *LLM work never runs inside the C++ services*
