@@ -31,6 +31,7 @@ EXPECTED_HOMES = {
     "M5": "Nestor",
     "M6": "Odysseus",
 }
+EXPECTED_MANUAL_GATE_LABEL = "agamemnon-operator-gate"
 
 
 def _load():
@@ -38,6 +39,80 @@ def _load():
     errors = reg.validate(milestones)
     assert not errors, f"payload validation failed: {errors}"
     return milestones
+
+
+def _assert_all_rejected(cases) -> None:
+    """Assert that every unsafe reconciliation case stops before reuse."""
+    accepted = []
+    for operation, context in cases:
+        try:
+            operation()
+        except RuntimeError:
+            continue
+        accepted.append(context)
+    assert not accepted, f"unsafe reconciliation was accepted: {', '.join(accepted)}"
+
+
+def _canonical_child_inventory(milestone):
+    """Build one complete, canonical child inventory for apply-mode tests."""
+    numbers = {
+        child.id: number
+        for number, child in enumerate(milestone.children, start=100)
+    }
+    issues_by_repo: dict[str, list[dict[str, object]]] = {}
+    for child in milestone.children:
+        labels = [
+            {
+                "name": (
+                    EXPECTED_MANUAL_GATE_LABEL
+                    if child.manual
+                    else reg.NEEDS_PLAN_LABEL
+                )
+            }
+        ]
+        issues_by_repo.setdefault(child.repo, []).append(
+            {
+                "number": numbers[child.id],
+                "title": child.subject,
+                "state": "OPEN",
+                "body": reg.render_child_body(
+                    milestone, child, numbers if child.manual else None
+                ),
+                "labels": labels,
+            }
+        )
+    return issues_by_repo, numbers
+
+
+def _assert_apply_rejected_before_write(milestone, issues_by_repo, message) -> None:
+    """Run apply against an inventory and prove validation precedes every write."""
+    calls = []
+    original_gh = reg.gh
+
+    def fake_gh(*args):
+        calls.append(args)
+        if args[:2] == ("issue", "list"):
+            repo = args[args.index("-R") + 1].split("/", 1)[1]
+            return json.dumps(issues_by_repo.get(repo, []))
+        if args[:2] == ("label", "list"):
+            # Missing labels make any premature label mutation observable.
+            return "[]"
+        raise AssertionError(f"mutation occurred before preflight completed: {args}")
+
+    reg.gh = fake_gh
+    try:
+        try:
+            reg.apply_plan([milestone])
+        except RuntimeError as exc:
+            assert message in str(exc)
+        else:  # pragma: no cover
+            raise AssertionError("unsafe reusable issue must stop apply")
+    finally:
+        reg.gh = original_gh
+
+    assert not any(
+        call[:2] in {("issue", "create"), ("label", "create")} for call in calls
+    )
 
 
 def test_six_milestones_with_correct_epic_homes() -> None:
@@ -225,10 +300,7 @@ def test_apply_plan_reuses_children_uses_title_and_holds_manual_gate() -> None:
                             "number": 77,
                             "title": existing.subject,
                             "state": "OPEN",
-                            "body": (
-                                f"{reg.child_identity_marker(existing)}\n"
-                                f"{reg.child_source_marker(m4, existing)}"
-                            ),
+                            "body": reg.render_child_body(m4, existing),
                             "labels": [{"name": reg.NEEDS_PLAN_LABEL}],
                         }
                     ]
@@ -236,7 +308,11 @@ def test_apply_plan_reuses_children_uses_title_and_holds_manual_gate() -> None:
             return "[]"
         if args[:2] == ("label", "list"):
             return json.dumps(
-                [{"name": reg.EPIC_LABEL}, {"name": reg.NEEDS_PLAN_LABEL}]
+                [
+                    {"name": reg.EPIC_LABEL},
+                    {"name": reg.NEEDS_PLAN_LABEL},
+                    {"name": EXPECTED_MANUAL_GATE_LABEL},
+                ]
             )
         if args[:2] == ("issue", "create"):
             repo = args[args.index("-R") + 1]
@@ -270,7 +346,10 @@ def test_apply_plan_reuses_children_uses_title_and_holds_manual_gate() -> None:
         for call in creates
         if call[call.index("--title") + 1] == gate.subject
     )
-    assert "--label" not in gate_call
+    assert "--label" in gate_call
+    assert (
+        gate_call[gate_call.index("--label") + 1] == EXPECTED_MANUAL_GATE_LABEL
+    )
     gate_body = gate_call[gate_call.index("--body") + 1]
     assert reg.child_identity_marker(gate) in gate_body
     assert reg.child_source_marker(m4, gate) in gate_body
@@ -290,27 +369,88 @@ def test_apply_plan_reuses_children_uses_title_and_holds_manual_gate() -> None:
 
 def test_apply_plan_rejects_unsafe_manual_retry_before_any_write() -> None:
     m4 = next(m for m in _load() if m.id == "M4")
+    issues_by_repo, _ = _canonical_child_inventory(m4)
+    gate = next(child for child in m4.children if child.manual)
+    gate_entry = next(
+        entry
+        for entry in issues_by_repo[gate.repo]
+        if entry["title"] == gate.subject
+    )
+    # This is the unsafe legacy state the preflight must reject.
+    gate_entry["labels"] = [
+        {"name": EXPECTED_MANUAL_GATE_LABEL},
+        {"name": reg.NEEDS_PLAN_LABEL},
+    ]
+
+    _assert_apply_rejected_before_write(m4, issues_by_repo, "unsafe state labels")
+
+
+def test_apply_plan_rejects_unlabeled_gate_before_any_write() -> None:
+    """A copied public gate body is not reusable without controlled metadata."""
+    m4 = next(m for m in _load() if m.id == "M4")
+    issues_by_repo, _ = _canonical_child_inventory(m4)
+    gate = next(child for child in m4.children if child.manual)
+    gate_entry = next(
+        entry
+        for entry in issues_by_repo[gate.repo]
+        if entry["title"] == gate.subject
+    )
+    gate_entry["labels"] = []
+
+    _assert_apply_rejected_before_write(
+        m4, issues_by_repo, f"missing {EXPECTED_MANUAL_GATE_LABEL!r}"
+    )
+
+
+def test_existing_epic_does_not_bypass_child_preflight() -> None:
+    """A canonical epic cannot hide drift in one of its referenced children."""
+    m4 = next(m for m in _load() if m.id == "M4")
+    issues_by_repo, numbers = _canonical_child_inventory(m4)
+    first = m4.children[0]
+    first_entry = next(
+        entry
+        for entry in issues_by_repo[first.repo]
+        if entry["title"] == first.subject
+    )
+    first_entry["body"] = str(first_entry["body"]).replace(
+        first.description, "ATTACKER CONTROLLED BODY"
+    )
+    issues_by_repo.setdefault(m4.epic_home, []).append(
+        {
+            "number": 999,
+            "title": m4.title,
+            "state": "OPEN",
+            "body": reg.render_epic_body(m4, numbers),
+            "labels": [{"name": reg.EPIC_LABEL}],
+        }
+    )
+
+    _assert_apply_rejected_before_write(m4, issues_by_repo, "source drift")
+
+
+def test_existing_epic_allows_canonical_child_lifecycle_progress() -> None:
+    """Retry skips a registered epic after canonical children advance or close."""
+    m4 = next(m for m in _load() if m.id == "M4")
+    issues_by_repo, numbers = _canonical_child_inventory(m4)
+    first = m4.children[0]
+    first_entry = next(
+        entry
+        for entry in issues_by_repo[first.repo]
+        if entry["title"] == first.subject
+    )
+    first_entry["state"] = "CLOSED"
+    first_entry["labels"] = [{"name": "state:plan-go"}]
+    issues_by_repo.setdefault(m4.epic_home, []).append(
+        {
+            "number": 999,
+            "title": m4.title,
+            "state": "OPEN",
+            "body": reg.render_epic_body(m4, numbers),
+            "labels": [{"name": reg.EPIC_LABEL}],
+        }
+    )
     calls = []
     original_gh = reg.gh
-
-    issues_by_repo: dict[str, list[dict[str, object]]] = {}
-    for number, child in enumerate(m4.children, start=100):
-        labels = [{"name": reg.NEEDS_PLAN_LABEL}]
-        if child.manual:
-            # This is the unsafe legacy state the preflight must reject.
-            labels = [{"name": reg.NEEDS_PLAN_LABEL}]
-        issues_by_repo.setdefault(child.repo, []).append(
-            {
-                "number": number,
-                "title": child.subject,
-                "state": "OPEN",
-                "body": (
-                    f"{reg.child_identity_marker(child)}\n"
-                    f"{reg.child_source_marker(m4, child)}"
-                ),
-                "labels": labels,
-            }
-        )
 
     def fake_gh(*args):
         calls.append(args)
@@ -318,23 +458,123 @@ def test_apply_plan_rejects_unsafe_manual_retry_before_any_write() -> None:
             repo = args[args.index("-R") + 1].split("/", 1)[1]
             return json.dumps(issues_by_repo.get(repo, []))
         if args[:2] == ("label", "list"):
-            # Missing labels make any premature label mutation observable.
-            return "[]"
-        raise AssertionError(f"mutation occurred before preflight completed: {args}")
+            return json.dumps(
+                [
+                    {"name": reg.EPIC_LABEL},
+                    {"name": reg.NEEDS_PLAN_LABEL},
+                    {"name": EXPECTED_MANUAL_GATE_LABEL},
+                ]
+            )
+        raise AssertionError(f"registered epic rerun attempted a write: {args}")
 
     reg.gh = fake_gh
     try:
-        try:
-            reg.apply_plan([m4])
-        except RuntimeError as exc:
-            assert "unsafe state labels" in str(exc)
-        else:  # pragma: no cover
-            raise AssertionError("automatic state on a manual gate must stop apply")
+        assert reg.apply_plan([m4]) == 0
     finally:
         reg.gh = original_gh
 
     assert not any(
         call[:2] in {("issue", "create"), ("label", "create")} for call in calls
+    )
+
+
+def test_partial_retry_requires_initial_child_state_before_any_write() -> None:
+    """Without a registered epic, reusable children must remain at intake."""
+    m4 = next(m for m in _load() if m.id == "M4")
+    issues_by_repo, _ = _canonical_child_inventory(m4)
+    first = m4.children[0]
+    first_entry = next(
+        entry
+        for entry in issues_by_repo[first.repo]
+        if entry["title"] == first.subject
+    )
+    first_entry["labels"] = [{"name": "state:plan-go"}]
+
+    _assert_apply_rejected_before_write(m4, issues_by_repo, "unsafe state labels")
+
+    closed_issues, _ = _canonical_child_inventory(m4)
+    closed_entry = next(
+        entry
+        for entry in closed_issues[first.repo]
+        if entry["title"] == first.subject
+    )
+    closed_entry["state"] = "CLOSED"
+    _assert_apply_rejected_before_write(m4, closed_issues, "is not open")
+
+
+def test_registered_child_lifecycle_matches_pinned_hephaestus_contract() -> None:
+    """Issue plan states allow optional skip but never PR verdict states."""
+    milestone = _load()[0]
+    child = milestone.children[0]
+
+    def entry(labels):
+        return {
+            "number": 42,
+            "title": child.subject,
+            "state": "CLOSED",
+            "body": reg.render_child_body(milestone, child),
+            "labels": [{"name": label} for label in labels],
+        }
+
+    plan_states = (
+        reg.NEEDS_PLAN_LABEL,
+        "state:plan-go",
+        "state:plan-no-go",
+        "state:plan-blocked",
+    )
+    for plan_state in plan_states:
+        assert reg.existing_child_issue(
+            milestone,
+            child,
+            [entry([plan_state])],
+            require_initial_state=False,
+        ) == 42
+        assert reg.existing_child_issue(
+            milestone,
+            child,
+            [entry([plan_state, "state:skip"])],
+            require_initial_state=False,
+        ) == 42
+
+    _assert_all_rejected(
+        (
+            (
+                lambda: reg.existing_child_issue(
+                    milestone,
+                    child,
+                    [entry(["state:implementation-go"])],
+                    require_initial_state=False,
+                ),
+                "PR-only implementation-go on an issue",
+            ),
+            (
+                lambda: reg.existing_child_issue(
+                    milestone,
+                    child,
+                    [entry(["state:implementation-no-go"])],
+                    require_initial_state=False,
+                ),
+                "PR-only implementation-no-go on an issue",
+            ),
+            (
+                lambda: reg.existing_child_issue(
+                    milestone,
+                    child,
+                    [entry(["state:skip"])],
+                    require_initial_state=False,
+                ),
+                "skip without one issue plan state",
+            ),
+            (
+                lambda: reg.existing_child_issue(
+                    milestone,
+                    child,
+                    [entry([reg.NEEDS_PLAN_LABEL, "state:plan-go"])],
+                    require_initial_state=False,
+                ),
+                "two mutually exclusive issue plan states",
+            ),
+        )
     )
 
 
@@ -386,10 +626,172 @@ def test_child_reconciliation_fails_closed_on_ambiguous_identity() -> None:
     )
 
 
+def test_reconciliation_rejects_body_drift_with_current_markers() -> None:
+    """A copied source marker must not authenticate changed generated content."""
+    milestones = _load()
+    milestone = milestones[0]
+    child = milestone.children[0]
+    canonical_child = reg.render_child_body(milestone, child)
+    altered_child = canonical_child.replace(
+        child.description, "ATTACKER CONTROLLED BODY"
+    )
+    child_entry = {
+        "number": 42,
+        "title": child.subject,
+        "state": "OPEN",
+        "body": altered_child,
+        "labels": [{"name": reg.NEEDS_PLAN_LABEL}],
+    }
+    numbers = {
+        candidate.id: index + 100
+        for index, candidate in enumerate(milestone.children)
+    }
+    canonical_epic = reg.render_epic_body(milestone, numbers)
+    first_number = numbers[milestone.children[0].id]
+    changed_epic_bodies = {
+        "lowercase checked canonical row": canonical_epic.replace(
+            f"- [ ] #{first_number}", f"- [x] #{first_number}", 1
+        ),
+        "uppercase checked canonical row": canonical_epic.replace(
+            f"- [ ] #{first_number}", f"- [X] #{first_number}", 1
+        ),
+        "injected unchecked row": canonical_epic.replace(
+            "## Tasks", "## Tasks\n- [ ] #999999"
+        ),
+        "injected checked row": canonical_epic.replace(
+            "## Tasks", "## Tasks\n- [x] #999999"
+        ),
+    }
+    cases = [
+        (
+            lambda: reg.existing_child_issue(milestone, child, [child_entry]),
+            "changed child body retaining both current markers",
+        )
+    ]
+    for context, body in changed_epic_bodies.items():
+        epic_entry = {
+            "number": 11,
+            "title": milestone.title,
+            "state": "OPEN",
+            "body": body,
+            "labels": [{"name": reg.EPIC_LABEL}],
+        }
+        cases.append(
+            (
+                lambda entry=epic_entry: reg.existing_open_epic(
+                    milestone, [entry], numbers
+                ),
+                context,
+            )
+        )
+    _assert_all_rejected(cases)
+
+
+def test_reconciliation_rejects_unmarked_same_title_alongside_marker() -> None:
+    """One marker-bound issue must not hide a second ambiguous title match."""
+    milestone = _load()[0]
+    child = milestone.children[0]
+    child_entries = [
+        {
+            "number": 42,
+            "title": child.subject,
+            "state": "OPEN",
+            "body": reg.render_child_body(milestone, child),
+            "labels": [{"name": reg.NEEDS_PLAN_LABEL}],
+        },
+        {
+            "number": 43,
+            "title": child.subject,
+            "state": "OPEN",
+            "body": "unmarked duplicate",
+            "labels": [],
+        },
+    ]
+
+    numbers = {
+        candidate.id: index + 100
+        for index, candidate in enumerate(milestone.children)
+    }
+    epic_entries = [
+        {
+            "number": 11,
+            "title": milestone.title,
+            "state": "OPEN",
+            "body": reg.render_epic_body(milestone, numbers),
+            "labels": [{"name": reg.EPIC_LABEL}],
+        },
+        {
+            "number": 12,
+            "title": milestone.title,
+            "state": "OPEN",
+            "body": "unmarked duplicate",
+            "labels": [],
+        },
+    ]
+
+    cases = (
+        (
+            lambda: reg.existing_child_issue(milestone, child, child_entries),
+            "marked child plus unmarked same-title child",
+        ),
+        (
+            lambda: reg.existing_open_epic(milestone, epic_entries, numbers),
+            "marked epic plus unmarked same-title epic",
+        ),
+    )
+    _assert_all_rejected(cases)
+
+
+def test_manual_gate_requires_dedicated_non_state_label() -> None:
+    """Public marker prose cannot substitute for repository-controlled metadata."""
+    milestone = next(candidate for candidate in _load() if candidate.id == "M4")
+    gate = next(child for child in milestone.children if child.manual)
+    numbers = {
+        child.id: index + 100 for index, child in enumerate(milestone.children)
+    }
+    body = reg.render_child_body(milestone, gate, numbers)
+
+    def entry(labels):
+        return {
+            "number": 44,
+            "title": gate.subject,
+            "state": "OPEN",
+            "body": body,
+            "labels": [{"name": label} for label in labels],
+        }
+
+    assert reg.OPERATOR_GATE_LABEL == EXPECTED_MANUAL_GATE_LABEL
+    assert reg.existing_child_issue(
+        milestone, gate, [entry([EXPECTED_MANUAL_GATE_LABEL])], numbers
+    ) == 44
+    _assert_all_rejected(
+        (
+            (
+                lambda: reg.existing_child_issue(
+                    milestone, gate, [entry([])], numbers
+                ),
+                "unlabeled manual-gate spoof",
+            ),
+            (
+                lambda: reg.existing_child_issue(
+                    milestone,
+                    gate,
+                    [entry([EXPECTED_MANUAL_GATE_LABEL, reg.NEEDS_PLAN_LABEL])],
+                    numbers,
+                ),
+                "manual gate carrying an automatic state label",
+            ),
+        )
+    )
+
+
 def test_epic_reconciliation_requires_current_source_and_tracking_label() -> None:
     milestone = _load()[0]
     identity = reg.epic_identity_marker(milestone)
     current = reg.epic_source_marker(milestone)
+    numbers = {
+        child.id: index + 100 for index, child in enumerate(milestone.children)
+    }
 
     assert reg.existing_open_epic(
         milestone,
@@ -398,10 +800,11 @@ def test_epic_reconciliation_requires_current_source_and_tracking_label() -> Non
                 "number": 9,
                 "title": milestone.title,
                 "state": "OPEN",
-                "body": f"{identity}\n{current}",
+                "body": reg.render_epic_body(milestone, numbers),
                 "labels": [{"name": reg.EPIC_LABEL}],
             }
         ],
+        numbers,
     ) == 9
 
     for body, labels, message in (
@@ -420,6 +823,7 @@ def test_epic_reconciliation_requires_current_source_and_tracking_label() -> Non
                         "labels": labels,
                     }
                 ],
+                numbers,
             )
         except RuntimeError as exc:
             assert message in str(exc)
@@ -493,7 +897,15 @@ def main() -> int:
         test_label_ensure_preserves_existing_metadata_and_propagates_failures,
         test_apply_plan_reuses_children_uses_title_and_holds_manual_gate,
         test_apply_plan_rejects_unsafe_manual_retry_before_any_write,
+        test_apply_plan_rejects_unlabeled_gate_before_any_write,
+        test_existing_epic_does_not_bypass_child_preflight,
+        test_existing_epic_allows_canonical_child_lifecycle_progress,
+        test_partial_retry_requires_initial_child_state_before_any_write,
+        test_registered_child_lifecycle_matches_pinned_hephaestus_contract,
         test_child_reconciliation_fails_closed_on_ambiguous_identity,
+        test_reconciliation_rejects_body_drift_with_current_markers,
+        test_reconciliation_rejects_unmarked_same_title_alongside_marker,
+        test_manual_gate_requires_dedicated_non_state_label,
         test_epic_reconciliation_requires_current_source_and_tracking_label,
         test_validate_rejects_broken_payloads,
         test_rendering_requires_known_numbers,

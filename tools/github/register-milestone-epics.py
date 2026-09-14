@@ -35,10 +35,22 @@ ORG = "HomericIntelligence"
 PAYLOAD_DIR = Path(__file__).resolve().parent / "milestone-epics.d"
 EPIC_LABEL = "agamemnon-epic"
 NEEDS_PLAN_LABEL = "state:needs-plan"
+ISSUE_SKIP_LABEL = "state:skip"
+OPERATOR_GATE_LABEL = "agamemnon-operator-gate"
 EPIC_LABEL_DESCRIPTION = "HMAS epic tracked by Agamemnon"
 EPIC_LABEL_COLOR = "0E8A16"
 NEEDS_PLAN_LABEL_DESCRIPTION = "Awaiting an advise-gated plan"
 NEEDS_PLAN_LABEL_COLOR = "FBCA04"
+OPERATOR_GATE_LABEL_DESCRIPTION = "Operator-held milestone completion gate"
+OPERATOR_GATE_LABEL_COLOR = "5319E7"
+ISSUE_PLAN_STATE_LABELS = frozenset(
+    {
+        NEEDS_PLAN_LABEL,
+        "state:plan-go",
+        "state:plan-no-go",
+        "state:plan-blocked",
+    }
+)
 
 KNOWN_REPOS = (
     "Odysseus",
@@ -480,85 +492,151 @@ def issue_label_names(entry: dict[str, object]) -> set[str]:
     return names
 
 
-def existing_open_epic(
-    milestone: Milestone, entries: list[dict[str, object]]
-) -> int | None:
-    """Return one open marker-bound epic, failing closed on identity drift."""
-    marker = epic_identity_marker(milestone)
-    matches = [entry for entry in entries if marker in str(entry["body"] or "")]
-    if len(matches) > 1:
+def _unique_issue_candidate(
+    entries: list[dict[str, object]],
+    *,
+    title: str,
+    marker: str,
+    identity: str,
+    repo: str,
+) -> dict[str, object] | None:
+    """Find one marker-and-title candidate without treating public text as trust."""
+    marker_matches = [
+        entry
+        for entry in entries
+        if marker in str(entry.get("body") or "").splitlines()
+    ]
+    title_matches = [entry for entry in entries if entry.get("title") == title]
+    if len(marker_matches) > 1:
         raise RuntimeError(
-            f"{milestone.id}: multiple marker-bound epics exist in "
-            f"{milestone.epic_home}"
+            f"{identity}: multiple marker-bound issues exist in {repo}"
         )
-    if not matches:
-        same_title = [entry for entry in entries if entry["title"] == milestone.title]
-        if same_title:
+    if not marker_matches:
+        if title_matches:
             raise RuntimeError(
-                f"{milestone.id}: same-title epic without stable marker exists in "
-                f"{milestone.epic_home}; operator reconciliation required"
+                f"{identity}: same-title issue without stable marker exists in "
+                f"{repo}; operator reconciliation required"
             )
         return None
-    match = matches[0]
-    if match["title"] != milestone.title:
+
+    match = marker_matches[0]
+    if match.get("title") != title:
+        raise RuntimeError(f"{identity}: marker-bound issue title drift in {repo}")
+    match_number = match.get("number")
+    if any(candidate.get("number") != match_number for candidate in title_matches):
         raise RuntimeError(
-            f"{milestone.id}: marker-bound epic title drift in {milestone.epic_home}"
+            f"{identity}: marker-bound issue conflicts with another same-title "
+            f"issue in {repo}; operator reconciliation required"
         )
+    return match
+
+
+def existing_open_epic(
+    milestone: Milestone,
+    entries: list[dict[str, object]],
+    numbers: dict[str, int] | None = None,
+) -> int | None:
+    """Return one canonical open epic, failing closed on identity drift."""
+    match = _unique_issue_candidate(
+        entries,
+        title=milestone.title,
+        marker=epic_identity_marker(milestone),
+        identity=milestone.id,
+        repo=milestone.epic_home,
+    )
+    if match is None:
+        return None
     if str(match["state"]).upper() != "OPEN":
         raise RuntimeError(
             f"{milestone.id}: marker-bound epic #{match['number']} is not open"
-        )
-    if epic_source_marker(milestone) not in str(match["body"] or ""):
-        raise RuntimeError(
-            f"{milestone.id}: marker-bound epic source drift in "
-            f"{milestone.epic_home}"
         )
     if EPIC_LABEL not in issue_label_names(match):
         raise RuntimeError(
             f"{milestone.id}: marker-bound epic is missing {EPIC_LABEL!r}"
         )
+    try:
+        expected_body = render_epic_body(milestone, numbers or {})
+    except KeyError as exc:
+        raise RuntimeError(
+            f"{milestone.id}: marker-bound epic cannot be verified until every "
+            "child issue is reconciled"
+        ) from exc
+    if str(match.get("body") or "") != expected_body:
+        raise RuntimeError(
+            f"{milestone.id}: marker-bound epic source drift (canonical body "
+            "mismatch) in "
+            f"{milestone.epic_home}"
+        )
     return int(match["number"])
 
 
 def existing_child_issue(
-    milestone: Milestone, child: Child, entries: list[dict[str, object]]
+    milestone: Milestone,
+    child: Child,
+    entries: list[dict[str, object]],
+    numbers: dict[str, int] | None = None,
+    *,
+    require_initial_state: bool = True,
 ) -> int | None:
-    """Return a unique open marker-bound child, failing closed on drift."""
-    marker = child_identity_marker(child)
-    matches = [entry for entry in entries if marker in str(entry["body"] or "")]
-    if len(matches) > 1:
-        raise RuntimeError(
-            f"{child.id}: multiple marker-bound issues exist in {child.repo}"
-        )
-    if not matches:
-        same_title = [entry for entry in entries if entry["title"] == child.subject]
-        if same_title:
-            raise RuntimeError(
-                f"{child.id}: same-title issue without stable marker exists in "
-                f"{child.repo}; operator reconciliation required"
-            )
+    """Return one canonical child, optionally requiring creation-time state."""
+    match = _unique_issue_candidate(
+        entries,
+        title=child.subject,
+        marker=child_identity_marker(child),
+        identity=child.id,
+        repo=child.repo,
+    )
+    if match is None:
         return None
-    match = matches[0]
-    if match["title"] != child.subject:
+    try:
+        expected_body = render_child_body(milestone, child, numbers)
+    except (KeyError, ValueError) as exc:
         raise RuntimeError(
-            f"{child.id}: marker-bound issue title drift in {child.repo}"
+            f"{child.id}: marker-bound manual gate cannot be verified until "
+            "every prerequisite issue is reconciled"
+        ) from exc
+    if str(match.get("body") or "") != expected_body:
+        raise RuntimeError(
+            f"{child.id}: marker-bound issue source drift (canonical body "
+            f"mismatch) in {child.repo}"
         )
-    if str(match["state"]).upper() != "OPEN":
+    labels = issue_label_names(match)
+    state_labels = {label for label in labels if label.startswith("state:")}
+    issue_state = str(match.get("state") or "").upper()
+    if issue_state not in {"OPEN", "CLOSED"}:
+        raise RuntimeError(
+            f"{child.id}: marker-bound issue has invalid state {issue_state!r}"
+        )
+    if require_initial_state and issue_state != "OPEN":
         raise RuntimeError(
             f"{child.id}: marker-bound issue #{match['number']} is not open"
         )
-    if child_source_marker(milestone, child) not in str(match["body"] or ""):
-        raise RuntimeError(
-            f"{child.id}: marker-bound issue source drift in {child.repo}"
-        )
-    state_labels = {
-        label for label in issue_label_names(match) if label.startswith("state:")
-    }
-    expected_state_labels = set() if child.manual else {NEEDS_PLAN_LABEL}
+    if child.manual:
+        expected_state_labels: set[str] = set()
+    elif require_initial_state:
+        expected_state_labels = {NEEDS_PLAN_LABEL}
+    else:
+        expected_state_labels = state_labels
+        plan_state_labels = state_labels & ISSUE_PLAN_STATE_LABELS
+        allowed_lifecycle_labels = ISSUE_PLAN_STATE_LABELS | {ISSUE_SKIP_LABEL}
+        if (
+            len(plan_state_labels) != 1
+            or not state_labels <= allowed_lifecycle_labels
+        ):
+            raise RuntimeError(
+                f"{child.id}: marker-bound issue has unsafe lifecycle labels "
+                f"{sorted(state_labels)!r}; expected exactly one issue plan "
+                f"state and optional {ISSUE_SKIP_LABEL!r}"
+            )
     if state_labels != expected_state_labels:
         raise RuntimeError(
             f"{child.id}: marker-bound issue has unsafe state labels "
             f"{sorted(state_labels)!r}; expected {sorted(expected_state_labels)!r}"
+        )
+    if child.manual and OPERATOR_GATE_LABEL not in labels:
+        raise RuntimeError(
+            f"{child.id}: marker-bound manual gate is missing "
+            f"{OPERATOR_GATE_LABEL!r}"
         )
     return int(match["number"])
 
@@ -591,22 +669,44 @@ def apply_plan(milestones: list[Milestone]) -> int:
     """Create labels, children, and epics via retry-safe ``gh`` reconciliation."""
     created_epics: list[tuple[Milestone, str]] = []
 
-    # Pre-create BOTH labels in every repo touched by children or epic
-    # bodies, so `gh issue create --label ...` cannot fail mid-loop on a
-    # missing label after earlier children were already created.
+    # Load every issue and label inventory before any write. This lets the
+    # registrar reject ambiguous or untrusted reusable issues without adopting
+    # them through a later label mutation.
     repos = {m.epic_home for m in milestones}
     repos.update(child.repo for m in milestones for child in m.children)
     inventories = {repo: issue_inventory(repo) for repo in sorted(repos)}
     existing_labels = {repo: label_inventory(repo) for repo in sorted(repos)}
-    existing_epics = {
-        m.id: existing_open_epic(m, inventories[m.epic_home]) for m in milestones
-    }
-    existing_children = {
-        child.id: existing_child_issue(m, child, inventories[child.repo])
-        for m in milestones
-        if existing_epics[m.id] is None
-        for child in m.children
-    }
+    existing_children: dict[str, int | None] = {}
+    existing_numbers: dict[str, dict[str, int]] = {}
+    existing_epics: dict[str, int | None] = {}
+    for milestone in milestones:
+        numbers: dict[str, int] = {}
+        for child in issue_creation_order(milestone):
+            number = existing_child_issue(
+                milestone,
+                child,
+                inventories[child.repo],
+                numbers,
+                require_initial_state=False,
+            )
+            existing_children[child.id] = number
+            if number is not None:
+                numbers[child.id] = number
+        existing_numbers[milestone.id] = numbers
+        existing_epics[milestone.id] = existing_open_epic(
+            milestone, inventories[milestone.epic_home], numbers
+        )
+        if existing_epics[milestone.id] is None:
+            for child in issue_creation_order(milestone):
+                if existing_children[child.id] is None:
+                    continue
+                existing_child_issue(
+                    milestone,
+                    child,
+                    inventories[child.repo],
+                    numbers,
+                    require_initial_state=True,
+                )
 
     # Only mutate labels after every issue identity has been reconciled.
     for repo in sorted(repos):
@@ -618,16 +718,29 @@ def apply_plan(milestones: list[Milestone]) -> int:
             repo, NEEDS_PLAN_LABEL, NEEDS_PLAN_LABEL_DESCRIPTION,
             NEEDS_PLAN_LABEL_COLOR, existing_labels[repo],
         )
+    manual_repos = {
+        child.repo
+        for milestone in milestones
+        for child in milestone.children
+        if child.manual
+    }
+    for repo in sorted(manual_repos):
+        _ensure_label(
+            repo,
+            OPERATOR_GATE_LABEL,
+            OPERATOR_GATE_LABEL_DESCRIPTION,
+            OPERATOR_GATE_LABEL_COLOR,
+            existing_labels[repo],
+        )
 
     for m in milestones:
         if existing_epics[m.id] is not None:
             print(f"{m.id}: epic already registered in {m.epic_home}, skipping")
             continue
-        numbers: dict[str, int] = {}
+        numbers = dict(existing_numbers[m.id])
         for child in issue_creation_order(m):
             existing_child = existing_children[child.id]
             if existing_child is not None:
-                numbers[child.id] = existing_child
                 print(
                     f"{m.id}: reused {child.repo}#{existing_child} ({child.id})"
                 )
@@ -637,8 +750,8 @@ def apply_plan(milestones: list[Milestone]) -> int:
                 "--title", child.subject,
                 "--body", render_child_body(m, child, numbers),
             ]
-            if not child.manual:
-                create_args[4:4] = ["--label", NEEDS_PLAN_LABEL]
+            label = OPERATOR_GATE_LABEL if child.manual else NEEDS_PLAN_LABEL
+            create_args[4:4] = ["--label", label]
             url = gh(*create_args)
             numbers[child.id] = issue_number_from_url(url)
             print(f"{m.id}: created {child.repo}#{numbers[child.id]} ({child.id})")

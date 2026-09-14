@@ -11,24 +11,43 @@
 
 ## Context
 
-ADR-008 added TLS encryption to all NATS listeners (`server.conf` and `leaf.conf`), protecting
-message payloads in transit. However, both configs omit `verify` / `verify_and_map` on every TLS
-block, and neither config includes an `accounts {}` or `authorization {}` block. As a result:
+When this ADR was proposed, ADR-008 had added TLS encryption to all NATS
+listeners (`server.conf` and `leaf.conf`), which protected message payloads in
+transit. The hub configuration already used shared-token bootstrap
+authentication on its client, leafnode, and cluster listeners, and the
+outbound leaf remote supplied the leaf token. The leaf node's local client
+listener remained unauthenticated. TLS still omitted peer verification and
+identity mapping, and the configuration had no named accounts or
+subject-scoped permissions. The proposal addressed these risks in that earlier
+checked-in state:
 
-- Any process that can reach port 4222 over Tailscale can connect and pub/sub all `hi.*` subjects,
-  including agent commands and research results.
-- Any peer that can reach port 6222 can join the NATS cluster (`0.0.0.0:6222`, no auth).
-- Leaf nodes present no client certificate to the hub; any TLS connection from port 7422 is
-  accepted.
+- A holder of the shared client token could publish or subscribe across the
+  full `hi.*` subject space, including agent commands and research results.
+- Any process able to reach a leaf node's local client listener could connect
+  without authentication.
+- A holder of the shared cluster token could join the NATS cluster without a
+  distinct peer identity.
+- Leaf nodes used a shared token and did not present client certificates, so
+  the hub could not bind a connection to a unique leaf identity.
 
-Tailscale provides host-level isolation but is not a substitute for application-layer authentication
-— a single compromised host exposes the full mesh. Issue #175 identifies this as CRITICAL.
+Tailscale provides host-level isolation but is not a substitute for
+application-layer authentication. A single compromised host could otherwise
+expose the full mesh. Issue #175 identified that proposal-time condition as
+CRITICAL.
 
-No operator, NKey, or JWT scaffolding exists in the repository. ADR-008 already established a
-mutual-cert PKI under `/etc/nats/certs/` with `ca.pem` as the trust anchor. This ADR extends that
-PKI to enforce identity and least-privilege authorization using NATS's built-in `verify_and_map`
-mechanism. AID v0.2.0 (Ed25519 + scoped JWT) is the documented future path and is deferred to a
-subsequent ADR.
+The current checked-in `configs/nats/server.conf` and `configs/nats/leaf.conf`
+now include certificate verification, named accounts, subject permissions, and
+listener or route authentication. Those files define repository configuration;
+they do not prove the configuration deployed on any host. This ADR remains
+Proposed and does not itself establish current live state.
+
+Only commented operator, NKey, and JWT migration examples existed in that
+snapshot; there was no active operator/NKey/JWT configuration. ADR-008 had
+already established the checked-in TLS certificate/key and CA bundle path
+convention under `/etc/nats/certs/`. This ADR proposes extending that
+foundation to enforce identity and least-privilege authorization using NATS's
+built-in `verify_and_map` mechanism. AID v0.2.0 (Ed25519 + scoped JWT) is the
+documented future path and is deferred to a subsequent ADR.
 
 ## Decision
 
