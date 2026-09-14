@@ -3,10 +3,11 @@
 # check-hierarchy-sync.sh — Validate per-repo HMAS hierarchy copies against
 # the canonical set in provisioning/Myrmidons/agents/hierarchy/.
 #
-# Per ADR-020 §5 and Odysseus issue #467, Myrmidons is the GitOps source of
-# truth for the mesh-wide 6-level agent hierarchy. Repos that carry a copy of
-# the definitions (currently research/Odyssey/.claude/agents/) must stay in
-# identity-tuple sync with the canonical set. The identity tuple is:
+# This check and Odysseus issue #467 compare repository copies with the pinned
+# Myrmidons hierarchy. Proposed ADR-020 §5 records the target-state rationale.
+# Repositories that carry a copy of the definitions (currently
+# research/Odyssey/.claude/agents/) must stay in identity-tuple sync with that
+# checked-in set. The identity tuple is:
 #
 #   name, level, phase, tools, model, delegates_to, receives_from
 #

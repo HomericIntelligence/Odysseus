@@ -4,6 +4,10 @@
 
 **Extends:** [ADR 013](013-hmas-mesh-wire-contracts.md)
 
+> **Proposal status:** The distributed stages, hierarchy, gates, and rollout
+> below are desired state. Existing M0 artifacts are implementation evidence,
+> not acceptance or proof that the complete mesh is deployed.
+
 ---
 
 ## Context
@@ -17,7 +21,7 @@ pool on one host. All stage sequencing lives in memory
 invoked as local child processes; restart recovery works only because GitHub
 labels and comments are the durable journal.
 
-The rest of the ecosystem already assumes distribution. ADR-013 defined
+The rest of the ecosystem already assumes distribution. Proposed ADR-013 defines
 role-addressed dispatch (`hi.myrmidon.{domain}.{role}.task.{task_id}`),
 JetStream lease semantics, state-fact subjects, epic conventions, and a
 one-to-one mapping between Agamemnon's HMAS task states and the Hephaestus
@@ -166,17 +170,18 @@ both modes share labels and journal, so handoff is seamless.
 **Neutral:**
 - The single-device loop stays supported indefinitely; it is the same library
   with a different executor binding.
-- Legacy `e2e/claude-myrmidon.py` subjects remain deprecated; the new worker
-  is ADR-013-native and the old harness migrates or retires at M4.
+- The legacy harness remains live. Under this proposal it becomes eligible for
+  retirement only after exact-pin mesh parity and real M4 dogfood evidence.
 
-## Follow-up Notes (M0)
+## Follow-up Notes (M0 implementation artifact)
 
-Ratified by [M0-2](https://github.com/HomericIntelligence/Odysseus/issues/466)
-(`workflows/m0-contracts.yaml`): the stage-chaining fields added on top of the
-ADR-013 §3 pointer envelope, published as the versioned JSON Schema at
+[M0-2](https://github.com/HomericIntelligence/Odysseus/issues/466)
+produced stage-chaining fields on top of the ADR-013 §3 pointer envelope and
+published the versioned JSON Schema at
 [`configs/schemas/dispatch-envelope.hi-v1.schema.json`](../../configs/schemas/dispatch-envelope.hi-v1.schema.json).
-That file is **normative for all pipeline workers** from M1 onward; new contract
-versions get a new schema file, never an in-place edit.
+That implementation artifact does not ratify this Proposed ADR. The checked-in
+schema is the current interface authority for consumers; new contract versions
+get a new schema file rather than an in-place edit.
 
 ### Budget table → envelope counters
 
@@ -211,6 +216,7 @@ the same path (§3: bounded by the merge budget of 5; exhaustion → `state:skip
 
 - [ADR 013](013-hmas-mesh-wire-contracts.md) — wire contracts this ADR builds on
 - [ADR 016](016-split-hephaestus.md) — Hephaestus library vs Athena plugins split
-- [ADR 009](009-defer-multi-host-nomad-scheduling.md) — multi-host scheduling deferral
+- [Proposed ADR 021](021-defer-multi-host-nomad-scheduling.md) — multi-host
+  scheduling deferral
 - Odyssey hierarchy: `research/Odyssey/agents/hierarchy.md`
 - Hephaestus automation architecture: `shared/Hephaestus/docs/architecture.md`

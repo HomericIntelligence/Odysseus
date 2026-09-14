@@ -1,5 +1,5 @@
 # Milestone 2 — single host, multi-process per role.
-# Epic home: Odysseus (e2e harness lives here). See ADR-020 section 9.
+# Epic home: Odysseus (e2e harness lives here). See Proposed ADR-020 section 9.
 
 apiVersion: telemachy/v1
 metadata:

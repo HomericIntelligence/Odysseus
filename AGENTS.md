@@ -5,6 +5,12 @@
 > read this before taking any action. [CLAUDE.md](CLAUDE.md) is a pointer to
 > this file.
 
+Only ADRs whose recorded status is Accepted impose governance through their
+ADR status. Proposed ADRs describe candidate target architecture; checked-in
+code, schemas, configuration, and verified live state establish current
+behavior. Repository policies stated directly in this file remain binding on
+agents independently of any related proposal.
+
 ## Audience
 
 This document governs the following AI agent runtimes operating in Odysseus:
@@ -56,10 +62,20 @@ Odysseus/
 │   │   ├── 006-decouple-from-ai-maestro.md
 │   │   ├── 007-symlinks-over-submodules.md
 │   │   ├── 008-nats-tls-encryption.md
-│   │   ├── 009-defer-multi-host-nomad-scheduling.md
 │   │   ├── 009-nats-authentication.md
 │   │   ├── 010-nats-mtls-subject-scoped-auth.md
-│   │   └── 011-extract-python-orchestration-to-agamemnon.md
+│   │   ├── 011-extract-python-orchestration-to-agamemnon.md
+│   │   ├── 012-slo-sla-definitions.md
+│   │   ├── 013-hmas-mesh-wire-contracts.md
+│   │   ├── 014-runnable-evidence-for-metric-claims.md
+│   │   ├── 015-drop-project-prefix.md
+│   │   ├── 016-split-hephaestus.md
+│   │   ├── 017-uv-for-python-pixi-for-toolchains.md
+│   │   ├── 018-uv-ecosystem-wide.md
+│   │   ├── 019-lemonade-private-inference-lane.md
+│   │   ├── 020-mesh-distributed-hephaestus-loop.md
+│   │   ├── 021-defer-multi-host-nomad-scheduling.md
+│   │   └── 022-layered-provider-neutral-agent-instructions.md
 │   └── runbooks/
 │       ├── add-new-host.md
 │       ├── add-new-agent-type.md
@@ -201,8 +217,10 @@ The following actions are unconditionally prohibited:
 
 ## Evidence & Integrity Policy
 
-Per [ADR-014](docs/adr/014-runnable-evidence-for-metric-claims.md). This policy is
-binding on every agent (Nestor, Agamemnon, Myrmidon, and any host-side session).
+This repository policy is binding on every agent (Nestor, Agamemnon,
+Myrmidon, and any host-side session). It is documented alongside
+[Proposed ADR-014](docs/adr/014-runnable-evidence-for-metric-claims.md), but
+does not depend on that proposal being accepted.
 
 **The governing rule: a truthful failure is acceptable; invented success is not.**
 An agent that reports "the run did not complete in the available window" has

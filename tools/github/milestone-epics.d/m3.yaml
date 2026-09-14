@@ -1,8 +1,8 @@
-# Milestone M3 epic registration payload (issue #468, ADR-020 sections 7 and 9).
+# Milestone M3 epic registration payload (issue #468; Proposed ADR-020 context).
 # Consumed by tools/github/register-milestone-epics.py. Field names follow the
 # canonical workflow contract: subject / blocked_by (never title / depends_on).
 # Cross-repo children are filed in their owning repo and cross-referenced from
-# the epic body (ADR-020 section 6 per-repo epics; dispatch packets carry repo).
+# the epic body (design context: Proposed ADR-020 section 6).
 milestone: M3
 title: "M3 Epic: containerized pipeline domain (ADR-020)"
 epic_home: Myrmidons
@@ -11,7 +11,8 @@ home_rationale: >-
   The GitOps manifests and fleet definitions live in provisioning/Myrmidons;
   the repo that owns most of the milestone's work hosts the epic.
 ordering_note: >-
-  Follows M1 then M2 per the ADR-020 section 9 ladder.
+  Follows M1 then M2 in this checked-in rollout; Proposed ADR-020 section 9
+  records the design rationale.
 children:
   - id: M3.1
     repo: Myrmidons
@@ -66,8 +67,9 @@ children:
     repo: Agamemnon
     subject: Agamemnon payload-pointer verification
     description: >-
-      Verify Agamemnon dispatch packets stay pointer-only per ADR-013
-      section 6 (repo, issue, epic_key, branch, attempt, budget counters);
+      Verify Agamemnon dispatch packets satisfy this task's pointer-only
+      requirement (repo, issue, epic_key, branch, attempt, budget counters);
+      Proposed ADR-013 section 6 records the design rationale;
       workers read full task descriptions from GitHub at claim time.
     blocked_by: [M3.1]
   - id: M3.8
@@ -76,5 +78,5 @@ children:
     description: >-
       Compose T4 services wiring the containerized mesh and a justfile
       mesh-e2e recipe; exit criterion just mesh-e2e green with Argus panels
-      live (ADR-020 section 9 M3 exit).
+      live (this registry's M3 exit; Proposed ADR-020 section 9 is context).
     blocked_by: [M3.6]

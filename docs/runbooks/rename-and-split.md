@@ -125,8 +125,8 @@ repo's `main` branch that updates internal references to drop the prefix.
 per AGENTS.md, submodule working trees do not get edited from the meta-repo.
 
 ```text
-title: chore: drop the 'Project' prefix internally (@ADR-015)
-body:
+PR title: chore: drop the 'Project' prefix internally (@ADR-015)
+PR body:
   Closes #<tracking-issue>
 
   This repo was renamed from Project<X> to <X>. This PR updates internal
@@ -411,8 +411,9 @@ touch. Then:
 - Add the Athena row.
 - The "Project Agamemnon's REST API contract" line in *Canonical Workflow
   Field Names* → *"Agamemnon's REST API contract"*.
-- The Diagram: `ProjectFoo` boxes → `<Foo>`. Edges stay the same (subjects
-  unchanged per ADR-013).
+- The Diagram: `ProjectFoo` boxes → `<Foo>`. Edges stay the same; the current
+  subject schema remains unchanged. Proposed ADR-013 records its possible
+  evolution.
 - The "Remote-execution" pre-amble text uses bare names already; not
   affected.
 
@@ -496,8 +497,8 @@ show only the `<!-- ECOSYSTEM-CI-TABLE:START -->` block changing.
 - `docs/runbooks/*.md` — if they mention component names, update the
   prose, but no behavioural code.
 - `docs/ci-naming-convention.md` — names the CI categories, not repos.
-- `docs/nats-subjects.md` (if it exists) — wire protocol subject names
-  unchanged per ADR-013.
+- `docs/nats-subjects.md` (if it exists) — wire protocol subject names remain
+  unchanged; Proposed ADR-013 records their possible evolution.
 
 ### `.github/workflows/*`
 

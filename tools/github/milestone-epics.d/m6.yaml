@@ -1,8 +1,8 @@
-# Milestone M6 epic registration payload (issue #468, ADR-020 sections 7 and 9).
+# Milestone M6 epic registration payload (issue #468; Proposed ADR-020 context).
 # Consumed by tools/github/register-milestone-epics.py. Field names follow the
 # canonical workflow contract: subject / blocked_by (never title / depends_on).
 # Cross-repo children are filed in their owning repo and cross-referenced from
-# the epic body (ADR-020 section 6 per-repo epics; dispatch packets carry repo).
+# the epic body (design context: Proposed ADR-020 section 6).
 milestone: M6
 title: "M6 Epic: idea watcher + web interview (ADR-020)"
 epic_home: Odysseus
@@ -11,7 +11,8 @@ home_rationale: >-
   Odysseus is the user-facing hub (tools/odysseus-console.py, workflows/);
   the repo that owns most of the milestone's work hosts the epic.
 ordering_note: >-
-  Follows M4 per the ADR-020 section 9 ladder.
+  Follows M5 in this checked-in rollout; Proposed ADR-020 section 9 records
+  the design rationale.
 children:
   - id: M6.1
     repo: Odysseus
@@ -36,8 +37,8 @@ children:
     repo: Odysseus
     subject: Interview transcript persistence to intake issues
     description: >-
-      Every interview transcript lands on the intake issue for audit
-      (ADR-013 interview convention), from the web interview channel.
+      Every interview transcript lands on the intake issue for audit from the
+      web interview channel, as targeted by Proposed ADR-013.
     blocked_by: [M6.1]
   - id: M6.4
     repo: Odysseus

@@ -1,4 +1,4 @@
-# ADR 009: Defer Multi-Host Nomad Scheduling to a Future Phase
+# ADR 021: Defer Multi-Host Nomad Scheduling to a Future Phase
 
 **Status:** Proposed
 
@@ -21,13 +21,14 @@ as "planned for a future phase."
 A "planned" state with no durable tracker can go stale indefinitely. The prior
 attempts to track this work were GitHub issues that have since been closed
 (HomericIntelligence/Myrmidons#5 — "Document Nomad integration strategy", and
-Odysseus#115), so they no longer serve as a live record. This ADR provides a
-durable, append-only tracker for the deferral itself.
+Odysseus#115), so they no longer serve as a live record. If accepted, this ADR
+will provide a durable, append-only tracker for the deferral itself.
 
 ## Decision
 
-We **defer multi-host Nomad scheduling to a future phase** and record that
-deferral here as the canonical tracker.
+We propose continuing to **defer multi-host Nomad scheduling to a future
+phase**. If accepted, this ADR will become the canonical tracker for that
+deferral.
 
 Key points:
 
@@ -42,17 +43,19 @@ Key points:
   `bootstrap_expect=1` single-server config currently checked in), a
   Myrmidons-to-Nomad job submission path, and host-fleet placement logic. That
   work is not yet scheduled.
-- **How it is tracked:** This ADR is the canonical record. All "planned for a
-  future phase" references in `docs/architecture.md` link here. Because ADRs
-  are append-only and never auto-closed, this reference cannot go stale the
-  way a closed GitHub issue does. When the work begins, a new ADR documenting
-  the multi-host rollout will reference and supersede this one.
+- **How it is tracked:** While this ADR remains Proposed, it records the
+  proposal rather than binding current architecture. If accepted, it becomes
+  the canonical record. All "planned for a future phase" references in
+  `docs/architecture.md` link here. Because accepted ADRs are append-only and
+  never auto-closed, this reference cannot go stale the way a closed GitHub
+  issue does. When the work begins, a new ADR documenting the multi-host
+  rollout will reference and supersede this one.
 
 ## Consequences
 
 **Positive:**
-- The "planned" state in the architecture doc now has a durable, canonical
-  tracker that cannot be silently closed.
+- If accepted, the "planned" state in the architecture document gains a
+  durable, canonical tracker that cannot be silently closed.
 - The current single-host capability and the deferred multi-host capability
   are clearly distinguished for onboarding engineers and AI agents.
 - Future multi-host work has a documented starting point and supersession path.

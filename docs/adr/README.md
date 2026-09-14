@@ -14,19 +14,22 @@ choice, its context, decision rationale, and consequences.
 | [004](004-extend-not-replace-maestro.md) | Extend ai-maestro via APIs Rather Than Replacing Its Capabilities | Superseded | — | [ADR-006](006-decouple-from-ai-maestro.md) |
 | [005](005-nats-subject-schema.md) | NATS Subject Schema | Accepted | Subject examples in ADR 002 | — |
 | [006](006-decouple-from-ai-maestro.md) | Decouple HomericIntelligence from ai-maestro | Accepted | — | — |
-| [007](007-symlinks-over-submodules.md) | Replace Symlinks with Real Git Submodules | Proposed | — | — |
+| [007](007-symlinks-over-submodules.md) | Replace Symlinks with Real Git Submodules | Accepted | — | — |
 | [008](008-nats-tls-encryption.md) | Require TLS for All NATS Inter-Service Communication | Proposed | — | — |
-| [009](009-defer-multi-host-nomad-scheduling.md) | Defer Multi-Host Nomad Scheduling to a Future Phase | Proposed | — | — |
+| [009](009-nats-authentication.md) | Require Authentication for All NATS Connections | Proposed | — | — |
+| [010](010-nats-mtls-subject-scoped-auth.md) | NATS Mutual-TLS Authentication and Subject-Scoped Authorization | Proposed | — | — |
 | [011](011-extract-python-orchestration-to-agamemnon.md) | Extract Python Orchestration Layer from Keystone to ProjectAgamemnon | Accepted | — | — |
 | [012](012-slo-sla-definitions.md) | Define SLO/SLA Targets for the Agent Mesh | Proposed | — | — |
 | [013](013-hmas-mesh-wire-contracts.md) | HMAS Mesh Wire Contracts — Role-Addressed Dispatch, State Events, and Task Sizing | Proposed | — | — |
 | [014](014-runnable-evidence-for-metric-claims.md) | Runnable Evidence for Metric and Training-Run Claims | Proposed | — | — |
 | [015](015-drop-project-prefix.md) | Drop the `Project` Prefix Across the HomericIntelligence Ecosystem | Accepted | — | — |
 | [016](016-split-hephaestus.md) | Split `Hephaestus` — Library vs Agentic Plugins | Accepted | — | — |
-| [017](017-uv-for-python-pixi-for-toolchains.md) | uv for Pure-Python Repos, pixi Where a Conda Toolchain Is Required | Superseded | — | [ADR-018](018-uv-ecosystem-wide.md) |
-| [018](018-uv-ecosystem-wide.md) | uv Is the Ecosystem-Wide Standard — Toolchains via PyPI, apt, and the Mojo pip Package | Proposed | [ADR-017](017-uv-for-python-pixi-for-toolchains.md) | — |
+| [017](017-uv-for-python-pixi-for-toolchains.md) | uv for Pure-Python Repos, pixi Where a Conda Toolchain Is Required | Proposed | — | [Proposed ADR-018](018-uv-ecosystem-wide.md) |
+| [018](018-uv-ecosystem-wide.md) | uv Is the Ecosystem-Wide Standard — Toolchains via PyPI, apt, and the Mojo pip Package | Proposed | [Proposed ADR-017](017-uv-for-python-pixi-for-toolchains.md) | — |
 | [019](019-lemonade-private-inference-lane.md) | Lemonade as the Private Inference Lane for the Mesh | Proposed | — | — |
 | [020](020-mesh-distributed-hephaestus-loop.md) | Distribute the Hephaestus Automation Loop Across the Mesh | Proposed | — | — |
+| [021](021-defer-multi-host-nomad-scheduling.md) | Defer Multi-Host Nomad Scheduling to a Future Phase | Proposed | — | — |
+| [022](022-layered-provider-neutral-agent-instructions.md) | Layered, Provider-Neutral Agent Instructions | Proposed | — | — |
 
 ## How to Create a New ADR
 

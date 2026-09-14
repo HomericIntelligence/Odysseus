@@ -2,10 +2,12 @@
 
 Deploy and maintain the SLO alert rules for the HomericIntelligence agent mesh
 in Argus. This runbook covers the Tier 1 (measurable today) alert rules
-only — Tier 2 rules are blocked until instrumentation lands per ADR-012.
+only. The checked-in rules and emitted metrics define current alert behavior.
+Tier 2 rules are blocked until instrumentation lands.
 
-See [ADR-012](../adr/012-slo-sla-definitions.md) for the full SLO definitions,
-the measurable-vs-instrumentation-required split, and the review cadence.
+See [Proposed ADR-012](../adr/012-slo-sla-definitions.md) for candidate SLO
+definitions, the measurable-vs-instrumentation-required split, and the review
+cadence. The proposal is not an accepted or deployed SLO commitment.
 
 ---
 
@@ -266,9 +268,10 @@ is confirmed emitted by the exporter):
 2. Uncomment the corresponding alert rule block in `slo_alerts.yml`.
 3. Validate with `promtool check rules rules/slo_alerts.yml`.
 4. Reload Prometheus (Step 4).
-5. Update [ADR-012](../adr/012-slo-sla-definitions.md) with a note that the
-   SLI has moved from Tier 2 to Tier 1 (or create a superseding ADR if the
-   numeric target changes).
+5. Record that the SLI moved from Tier 2 to Tier 1. If
+   [ADR-012](../adr/012-slo-sla-definitions.md) is still Proposed, update it
+   through review; if it has been Accepted, leave it unchanged and use a new
+   ADR or operational record.
 
 ---
 
@@ -298,7 +301,7 @@ curl -s http://localhost:9090/api/v1/rules | python3 -c \
 
 ## See also
 
-- [ADR-012](../adr/012-slo-sla-definitions.md) — SLO/SLA definitions,
+- [Proposed ADR-012](../adr/012-slo-sla-definitions.md) — candidate SLO/SLA definitions,
   metric reconciliation, and review cadence
 - `infrastructure/Argus/rules/agent-alerts.yml` — existing alert style
   reference

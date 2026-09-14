@@ -3,8 +3,9 @@
 
 Watch mode (default) subscribes to all hi.* NATS subjects and prints events as
 they arrive, providing real-time visibility into the distributed agent mesh.
-Interview questions published by research myrmidons (ADR-013 §5) are surfaced
-as interactive prompts; answers are published back on the answer subject.
+Interview questions published by research myrmidons are surfaced as interactive
+prompts; Proposed ADR-013 §5 records the design context. Answers are published
+back on the answer subject.
 
 Submit mode registers a new high-level task with Nestor
 (POST /v1/research) and then drops into watch mode so the interview can begin.
@@ -53,8 +54,9 @@ DEFAULT_SUBJECTS = [
     "hi.agents.>",
     "hi.logs.>",
     "hi.research.>",
-    # Role-addressed dispatch queues (hi.myrmidon.{domain}.{role}.task.>)
-    # are documented in ADR-013, resolving the issue #211 removal.
+    # Role-addressed dispatch queues (hi.myrmidon.{domain}.{role}.task.>) are
+    # covered by this subscription; Proposed ADR-013 records their design
+    # context.
     "hi.myrmidon.>",
 ]
 
@@ -146,7 +148,7 @@ def clear_inline():
 
 
 def envelope(**fields) -> dict:
-    """ADR-013 §3 payload envelope."""
+    """Build the payload envelope described by Proposed ADR-013 §3."""
     return {
         "schema": "hi/v1",
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -176,8 +178,9 @@ class InterviewPanel:
 
     Questions arrive on hi.pipeline.interview.{intake_id}.question.{q_id};
     answers go out on hi.pipeline.interview.{intake_id}.answer.{q_id}
-    (ADR-013 §5). Questions are queued so events keep streaming while the
-    user types; one question is prompted at a time.
+    Proposed ADR-013 §5 records the design context. Questions are queued so
+    events keep streaming while the user types; one question is prompted at a
+    time.
     """
 
     def __init__(self, nc):

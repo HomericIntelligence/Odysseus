@@ -151,6 +151,10 @@ NATS JetStream is the cross-host event bus. Configure it on the primary host:
 
 ### 4a. NATS Authentication Prerequisites (Required Before Starting NATS)
 
+ADRs 008–010 are Proposed at this revision. The checked-in NATS configuration
+and a live-state readback, not proposal status, determine what the deployed
+server enforces. The ADR links below provide design context for these steps.
+
 The canonical NATS config enforces mutual TLS (`verify_and_map`) and subject-scoped account
 authorization (ADR-010). **All clients must present a role certificate and connect over `tls://`
 before you start NATS with the updated config** — enforcement is fail-closed.
@@ -483,8 +487,9 @@ Before running in production, complete these additional steps:
 Nomad ACLs are already enabled in `configs/nomad/server.hcl` and `client.hcl`
 (issue #196) — ensure you completed the `nomad acl bootstrap` in Step 5c.
 
-NATS TLS encryption (ADR-008) and mutual-TLS authentication (ADR-010) are enabled by default
-in `configs/nats/server.conf`. Ensure role certs are provisioned and all clients are configured
+NATS TLS encryption and mutual-TLS authentication are enabled in the checked-in
+`configs/nats/server.conf`; ADRs 008 and 010 remain Proposed design context.
+Ensure role certs are provisioned and all clients are configured
 before starting NATS (see step 4a and `docs/runbooks/enable-nats-auth.md`). For Nomad TLS,
 update `configs/nomad/server.hcl` to add TLS certificates.
 

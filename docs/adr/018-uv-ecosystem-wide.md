@@ -2,13 +2,18 @@
 
 **Status:** Proposed
 
-**Supersedes:** [ADR 017](017-uv-for-python-pixi-for-toolchains.md)
+**Would supersede if accepted:** [Proposed ADR 017](017-uv-for-python-pixi-for-toolchains.md)
+
+> **Proposal status:** The standard, migration, and removal language below is
+> desired state only. Repository manifests and verified commands remain the
+> authority for each repository's current toolchain until this ADR is accepted
+> and its migrations land.
 
 ---
 
 ## Context
 
-[ADR 017](017-uv-for-python-pixi-for-toolchains.md) adopted a **split** standard:
+[ADR 017](017-uv-for-python-pixi-for-toolchains.md) proposed a **split** standard:
 uv for the three pure-Python repos (Scylla, Hephaestus, Mnemosyne) and pixi for
 everyone else, on the premise that uv "physically cannot" install the conda
 toolchains the C++/Mojo/CLI repos depend on — the Mojo compiler, `cmake`,
@@ -117,6 +122,7 @@ pixi is removed from every HomericIntelligence repository.**
   `uv pip install mojo` / `uv add mojo` (v0.25.6+)
 - [mojo · PyPI](https://pypi.org/project/mojo/)
 - [uv documentation](https://docs.astral.sh/uv/)
-- ADR 017 (superseded): uv for Pure-Python Repos, pixi Where a Conda Toolchain Is Required
+- Proposed ADR 017 (would be superseded if this proposal is accepted): uv for
+  Pure-Python Repos, pixi Where a Conda Toolchain Is Required
 - Reference migrations: Hephaestus (PR #2236), Scylla (PR #2054), Mnemosyne (PR #3127)
 - Follow-up migration PRs: Odyssey, Agamemnon, Nestor, Keystone, Charybdis, Myrmidons

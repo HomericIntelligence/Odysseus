@@ -257,9 +257,9 @@ find . -type f \
     -print0 | xargs -r -0 sed -i "${SED_ARGS[@]}"
 
 # CHANGELOG walk-back: rewrite only the *forward-looking* compare/release
-# URL footnotes at the bottom of the file. Historical entries in the body
-# stay verbatim per ADR-014 (evidence integrity). Match the conventional
-# filenames used across the ecosystem.
+# URL footnotes at the bottom of the file. The preservation rule in
+# docs/runbooks/rename-and-split.md keeps historical entries in the body
+# verbatim. Match the conventional filenames used across the ecosystem.
 for cf in CHANGELOG.md CHANGELOG.rst HISTORY.md HISTORY.rst NEWS.md RELEASES.md; do
     if [[ -f "$cf" ]]; then
         sed -i \
@@ -430,8 +430,8 @@ $PR_DIFF_FILES
 
 - Container names (\`${KEBAB_NEW}-exporter\`, \`${KEBAB_NEW}-loki\`, ...) where already
   lowercase — preserved (they already matched the bare form).
-- \`CHANGELOG.md\` historical entries — preserved verbatim per
-  [ADR-014](../Odysseus/blob/main/docs/adr/014-runnable-evidence-for-metric-claims.md) (evidence integrity).
+- \`CHANGELOG.md\` historical entries — preserved verbatim under the
+  [rename runbook's historical-record rule](../Odysseus/blob/main/docs/runbooks/rename-and-split.md).
 - Branch protection / rulesets / secrets / environments — apply manually on
   the renamed repo (see Phase 6).
 

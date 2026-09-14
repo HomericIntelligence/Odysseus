@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Lane model loader for the ADR-020 automation lanes (issue #465).
+"""Lane-model loader for the current pins (issue #465).
+
+Proposed ADR-020 records the target-state automation-lane design.
 
 Reads the canonical pin file ``configs/lane-models.yaml`` and either
 validates + prints it as a markdown table (default / ``--table``) or emits

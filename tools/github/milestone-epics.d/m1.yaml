@@ -1,4 +1,4 @@
-# Milestone M1 epic registration payload (issue #468, ADR-020 sections 7 and 9).
+# Milestone M1 epic registration payload (issue #468; Proposed ADR-020 context).
 # Consumed by tools/github/register-milestone-epics.py. Field names follow the
 # canonical workflow contract: subject / blocked_by (never title / depends_on).
 milestone: M1
@@ -7,16 +7,18 @@ epic_home: Hephaestus
 workflow: workflows/m1-hephaestus-keystone.yaml
 home_rationale: >-
   The mesh worker library lives in shared/Hephaestus; the repo that owns most
-  of the milestone's work hosts the epic (ADR-020 section 6).
+  of the milestone's work hosts the epic (design context: Proposed ADR-020 section 6).
 ordering_note: >-
-  M1 is the first milestone of the ADR-020 section 9 rollout ladder.
+  M1 is first in this checked-in rollout; Proposed ADR-020 section 9 records
+  the design rationale.
 children:
   - id: M1.1
     repo: Hephaestus
     subject: Requirements and invariants for the mesh worker package
     description: >-
-      Capture: JetStream durable pull consumer per ADR-013 section 1
-      (AckExplicit, AckWait 900s, MaxDeliver 3, heartbeat every 5 min,
+      Capture the JetStream durable-pull-consumer target described by Proposed
+      ADR-013 section 1 (AckExplicit, AckWait 900s, MaxDeliver 3, heartbeat
+      every 5 min,
       fetch(1)); envelope hi/v1 validation; idempotency preamble on attempt
       greater than 1; exclusive state-label mutation with readback; facts
       published to hi.tasks verbs with agent_id and exec_host; logs to
@@ -46,24 +48,25 @@ children:
     subject: Next-dispatch publisher
     description: >-
       Write the next stage's state:* label exclusively (with readback) and
-      publish the next stage pointer packet per ADR-013 section 6; packets
-      stay pointers, GitHub stays the sole journal.
+      publish the next-stage pointer packet under this task's pointer-only
+      requirement; Proposed ADR-013 section 6 records the design rationale.
     blocked_by: [M1.1]
   - id: M1.5
     repo: Hephaestus
     subject: Merger investigation module extracting merge_wait proof logic
     description: >-
       Extract the merge_wait proof logic so it is shared by both the
-      single-device loop and the mesh merger verifier (ADR-020 section 3).
-      No behavior change to the existing single-device path.
+      single-device loop and the mesh merger verifier (design context:
+      Proposed ADR-020 section 3). No behavior change to the existing
+      single-device path.
     blocked_by: [M1.1]
   - id: M1.6
     repo: Hephaestus
     subject: Seeder CLI hephaestus-mesh-seed
     description: >-
       Label rescan/re-publish CLI that seeds dispatches from state:needs-plan
-      issues; must never double-dispatch an in-flight lease (durable consumer
-      semantics from ADR-013 section 1).
+      issues; must never double-dispatch an in-flight lease (target consumer
+      semantics described by Proposed ADR-013 section 1).
     blocked_by: [M1.1]
   - id: M1.7
     repo: Hephaestus
@@ -77,6 +80,6 @@ children:
     subject: DRY_RUN end-to-end test across the full label ladder
     description: >-
       Canned-response DRY_RUN test walking an issue needs-plan to merged in
-      one multi-threaded process against a local NATS (M1 exit criterion,
-      ADR-020 section 9).
+      one multi-threaded process against a local NATS (this registry's M1 exit
+      criterion; Proposed ADR-020 section 9 supplies design context).
     blocked_by: [M1.2, M1.3, M1.4, M1.5, M1.6, M1.7]

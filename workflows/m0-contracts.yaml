@@ -18,9 +18,9 @@ apiVersion: telemachy/v1
 metadata:
   name: m0-mesh-loop-contracts
   description: >-
-    Milestone 0 — contracts: ADR-020 ratification, envelope/budget freeze,
-    lane-model pinning, Odyssey-hierarchy adoption, and authoring of the
-    M1-M6 milestone workflows.
+    Milestone 0 — contracts: implement the envelope and budget design recorded
+    by Proposed ADR-020, freeze lane-model pins, adopt the Odyssey hierarchy,
+    and author the M1-M6 milestone workflows.
   adr: "020"
   epic_home: Odysseus
   lane_models: configs/lane-models.yaml
@@ -44,8 +44,9 @@ teams:
         assign_to: loop-planner
       - subject: Freeze dispatch envelope and budget-carriage fields
         description: >-
-          Ratify the ADR-013 pointer envelope additions for stage chaining:
-          stage, attempt, budget counters, verdict, remediation payload.
+          Freeze the pointer-envelope additions described by Proposed ADR-013
+          for stage chaining: stage, attempt, budget counters, verdict, and
+          remediation payload.
           Publish as a versioned schema snippet referenced by all workers.
           blocked_by: lane pinning is independent; envelope freeze blocks
           M1 implementation issues.
@@ -64,9 +65,10 @@ teams:
         description: >-
           Run athena:advise (planning mode) before decomposing. Produce the
           per-repo epic breakdowns for milestones 1 through 6 with child
-          issues sized to single dispatchable tasks. Requirements, goals,
-          invariants, and research come from this workflow's sibling tasks
-          and ADR-020; the planner decides nothing without the advise gate.
+          issues sized to single dispatchable tasks. The approved task scope
+          and this workflow's sibling tasks supply requirements, goals,
+          invariants, and research; Proposed ADR-020 supplies target-state
+          context. The existing advise gate remains required.
         assign_to: loop-planner
         blocked_by:
           - Pin planning / implementation / review / mechanical lane model IDs
