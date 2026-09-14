@@ -11,7 +11,7 @@ home_rationale: >-
   Odysseus is the user-facing hub (tools/odysseus-console.py, workflows/);
   the repo that owns most of the milestone's work hosts the epic.
 ordering_note: >-
-  Follows M4 in this checked-in rollout; Proposed ADR-020 section 9 records
+  Follows M5 in this checked-in rollout; Proposed ADR-020 section 9 records
   the design rationale.
 children:
   - id: M6.1

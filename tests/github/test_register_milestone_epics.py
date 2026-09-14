@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Behavior assertions for the M1-M6 epic registration payloads (issue #468).
 
-Runs under pytest (``uv run python -m pytest tests/github/``) and also as a
-plain script (``python3 tests/github/register-milestone-epics.test.py``) so it
-works in environments without pytest, matching the repo's self-test pattern.
+Runs under pytest and also through ``just test-milestone-registry``, which
+uses the plain-script entry point so the checks work without pytest.
 """
 
 from __future__ import annotations
@@ -54,11 +53,11 @@ def test_every_child_is_single_dispatchable_and_labeled_repo_valid() -> None:
         for child in m.children:
             total += 1
             assert child.repo in reg.KNOWN_REPOS
-            # One dispatchable task: subject is a single line, description
-            # carries the transcribed requirements (never empty).
+            # One dispatchable task: subject is one line and the authored
+            # requirements are never empty.
             assert "\n" not in child.subject
             assert len(child.description) > 40
-    assert total == 40, f"expected 40 children across M1-M6, got {total}"
+    assert total == 41, f"expected 41 children across M1-M6, got {total}"
 
 
 def test_each_milestone_has_unblocked_requirements_child_first() -> None:
@@ -105,18 +104,43 @@ def test_epic_body_checklist_is_structurally_parseable() -> None:
         assert f"`{m.workflow}`" in body
 
 
-def test_child_body_transcribes_workflow_requirements() -> None:
+def test_child_body_identifies_task_source_and_planning_context() -> None:
     milestones = _load()
     m1 = next(m for m in milestones if m.id == "M1")
     req = m1.children[0]
     body = reg.render_child_body(m1, req)
     assert "AckExplicit" in body and "MaxDeliver 3" in body
+    assert "Current task source:" in body
+    assert "`tools/github/milestone-epics.d/m1.yaml`" in body
+    assert "Planning context:" in body
     assert "`workflows/m1-hephaestus-keystone.yaml`" in body
     assert "pointer-only" in body
     # Cross-repository children land in their owning repository.
     m3 = next(m for m in milestones if m.id == "M3")
     repos = {c.repo for c in m3.children}
     assert {"Myrmidons", "AchaeanFleet", "Agamemnon", "Odysseus"} <= repos
+
+
+def test_m4_has_dogfood_evidence_closure_after_rollout() -> None:
+    m4 = next(m for m in _load() if m.id == "M4")
+    closures = [child for child in m4.children if child.id == "M4.8"]
+    assert len(closures) == 1, "M4 needs one evidence-bearing closure child"
+    closure = closures[0]
+    assert closure.repo == "Odysseus"
+    assert m4.blocked_by[closure.id] == (
+        "M4.2",
+        "M4.3",
+        "M4.4",
+        "M4.5",
+        "M4.6",
+        "M4.7",
+    )
+
+
+def test_m6_follows_research_milestone() -> None:
+    m6 = next(m for m in _load() if m.id == "M6")
+    assert "M5" in m6.ordering_note
+    assert "Follows M4" not in m6.ordering_note
 
 
 def test_validate_rejects_broken_payloads() -> None:
@@ -167,7 +191,9 @@ def main() -> int:
         test_each_milestone_has_unblocked_requirements_child_first,
         test_dependency_edges_resolve_to_siblings_acyclically,
         test_epic_body_checklist_is_structurally_parseable,
-        test_child_body_transcribes_workflow_requirements,
+        test_child_body_identifies_task_source_and_planning_context,
+        test_m4_has_dogfood_evidence_closure_after_rollout,
+        test_m6_follows_research_milestone,
         test_validate_rejects_broken_payloads,
         test_rendering_requires_known_numbers,
     ]

@@ -40,7 +40,8 @@ teams:
           budget-exhaustion, merger-bounce dashboards; runbook
           operate-mesh-loop.md; documentation for the supported single-device
           fallback and explicit mode selection; first real backlog issue
-          selected as dogfood target.
+          selected as dogfood target; exact-pin mesh-only execution with
+          truthful terminal receipts after the rollout prerequisites pass.
         assign_to: loop-planner
         blocked_by:
           - Requirements and invariants for dogfooded operation

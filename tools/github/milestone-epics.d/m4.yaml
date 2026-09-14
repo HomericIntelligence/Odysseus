@@ -72,3 +72,14 @@ children:
       shared labels and journal; Proposed ADR-020 section 9 records the target
       fallback strategy.
     blocked_by: [M4.1]
+  - id: M4.8
+    repo: Odysseus
+    subject: Execute exact-pin mesh-only dogfood and record terminal evidence
+    description: >-
+      On the exact integrated pins, run one real HomericIntelligence backlog
+      issue through the mesh-only path. Verify routing, the three-heavy-worker
+      limit, timeouts, isolation, tool scopes, restart and retry behavior,
+      issue binding, and the branch and PR lifecycle. Record actual terminal
+      receipts or a truthful failure. This evidence must exist before any
+      separate legacy-harness retirement PR.
+    blocked_by: [M4.2, M4.3, M4.4, M4.5, M4.6, M4.7]

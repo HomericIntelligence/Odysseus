@@ -174,11 +174,12 @@ def validate(milestones: list[Milestone]) -> list[str]:
 
 
 def render_child_body(m: Milestone, c: Child) -> str:
-    """Render the body of a child issue from its transcribed description."""
+    """Render a child issue from the current milestone payload."""
+    payload = f"tools/github/milestone-epics.d/{m.id.lower()}.yaml"
     return (
-        f"Part of {m.id} ({m.title}) - the checked-in workflow defines this "
-        f"staged rollout; Proposed ADR-020 sections 7 and 9 provide context. "
-        f"Requirements are transcribed verbatim from `{m.workflow}` (#464).\n\n"
+        f"Part of {m.id} ({m.title}). Current task source: `{payload}`. "
+        f"Planning context: `{m.workflow}` (#464) and Proposed ADR-020 "
+        "sections 7 and 9.\n\n"
         f"{c.description}\n\n"
         "Sized as a single dispatchable task (~1 h active work). This task "
         "must preserve pointer-only dispatch; Proposed ADR-013 section 6 "
@@ -189,10 +190,11 @@ def render_child_body(m: Milestone, c: Child) -> str:
 
 def render_epic_body(m: Milestone, numbers: dict[str, int]) -> str:
     """Render an epic body with the current parseable checklist contract."""
+    payload = f"tools/github/milestone-epics.d/{m.id.lower()}.yaml"
     lines = [
         f"Epic tracking Milestone {m.id[1:]} of the mesh-distributed Hephaestus "
-        f"loop. Definitions: `{m.workflow}`. Proposed ADR-020 sections 7 and "
-        f"9 provide design context. "
+        f"loop. Current task source: `{payload}`. Planning context: "
+        f"`{m.workflow}` and Proposed ADR-020 sections 7 and 9. "
         f"{m.home_rationale}",
         "",
         f"Cross-milestone ordering: {m.ordering_note}",
