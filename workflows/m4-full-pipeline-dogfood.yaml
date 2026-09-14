@@ -40,8 +40,12 @@ teams:
           budget-exhaustion, merger-bounce dashboards; runbook
           operate-mesh-loop.md; documentation for the supported single-device
           fallback and explicit mode selection; first real backlog issue
-          selected as dogfood target; exact-pin mesh-only execution with
-          truthful terminal receipts after the rollout prerequisites pass.
+          selected as dogfood target; an operator-held completion gate that
+          verifies M4.2 through M4.7 at their merged, green, exact pins before
+          exact-pin mesh-only execution with truthful terminal receipts. A
+          missing prerequisite or failed run is recorded but keeps the gate,
+          M4, and legacy retirement blocked; only a successful mesh-only merge
+          closes M4.
         assign_to: loop-planner
         blocked_by:
           - Requirements and invariants for dogfooded operation

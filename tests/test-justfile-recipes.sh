@@ -25,5 +25,12 @@ for r in bootstrap status update-submodules apply-all hermes-start \
     fi
 done
 
+info "milestone registry recipe is executable"
+if just test-milestone-registry >/dev/null; then
+    pass "milestone registry behavior checks pass"
+else
+    fail "milestone registry behavior checks failed"
+fi
+
 summary
 exit_code   # e2e/lib/common.sh:41 -- returns non-zero if any fail

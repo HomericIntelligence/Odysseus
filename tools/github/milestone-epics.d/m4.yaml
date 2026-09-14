@@ -75,11 +75,18 @@ children:
   - id: M4.8
     repo: Odysseus
     subject: Execute exact-pin mesh-only dogfood and record terminal evidence
+    manual: true
+    requires_verified: [M4.2, M4.3, M4.4, M4.5, M4.6, M4.7]
+    completion_condition: successful_mesh_only_merge
+    failure_effect: keep_open
     description: >-
-      On the exact integrated pins, run one real HomericIntelligence backlog
-      issue through the mesh-only path. Verify routing, the three-heavy-worker
-      limit, timeouts, isolation, tool scopes, restart and retry behavior,
-      issue binding, and the branch and PR lifecycle. Record actual terminal
-      receipts or a truthful failure. This evidence must exist before any
-      separate legacy-harness retirement PR.
-    blocked_by: [M4.2, M4.3, M4.4, M4.5, M4.6, M4.7]
+      Hold this operator gate outside automatic mesh dispatch. First verify
+      M4.2 through M4.7: each owning PR has the required review and green CI,
+      and each merge or release SHA is present in the exact integrated
+      Odysseus pins. Record the approval and pin evidence. Then run one real
+      HomericIntelligence backlog issue through the mesh-only path and verify
+      routing, the three-heavy-worker limit, timeouts, isolation, tool scopes,
+      restart and retry behavior, issue binding, and the branch and PR
+      lifecycle. Record actual terminal receipts. A separate legacy-harness
+      retirement PR remains ineligible until this gate is complete.
+    blocked_by: []
