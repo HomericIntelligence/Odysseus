@@ -1,8 +1,8 @@
-# Milestone M5 epic registration payload (issue #468, ADR-020 sections 7 and 9).
+# Milestone M5 epic registration payload (issue #468; Proposed ADR-020 context).
 # Consumed by tools/github/register-milestone-epics.py. Field names follow the
 # canonical workflow contract: subject / blocked_by (never title / depends_on).
 # Cross-repo children are filed in their owning repo and cross-referenced from
-# the epic body (ADR-020 section 6 per-repo epics; dispatch packets carry repo).
+# the epic body (design context: Proposed ADR-020 section 6).
 milestone: M5
 title: "M5 Epic: research domain (ADR-020)"
 epic_home: Nestor
@@ -11,7 +11,8 @@ home_rationale: >-
   Nestor owns research intake and ideation; the repo that owns most of the
   milestone's work hosts the epic.
 ordering_note: >-
-  Follows M4 per the ADR-020 section 9 ladder.
+  Follows M4 in this checked-in rollout; Proposed ADR-020 section 9 records
+  the design rationale.
 children:
   - id: M5.1
     repo: Nestor
@@ -45,7 +46,7 @@ children:
     description: >-
       Console-side consumer of the interview relay subjects so research
       myrmidons can interview via live console with the GitHub comment
-      fallback ladder (ADR-013 interview conventions).
+      fallback target described by Proposed ADR-013.
     blocked_by: [M5.1]
   - id: M5.5
     repo: Odysseus

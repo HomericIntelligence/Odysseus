@@ -1,12 +1,13 @@
 # Milestone 5 — research domain: Nestor intake through epic handoff.
-# Epic home: Nestor. See ADR-013 sections 5-7 and ADR-020 stage map.
+# Epic home: Nestor. See Proposed ADR-013 sections 5-7 and Proposed ADR-020.
 
 apiVersion: telemachy/v1
 metadata:
   name: m5-research-domain
   description: >-
-    Wire the research half of ADR-013: POST /v1/research intake dispatches to
-    hi.myrmidon.research.chief-architect, research myrmidons interview via
+    Wire the research target described by Proposed ADR-013: POST /v1/research
+    intake dispatches to hi.myrmidon.research.chief-architect, research
+    myrmidons interview via
     the relay subjects, Telemachy registers the resulting epic with child
     issues that enter the loop. Exit: idea to researched brief to registered
     epic to merged work without manual steps.

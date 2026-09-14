@@ -92,7 +92,7 @@ def test_dependency_edges_resolve_to_siblings_acyclically() -> None:
         assert seen == len(m.children), f"{m.id}: dependency cycle detected"
 
 
-def test_epic_body_checklist_matches_adr013_grammar() -> None:
+def test_epic_body_checklist_is_structurally_parseable() -> None:
     for m in _load():
         numbers = {c.id: i + 100 for i, c in enumerate(m.children)}
         body = reg.render_epic_body(m, numbers)
@@ -103,7 +103,6 @@ def test_epic_body_checklist_matches_adr013_grammar() -> None:
         for line in checklist:
             assert reg.CHECKLIST_LINE_RE.match(line), f"bad checklist grammar: {line}"
         assert f"`{m.workflow}`" in body
-        assert "ADR-020" in body
 
 
 def test_child_body_transcribes_workflow_requirements() -> None:
@@ -114,7 +113,7 @@ def test_child_body_transcribes_workflow_requirements() -> None:
     assert "AckExplicit" in body and "MaxDeliver 3" in body
     assert "`workflows/m1-hephaestus-keystone.yaml`" in body
     assert "pointer-only" in body
-    # Cross-repo children land in their owning repo (ADR-020 section 6).
+    # Cross-repository children land in their owning repository.
     m3 = next(m for m in milestones if m.id == "M3")
     repos = {c.repo for c in m3.children}
     assert {"Myrmidons", "AchaeanFleet", "Agamemnon", "Odysseus"} <= repos
@@ -167,7 +166,7 @@ def main() -> int:
         test_every_child_is_single_dispatchable_and_labeled_repo_valid,
         test_each_milestone_has_unblocked_requirements_child_first,
         test_dependency_edges_resolve_to_siblings_acyclically,
-        test_epic_body_checklist_matches_adr013_grammar,
+        test_epic_body_checklist_is_structurally_parseable,
         test_child_body_transcribes_workflow_requirements,
         test_validate_rejects_broken_payloads,
         test_rendering_requires_known_numbers,

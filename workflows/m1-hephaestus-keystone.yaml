@@ -1,13 +1,14 @@
 # Milestone 1 — Hephaestus keystone: the mesh worker library.
 # Single host, multi-thread validation (one process, thread per role).
-# Epic home: shared/Hephaestus. See docs/adr/020-mesh-distributed-hephaestus-loop.md.
+# Epic home: shared/Hephaestus. See Proposed ADR-020 for design context.
 
 apiVersion: telemachy/v1
 metadata:
   name: m1-hephaestus-mesh-keystone
   description: >-
-    Build hephaestus/mesh_worker behind the [mesh] extra: ADR-013 claim loop,
-    per-role stage executors, merger verifier, seeder CLI, dry-run mode.
+    Build hephaestus/mesh_worker behind the [mesh] extra: the claim-loop
+    target described by Proposed ADR-013, per-role stage executors, merger
+    verifier, seeder CLI, and dry-run mode.
     Exit criterion: a DRY_RUN issue walks needs-plan to merged in one
     multi-threaded process against local NATS.
   adr: "020"
@@ -23,8 +24,9 @@ teams:
     tasks:
       - subject: Requirements and invariants for the mesh worker package
         description: >-
-          Capture: JetStream durable pull consumer per ADR-013 section 1
-          (AckExplicit, AckWait 900s, MaxDeliver 3, heartbeat every 5 min,
+          Capture the JetStream durable-pull-consumer target described by
+          Proposed ADR-013 section 1 (AckExplicit, AckWait 900s, MaxDeliver 3,
+          heartbeat every 5 min,
           fetch(1)); envelope hi/v1 validation; idempotency preamble on
           attempt greater than 1; exclusive state-label mutation with
           readback; facts published to hi.tasks verbs with agent_id and

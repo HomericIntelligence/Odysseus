@@ -1,5 +1,5 @@
 # Milestone 6 — idea watcher agent + web interview interface.
-# Epic home: Odysseus (user-facing hub). See ADR-020 stage map, M6.
+# Epic home: Odysseus (user-facing hub). See Proposed ADR-020 stage map, M6.
 
 apiVersion: telemachy/v1
 metadata:

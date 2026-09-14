@@ -1,4 +1,4 @@
-# Milestone M2 epic registration payload (issue #468, ADR-020 sections 7 and 9).
+# Milestone M2 epic registration payload (issue #468; Proposed ADR-020 context).
 # Consumed by tools/github/register-milestone-epics.py. Field names follow the
 # canonical workflow contract: subject / blocked_by (never title / depends_on).
 milestone: M2
@@ -7,9 +7,11 @@ epic_home: Odysseus
 workflow: workflows/m2-single-host-multiprocess.yaml
 home_rationale: >-
   The e2e harness that this milestone extends lives in Odysseus; the repo that
-  owns most of the milestone's work hosts the epic (ADR-020 section 6).
+  owns most of the milestone's work hosts the epic (design context: Proposed
+  ADR-020 section 6).
 ordering_note: >-
-  Follows M1 (Hephaestus keystone) per the ADR-020 section 9 ladder.
+  Follows M1 (Hephaestus keystone) in this checked-in rollout; Proposed
+  ADR-020 section 9 records the design rationale.
 children:
   - id: M2.1
     repo: Odysseus

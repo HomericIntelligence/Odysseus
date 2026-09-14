@@ -1,8 +1,8 @@
-# Milestone M4 epic registration payload (issue #468, ADR-020 sections 7 and 9).
+# Milestone M4 epic registration payload (issue #468; Proposed ADR-020 context).
 # Consumed by tools/github/register-milestone-epics.py. Field names follow the
 # canonical workflow contract: subject / blocked_by (never title / depends_on).
 # Cross-repo children are filed in their owning repo and cross-referenced from
-# the epic body (ADR-020 section 6 per-repo epics; dispatch packets carry repo).
+# the epic body (design context: Proposed ADR-020 section 6).
 milestone: M4
 title: "M4 Epic: full-pipeline dogfood (ADR-020)"
 epic_home: Odysseus
@@ -11,17 +11,22 @@ home_rationale: >-
   Odysseus is the coordination hub for ecosystem-wide dogfooding; the repo
   that owns most of the milestone's work hosts the epic.
 ordering_note: >-
-  Follows M1 then M2 then M3 per the ADR-020 section 9 ladder.
+  Follows M1 then M2 then M3 in this checked-in rollout; Proposed ADR-020
+  section 9 records the design rationale.
 children:
   - id: M4.1
     repo: Odysseus
     subject: Requirements and invariants for dogfooded operation
     description: >-
       Capture: every milestone epic from here on is worked BY the mesh
-      (fallback to single-device loop per issue is allowed and must be
-      recorded as a comment marker); CI evidence rules per ADR-014 apply to
-      all mesh-produced PRs; legacy claude-myrmidon harness migrates or
-      retires; cross-host hermes-hub to epimetheus check included.
+      (fallback to the supported single-device loop per issue is allowed and
+      must be recorded as a comment marker); every mesh-produced PR must
+      satisfy its owning repository's binding policies and retained CI gates,
+      while Proposed ADR-014 records broader evidence-integrity rationale;
+      both legacy myrmidon harnesses remain live through exact-pin parity and
+      one real M4 dogfood run, with retirement reserved for a later, separate
+      human-reviewed change; include a cross-host hermes-hub to epimetheus
+      check.
     blocked_by: []
   - id: M4.2
     repo: Odysseus
@@ -49,7 +54,7 @@ children:
     subject: Hermes merged-PR webhook bridge publishing the learn trigger
     description: >-
       Bridge GitHub PR-merged webhooks into hi.pipeline so athena:learn runs
-      post-merge per ADR-020 section 8.
+      post-merge; Proposed ADR-020 section 8 records the target design.
     blocked_by: [M4.1]
   - id: M4.6
     repo: Argus
@@ -60,9 +65,10 @@ children:
     blocked_by: [M4.1]
   - id: M4.7
     repo: Hephaestus
-    subject: Single-device entry-point deprecation note
+    subject: Document supported single-device fallback and mode selection
     description: >-
-      Deprecation note for the single-device hephaestus-automation-loop entry
-      point once mesh parity is reached; both modes share labels and journal
-      per ADR-020 section 9 fallback strategy.
+      Document the supported single-device hephaestus-automation-loop fallback
+      and explicit mode selection after mesh parity. Both modes retain their
+      shared labels and journal; Proposed ADR-020 section 9 records the target
+      fallback strategy.
     blocked_by: [M4.1]

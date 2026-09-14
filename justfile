@@ -324,7 +324,7 @@ test-justfile-recipes:
     bash tests/test-config-validators.sh
     bash tests/test-lane-models.sh
 
-# Print the pinned ADR-020 lane model IDs (issue #465) as a markdown table.
+# Print the current lane-model pins (issue #465; Proposed ADR-020 is design context).
 # Validates the canonical pin file configs/lane-models.yaml first.
 lane-models:
     pixi run python tools/lane_models.py
@@ -348,7 +348,7 @@ test-merge-queue-readiness:
 test-repo-ruleset-apply:
     bash tests/github/apply-repo-rulesets.test.sh
 
-# Validate M1-M6 epic registration payloads against ADR-020 conventions (#468)
+# Validate the current M1-M6 epic registration contract (#468; Proposed ADR-020 context)
 test-milestone-registry:
     python3 tests/github/test_register_milestone_epics.py
     python3 tools/github/register-milestone-epics.py --plan >/dev/null

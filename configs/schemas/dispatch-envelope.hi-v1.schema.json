@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://homericintelligence.github.io/Odysseus/schemas/dispatch-envelope.hi-v1.schema.json",
   "title": "Hephaestus mesh dispatch envelope hi/v1",
-  "description": "Versioned dispatch packet for the Hephaestus automation loop on the HomericIntelligence mesh (ADR-013 §3 payload envelope + ADR-020 §6 pointer fields and M0 stage-chaining additions). Packets carry pointers only; workers read the full task from GitHub at claim time. New contract versions get a new schema file — never edit this one in place.",
+  "description": "Versioned dispatch packet for the Hephaestus automation loop on the HomericIntelligence mesh. It encodes the payload and pointer fields whose design context is Proposed ADR-013 §3 and Proposed ADR-020 §6. Worker lookup behavior is outside this schema. New contract versions get a new schema file — never edit this one in place.",
   "type": "object",
   "required": ["schema", "ts", "msg_id", "repo", "issue", "branch", "stage", "attempt", "budgets"],
   "properties": {
@@ -75,7 +75,7 @@
     },
     "stage": {
       "enum": ["planning", "plan_review", "implementation", "pr_review", "merge"],
-      "description": "Loop stage this dispatch targets (M0 ratification of ADR-020 §2 stage chain). The Learn stage is dispatched post-merge on an aux queue and has no first-class dispatch value."
+      "description": "Loop stage this dispatch targets. The M0 schema freeze encodes the stage values described by Proposed ADR-020 §2; runtime ordering and transitions are outside this schema. The Learn stage is dispatched post-merge on an aux queue and has no first-class dispatch value."
     },
     "attempt": {
       "type": "integer",
@@ -148,10 +148,10 @@
           "type": "integer",
           "minimum": 0,
           "default": 5,
-          "description": "Merger-agent retry budget (ADR-020 §3, default 5)."
+          "description": "Merger-agent retry budget (default 5; design context: Proposed ADR-020 §3)."
         }
       },
-      "description": "Per-stage retry budgets carried in the envelope (ADR-020 §6). Counters decrement only on same-stage retries; fail-back exits (leaving the stage) and terminal exits do not consume budget. Exhaustion drives state:skip (see ADR-020 follow-up notes)."
+      "description": "Per-stage retry-budget counters carried in the envelope. Proposed ADR-020 §6 describes candidate decrement and exhaustion semantics; runtime behavior is outside this schema."
     },
     "verdict": {
       "enum": ["go", "no_go", null],
@@ -172,7 +172,7 @@
       },
       "required": ["reason", "evidence"],
       "additionalProperties": false,
-      "description": "Remediation payload attached by a reviewing/merging worker on a no-go outcome (ADR-020 §3): the merger publishes this back to the task-agent queue carrying the failing evidence. Present only on remediation packets; never on forward dispatches."
+      "description": "Optional remediation data for a no-go outcome. Proposed ADR-020 §3 describes candidate routing semantics; runtime publication is outside this schema. Present only on remediation packets, never on forward dispatches."
     }
   }
 }

@@ -1,5 +1,5 @@
 # Milestone 3 — pipeline domain, single host, containerized.
-# Epic home: Myrmidons. See ADR-020 sections 2, 4, 5.
+# Epic home: Myrmidons. See Proposed ADR-020 sections 2, 4, and 5.
 
 apiVersion: telemachy/v1
 metadata:

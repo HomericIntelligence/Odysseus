@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Register the M1-M6 milestone epics and their children (issue #468, ADR-020).
+"""Register the M1-M6 milestone epics and their children (issue #468).
 
 Reads the declarative payloads under ``tools/github/milestone-epics.d/``,
-validates them against the ADR-020 section 6/7 epic conventions (per-repo
-epic homes, one dispatchable task per child, ``state:needs-plan`` labels),
-renders ADR-013 section 6 parseable epic bodies, and (with ``--apply``)
-creates the issues via the ``gh`` CLI.
+validates their current structural contract (per-repository epic homes, one
+dispatchable task per child, and ``state:needs-plan`` labels), renders
+parseable epic bodies whose design context comes from Proposed ADR-013 and
+Proposed ADR-020, and (with ``--apply``) creates the issues via the ``gh`` CLI.
 
 Modes:
   * ``--plan`` (default): print everything that would be created; no writes.
@@ -132,7 +132,7 @@ def load_payloads(payload_dir: Path = PAYLOAD_DIR) -> list[Milestone]:
 
 
 def validate(milestones: list[Milestone]) -> list[str]:
-    """Validate payloads against the ADR-020/ADR-013 conventions."""
+    """Validate the checked-in milestone payload contract."""
     errors: list[str] = []
     seen_ids: set[str] = set()
 
@@ -176,20 +176,23 @@ def validate(milestones: list[Milestone]) -> list[str]:
 def render_child_body(m: Milestone, c: Child) -> str:
     """Render the body of a child issue from its transcribed description."""
     return (
-        f"Part of {m.id} ({m.title}) - ADR-020 sections 7 and 9 staged rollout; "
-        f"requirements transcribed verbatim from `{m.workflow}` (#464).\n\n"
+        f"Part of {m.id} ({m.title}) - the checked-in workflow defines this "
+        f"staged rollout; Proposed ADR-020 sections 7 and 9 provide context. "
+        f"Requirements are transcribed verbatim from `{m.workflow}` (#464).\n\n"
         f"{c.description}\n\n"
-        "Sized as a single dispatchable task (~1 h active work). Dispatch "
-        "packets stay pointer-only per ADR-013 section 6; workers read the "
-        "full task description here at claim time."
+        "Sized as a single dispatchable task (~1 h active work). This task "
+        "must preserve pointer-only dispatch; Proposed ADR-013 section 6 "
+        "records the design rationale. Workers must read the full task "
+        "description here at claim time."
     )
 
 
 def render_epic_body(m: Milestone, numbers: dict[str, int]) -> str:
-    """Render an epic body with an ADR-013 section 6 parseable checklist."""
+    """Render an epic body with the current parseable checklist contract."""
     lines = [
         f"Epic tracking Milestone {m.id[1:]} of the mesh-distributed Hephaestus "
-        f"loop (ADR-020 sections 7 and 9). Definitions: `{m.workflow}`. "
+        f"loop. Definitions: `{m.workflow}`. Proposed ADR-020 sections 7 and "
+        f"9 provide design context. "
         f"{m.home_rationale}",
         "",
         f"Cross-milestone ordering: {m.ordering_note}",

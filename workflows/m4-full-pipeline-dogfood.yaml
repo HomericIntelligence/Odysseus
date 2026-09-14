@@ -1,5 +1,5 @@
 # Milestone 4 — full pipeline dogfood across the ecosystem.
-# Epic home: Odysseus (coordination hub). See ADR-020 section 9 step M4.
+# Epic home: Odysseus (coordination hub). See Proposed ADR-020 section 9 step M4.
 
 apiVersion: telemachy/v1
 metadata:
@@ -23,10 +23,14 @@ teams:
       - subject: Requirements and invariants for dogfooded operation
         description: >-
           Capture: every milestone epic from here on is worked BY the mesh
-          (fallback to single-device loop per issue is allowed and must be
-          recorded as a comment marker); CI evidence rules per ADR-014 apply
-          to all mesh-produced PRs; legacy claude-myrmidon harness migrates
-          or retires; cross-host hermes-hub to epimetheus check included.
+          (fallback to the supported single-device loop per issue is allowed
+          and must be recorded as a comment marker); every mesh-produced PR
+          must satisfy its owning repository's binding policies and retained
+          CI gates, while Proposed ADR-014 records broader evidence-integrity
+          rationale; both legacy myrmidon harnesses remain live through
+          exact-pin parity and one real M4 dogfood run, with retirement
+          reserved for a later, separate human-reviewed change; cross-host
+          hermes-hub to epimetheus check included.
         assign_to: loop-planner
       - subject: Plan rollout decomposition (advise-gated)
         description: >-
@@ -34,8 +38,9 @@ teams:
           Proteus vessel CI plus agamemnon-apply dispatch; Hermes merged
           webhook bridge publishing the learn trigger; Argus stage-latency,
           budget-exhaustion, merger-bounce dashboards; runbook
-          operate-mesh-loop.md; deprecation note for the single-device entry
-          point; first real backlog issue selected as dogfood target.
+          operate-mesh-loop.md; documentation for the supported single-device
+          fallback and explicit mode selection; first real backlog issue
+          selected as dogfood target.
         assign_to: loop-planner
         blocked_by:
           - Requirements and invariants for dogfooded operation
