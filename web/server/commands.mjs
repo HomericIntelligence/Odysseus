@@ -27,6 +27,7 @@ const result = (code, input, error, extra = {}) => ({
   },
 });
 class Conflict extends Error {}
+class BuildWorkspaceUnavailable extends Error {}
 
 function endpoint(url) {
   const base = new URL(url);
@@ -246,6 +247,10 @@ export function createCommandService({
         throw new Error("Protected workspace inventory is incomplete");
       const identities = new Set();
       for (const record of inventory.items) {
+        // Typed builds have no authoritative host/absolute snapshot placement
+        // in v1. Even a retained result or added generic fields cannot supply it.
+        if (kind === "build-jobs" && record && Object.hasOwn(record, "build"))
+          throw new BuildWorkspaceUnavailable();
         if (
           !record ||
           typeof record.id !== "string" ||
@@ -322,6 +327,9 @@ export function createCommandService({
           error instanceof Conflict ? 409 : 503,
           input,
           error instanceof Conflict ? "conflict" : "unavailable",
+          error instanceof BuildWorkspaceUnavailable
+            ? { reason: "build_workspace_unresolved" }
+            : {},
         );
       }
     },
@@ -479,6 +487,9 @@ export function createCommandService({
         // Keep response bodies, input, auth, and spool locations out of UI errors.
         return result(503, input, "unavailable", {
           outcome: submitted ? "unknown" : "not_submitted",
+          ...(error instanceof BuildWorkspaceUnavailable
+            ? { reason: "build_workspace_unresolved" }
+            : {}),
         });
       }
     },

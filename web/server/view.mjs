@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { projectMetadata } from "./projects.mjs";
 
 export const COMPONENTS = [
@@ -179,6 +179,95 @@ function record(input) {
   return output;
 }
 
+// Subordinate tool workers are distinct from provider workers. Retained parent
+// identifiers describe admission history; they cannot grant current ownership.
+function buildRecord(input) {
+  if (!Object.hasOwn(input, "build")) return record(input);
+  const validBuildId = /^build-[0-9a-f]{64}$/.test(input.id);
+  const states = new Set([
+    "admitted",
+    "authorized",
+    "cancelling",
+    "completed",
+    "failed",
+    "cancelled",
+    "timed_out",
+  ]);
+  const output = {
+    // # cannot occur in a controller resource ID. This display key keeps
+    // malformed rows distinct without publishing their original identifiers.
+    id: validBuildId
+      ? input.id
+      : `unavailable-build#${createHash("sha256").update(input.id).digest("hex")}`,
+    ...(!validBuildId
+      ? { identityState: "unavailable", subject: "Build identity unavailable" }
+      : {}),
+    buildType: "subordinate",
+    component: "hephaestus",
+    status: states.has(input.status) ? input.status : "unknown",
+    updatedAt: date(input.updatedAt),
+    ownershipState: "unavailable",
+  };
+  const build = input.build;
+  const allocation = build?.allocation;
+  const policyAllocation = build?.policy?.allocation;
+  const parent = input.parent;
+  const claim = parent?.claim;
+  const requestedParent = build?.request?.parent;
+  const validId = (value) =>
+    typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+  const positive = (value) => Number.isSafeInteger(value) && value > 0;
+  if (
+    !validBuildId ||
+    input.schema !== "hi/fleet/v1" ||
+    input.kind !== "build-jobs" ||
+    build?.schema !== "hi/fleet/build/v1" ||
+    !validId(allocation?.workerId) ||
+    !validId(allocation?.id) ||
+    !positive(allocation?.generation) ||
+    input.generation !== allocation.generation ||
+    !["workerId", "id", "generation"].every(
+      (key) => allocation[key] === policyAllocation?.[key],
+    ) ||
+    build.attempt !== 1 ||
+    build.snapshotWorkspace !== `${input.id}-attempt-1` ||
+    !["sessions", "executions"].includes(parent?.targetKind) ||
+    !positive(parent?.generation) ||
+    !["targetId", "sessionId", "executionId", "taskId", "agentId"].every(
+      (key) => validId(parent?.[key]),
+    ) ||
+    !["targetKind", "targetId", "sessionId", "executionId", "generation"].every(
+      (key) => parent[key] === requestedParent?.[key],
+    ) ||
+    claim?.schema !== "hi/fleet/claim/v1" ||
+    !validId(claim?.workerId) ||
+    !["targetKind", "targetId", "agentId", "generation"].every(
+      (key) => parent[key] === claim[key],
+    )
+  )
+    return output;
+  return {
+    ...output,
+    ownershipState: "reported",
+    workerId: allocation.workerId,
+    allocationId: allocation.id,
+    generation: allocation.generation,
+    workspaceId: build.snapshotWorkspace,
+    parent: Object.fromEntries([
+      ...[
+        "targetKind",
+        "targetId",
+        "sessionId",
+        "executionId",
+        "taskId",
+        "agentId",
+        "generation",
+      ].map((key) => [key, parent[key]]),
+      ["workerId", claim.workerId],
+    ]),
+  };
+}
+
 // Disposable read projection: this class cannot claim, dispatch, or update work.
 export class FleetView {
   constructor({
@@ -216,7 +305,10 @@ export class FleetView {
     if (!RESOURCE_KINDS.includes(kind) || !validResourceCollection(items))
       throw new Error("Invalid resource collection");
     this.truncatedResources ||= items.length > 2000;
-    this.resources[kind] = items.slice(0, 2000).map(record).filter(Boolean);
+    this.resources[kind] = items
+      .slice(0, 2000)
+      .map(kind === "build-jobs" ? buildRecord : record)
+      .filter(Boolean);
   }
 
   setSource(source, status) {

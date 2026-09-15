@@ -219,6 +219,30 @@ agent identities, claims, workspaces and generations. Application-message
 observations connect an item to its reported component, agent, host and stage;
 assignment alone does not establish active execution.
 
+### Subordinate build ownership
+
+The versioned `hi/fleet/build/v1` record identifies its tool worker, allocation
+and generation under `build.allocation`. Odysseus projects these fields and the
+opaque `build.snapshotWorkspace` identifier. The retained `parent` relationship
+is shown separately; its agent, worker and generation do not become the child's
+identity or establish current parent ownership. Invalid or conflicting identity
+fields keep the item visible with ownership unavailable. Generic build-job
+records retain their existing projection.
+
+A typed build ID must use the controller's `build-` plus 64 lowercase hexadecimal
+digits. A malformed ID is replaced by an opaque display-only key in a namespace
+that controller resource IDs cannot use. The UI labels it as a display key with
+identity unavailable; the original value and snapshot workspace are omitted.
+Such a key cannot become command scope or establish ownership.
+
+Controller status and `updatedAt` describe admission, authorization, cancellation
+and terminal facts. They do not establish observed tool activity. The initial
+typed protocol has no current activity observation, host placement or absolute
+snapshot path; the web view reports those as unknown. It never joins a tool
+allocation through provider workers, counts the build as an issue agent, or
+creates message observations from a resource poll. Raw workspace paths, policy
+bodies and grants remain outside the browser projection.
+
 ### Private approvals and questions
 
 The local web backend supports `/api/requests` for one current session, worker
@@ -234,6 +258,15 @@ access. `ODYSSEUS_EXECUTION_HOST` identifies this host using the controller's ho
 name; it defaults to the operating-system hostname. This initial path requires
 private same-host attachment; remote private attachment remains a separate
 transport gate.
+
+A typed subordinate build, including a retained terminal record, keeps private
+access disabled because this protocol cannot supply its protected host/path
+placement. The backend returns only `reason: build_workspace_unresolved` beside
+the existing unavailable response. The browser explains the condition and
+retains the original command for explicit retry; it does not infer that an
+earlier uncertain attempt was never delivered. Extra generic placement fields
+cannot bypass this refusal. The separate producer/consumer contract required to
+restore safe access is proposed in the Fleet plan's heavy-tools section.
 
 The inventory read is a defensive projection of Agamemnon state, not a workspace
 admission authority. Hephaestus must independently exclude all configured private

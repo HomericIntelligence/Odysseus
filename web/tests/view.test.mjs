@@ -1,6 +1,213 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { FleetView } from "../server/view.mjs";
+import { readFileSync } from "node:fs";
+import { FleetView, validResourceCollection } from "../server/view.mjs";
+import { activeAgentCount, matchPacket } from "../src/selectors.ts";
+
+const buildContract = JSON.parse(
+  readFileSync(
+    new URL("./fixtures/agamemnon-build-contract.json", import.meta.url),
+    "utf8",
+  ),
+);
+
+test("subordinate builds retain tool ownership and parent linkage without reporting authorization as activity", () => {
+  for (const point of [
+    "admission",
+    "persistedGrantDocument",
+    "cancelResponse",
+    "terminalResponse",
+  ]) {
+    const raw = buildContract[point].record;
+    const view = new FleetView({ now: () => Date.parse(raw.updatedAt) });
+    view.setResources("build-jobs", [raw]);
+    const snapshot = view.snapshot();
+    const item = snapshot.items[0];
+    assert.equal(item.workerId, raw.build.allocation.workerId, point);
+    assert.equal(item.allocationId, raw.build.allocation.id);
+    assert.equal(item.generation, raw.build.allocation.generation);
+    assert.equal(item.workspaceId, raw.build.snapshotWorkspace);
+    assert.equal(item.status, raw.status);
+    assert.equal(item.updatedAt, new Date(raw.updatedAt).toISOString());
+    assert.deepEqual(item.parent, {
+      targetKind: raw.parent.targetKind,
+      targetId: raw.parent.targetId,
+      sessionId: raw.parent.sessionId,
+      executionId: raw.parent.executionId,
+      taskId: raw.parent.taskId,
+      agentId: raw.parent.agentId,
+      workerId: raw.parent.claim.workerId,
+      generation: raw.parent.generation,
+    });
+    assert.equal(item.activity, "unknown");
+    assert.equal(item.lastActivityAt, undefined);
+    assert.equal(item.host, undefined);
+    assert.equal(item.agentId, undefined);
+    assert.equal(item.taskId, undefined);
+    assert.equal(item.sessionId, undefined);
+    assert.equal(item.claimStatus, undefined);
+    assert.equal(
+      activeAgentCount(snapshot.items, Date.parse(raw.updatedAt)),
+      0,
+    );
+    assert.equal(
+      matchPacket(snapshot.items, {
+        taskId: raw.parent.taskId,
+        generation: raw.parent.generation,
+      }),
+      undefined,
+    );
+    assert.deepEqual(snapshot.observations, []);
+    for (const secret of [
+      "/work/parent-source",
+      "policyDigest",
+      "grantId",
+      "sourceFiles",
+      "just",
+    ]) {
+      assert.equal(JSON.stringify(snapshot).includes(secret), false, secret);
+    }
+  }
+});
+
+test("subordinate parent generations and provider placement cannot become child ownership", () => {
+  const raw = structuredClone(buildContract.persistedGrantDocument.record);
+  raw.parent.generation =
+    raw.parent.claim.generation =
+    raw.build.request.parent.generation =
+      8;
+  Object.assign(raw, {
+    workerId: "spoof",
+    host: "spoof-host",
+    agentId: "spoof-agent",
+    activity: "running",
+    lastActivityAt: raw.updatedAt,
+  });
+  const view = new FleetView();
+  view.setResources("workers", [
+    { id: raw.build.allocation.workerId, generation: 1, host: "provider-host" },
+  ]);
+  view.setResources("build-jobs", [raw]);
+  const item = view.snapshot().items[0];
+  assert.equal(item.generation, 1);
+  assert.equal(item.parent?.generation, 8);
+  assert.equal(item.workerId, "tool-worker-1");
+  assert.equal(item.host, undefined);
+  assert.equal(item.agentId, undefined);
+  assert.equal(item.activity, "unknown");
+});
+
+test("malformed subordinate identities remain visible without claiming an owner", () => {
+  const mutations = [
+    (r) => {
+      r.build.schema = "hi/fleet/build/future";
+    },
+    (r) => {
+      r.generation = 2;
+    },
+    (r) => {
+      r.build.allocation.workerId = "bad worker";
+    },
+    (r) => {
+      r.build.policy.allocation.workerId = "different";
+    },
+    (r) => {
+      r.parent.claim.agentId = "different";
+    },
+    (r) => {
+      r.build.request.parent.targetId = "different";
+    },
+    (r) => {
+      r.build.snapshotWorkspace = "/private/path";
+    },
+  ];
+  for (const mutate of mutations) {
+    const raw = structuredClone(buildContract.admission.record);
+    mutate(raw);
+    const view = new FleetView();
+    view.setResources("build-jobs", [raw]);
+    const item = view.snapshot().items[0];
+    assert.equal(item.id, raw.id);
+    assert.equal(item.ownershipState, "unavailable");
+    assert.equal(item.workerId, undefined);
+    assert.equal(item.parent, undefined);
+    assert.equal(item.activity, "unknown");
+  }
+});
+
+test("paired malformed build IDs and snapshots remain private under distinct stable display keys", () => {
+  const records = ["/private/sentinel", "/other/workspace"].map((id) => {
+    const raw = structuredClone(buildContract.admission.record);
+    raw.id = id;
+    raw.build.snapshotWorkspace = `${id}-attempt-1`;
+    return raw;
+  });
+  const view = new FleetView();
+  view.setResources("build-jobs", records);
+  const snapshot = view.snapshot();
+  assert.equal(snapshot.items.length, 2);
+  const keys = snapshot.items.map((item) => item.id);
+  assert.equal(new Set(keys).size, 2);
+  for (const item of snapshot.items) {
+    assert.equal(item.ownershipState, "unavailable");
+    assert.equal(item.identityState, "unavailable");
+    assert.equal(item.subject, "Build identity unavailable");
+    assert.equal(validResourceCollection([{ id: item.id }]), false);
+    assert.equal(item.activity, "unknown");
+    for (const field of [
+      "workerId",
+      "allocationId",
+      "workspaceId",
+      "parent",
+      "generation",
+      "taskId",
+      "sessionId",
+      "executionId",
+      "agentId",
+    ])
+      assert.equal(item[field], undefined, field);
+  }
+  for (const raw of records) {
+    assert.equal(JSON.stringify(snapshot).includes(raw.id), false);
+    assert.equal(
+      JSON.stringify(snapshot).includes(raw.build.snapshotWorkspace),
+      false,
+    );
+  }
+  assert.equal(activeAgentCount(snapshot.items, Date.now()), 0);
+  assert.deepEqual(snapshot.observations, []);
+  view.setResources("build-jobs", [...records].reverse());
+  assert.deepEqual(
+    view.snapshot().items.map((item) => item.id),
+    [...keys].reverse(),
+  );
+  view.setResources("build-jobs", [
+    { id: "/legacy/generic", workerId: "legacy-worker" },
+  ]);
+  assert.equal(view.snapshot().items[0].id, "/legacy/generic");
+  assert.equal(view.snapshot().items[0].workerId, "legacy-worker");
+});
+
+test("generic build jobs retain their existing owner and observed activity", () => {
+  const now = Date.parse("2026-09-13T12:00:00Z");
+  const view = new FleetView({ now: () => now });
+  view.setResources("build-jobs", [
+    {
+      id: "legacy",
+      workerId: "legacy-worker",
+      agentId: "legacy-agent",
+      host: "legacy-host",
+      status: "running",
+      lastActivityAt: new Date(now).toISOString(),
+    },
+  ]);
+  const item = view.snapshot().items[0];
+  assert.equal(item.workerId, "legacy-worker");
+  assert.equal(item.host, "legacy-host");
+  assert.equal(item.agentId, "legacy-agent");
+  assert.equal(item.activity, "running");
+  assert.equal(item.buildType, undefined);
+});
 
 test("the controller's domain field remains distinct from the HMAS role in item metadata", () => {
   const view = new FleetView();

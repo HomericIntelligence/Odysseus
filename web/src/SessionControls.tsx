@@ -39,6 +39,7 @@ type Capabilities = {
 type Pending = {
   command: Readonly<Command>;
   phase: "sending" | "unknown" | "conflict";
+  buildWorkspaceUnresolved?: boolean;
 };
 type Receipt = {
   sessionId: string;
@@ -230,6 +231,12 @@ export function useSessionControls({
       } else {
         setPending({
           command,
+          buildWorkspaceUnresolved:
+            response.status === 503 &&
+            matches &&
+            result.error === "unavailable" &&
+            result.outcome === "not_submitted" &&
+            result.reason === "build_workspace_unresolved",
           phase:
             response.status === 409 && matches && result.error === "conflict"
               ? "conflict"
@@ -323,6 +330,12 @@ export function useSessionControls({
             {labels[pending.command.operation]} · {pending.command.sessionId}
           </p>
           <code>{pending.command.commandId}</code>
+          {pending.buildWorkspaceUnresolved && (
+            <p>
+              Build workspace placement is unresolved. Private access is
+              unavailable; this attempt was not submitted.
+            </p>
+          )}
           <p>
             {pending.phase === "sending"
               ? "Waiting for durable controller acceptance."
