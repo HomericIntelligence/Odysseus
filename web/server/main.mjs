@@ -59,6 +59,14 @@ const server = createDashboardServer({
           token: process.env.NESTOR_AUTH_TOKEN,
         }
       : undefined,
+  researchImport:
+    process.env.ODYSSEUS_ENABLE_RESEARCH_IMPORT === "1"
+      ? {
+          url: process.env.ODYSSEUS_AGAMEMNON_URL,
+          apiKey: process.env.AGAMEMNON_API_KEY,
+          observe: (event) => view.observe(event),
+        }
+      : undefined,
   staticDir: resolve(dirname(fileURLToPath(import.meta.url)), "../dist"),
 });
 const port = Number(process.env.ODYSSEUS_WEB_PORT ?? 8765);

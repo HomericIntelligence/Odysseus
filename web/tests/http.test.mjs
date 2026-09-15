@@ -1,14 +1,19 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { get, request as httpRequest } from "node:http";
+import { createServer, get, request as httpRequest } from "node:http";
 import { createDashboardServer } from "../server/http.mjs";
 import { FleetView } from "../server/view.mjs";
 
 const fixtureCredential = randomBytes(24).toString("base64url");
 
 async function fixture(t, options = {}) {
-  const view = new FleetView();
+  const view = options.view ?? new FleetView();
   const server = createDashboardServer({
     view,
     token: fixtureCredential,
@@ -144,7 +149,11 @@ test("command submission requires an authenticated same-origin JSON request and 
     await (
       await fetch(`${url}/api/capabilities`, { headers: { cookie } })
     ).json(),
-    { ...commands.capabilities, researchIntake: { enabled: false } },
+    {
+      ...commands.capabilities,
+      researchIntake: { enabled: false },
+      researchImport: { enabled: false },
+    },
   );
   const accepted = await send({ cookie, origin: url });
   assert.equal(accepted.status, 202);
@@ -283,4 +292,592 @@ test("invalid login and unrelated mutations fail without proxying work", async (
     ).status,
     404,
   );
+});
+
+async function researchImportFixture(t, options = {}) {
+  const input = {
+    schema: "hi/agamemnon/research-import/v1",
+    intakeId: "research-" + "a".repeat(32),
+    requestDigest: "b".repeat(64),
+  };
+  const issue = {
+    repository: "homericintelligence/odysseus",
+    number: 42,
+    url: "https://github.com/homericintelligence/odysseus/issues/42",
+  };
+  const provenance = {
+    schema: "hi/agamemnon/research-intake/v1",
+    namespace: "pilot",
+    intakeId: input.intakeId,
+    requestDigest: input.requestDigest,
+    bodyDigest: "c".repeat(64),
+    generation: 1,
+    attemptId: "d".repeat(32),
+    issue,
+    createdAt: "2026-09-12T12:00:00Z",
+    confirmedAt: "2026-09-12T12:00:01Z",
+  };
+  const taskId =
+    "research-" +
+    createHash("sha256")
+      .update(
+        JSON.stringify({
+          intakeId: input.intakeId,
+          namespace: provenance.namespace,
+          schema: "hi/agamemnon/research-task-key/v1",
+        }),
+      )
+      .digest("hex");
+  const receipt = {
+    schema: "hi/agamemnon/research-import-receipt/v1",
+    taskId,
+    state: "Pending",
+    provenance,
+    issue,
+    routing: { domain: "research", hmasRole: "task-agent", stage: "research" },
+  };
+  const taskState = {
+    task_id: taskId,
+    state: "Pending",
+    layer: "L3_TaskAgent",
+    task: {
+      id: taskId,
+      brief_id: "",
+      parent_task_id: "",
+      layer: "L3_TaskAgent",
+      state: "Pending",
+      subject: "Research intake",
+      description: "synthetic-private-description",
+      repo: issue.repository,
+      module: "",
+      issue: issue.number,
+      assigned_lead_id: "",
+      delivery: {
+        researchIntake: provenance,
+        privateMetadata: "synthetic-private-delivery",
+      },
+      blocked_by: [],
+      child_task_ids: [],
+      created_at: "2026-09-12T12:00:02Z",
+      completed_at: "",
+      escalations: [],
+    },
+  };
+  const upstreamCalls = [];
+  const commandCalls = [];
+  const apiKey = randomBytes(24).toString("hex");
+  const upstream = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    upstreamCalls.push({
+      method: request.method,
+      path: request.url,
+      authorization: request.headers.authorization,
+      body: Buffer.concat(chunks).toString("utf8"),
+    });
+    if (
+      request.method === "GET" &&
+      request.url === `/v1/tasks/${taskId}/state`
+    ) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(taskState));
+    } else {
+      response.writeHead(201, { "content-type": "application/json" });
+      response.end(JSON.stringify(receipt));
+    }
+  });
+  await new Promise((done) => upstream.listen(0, "127.0.0.1", done));
+  t.after(async () => {
+    upstream.closeAllConnections();
+    await new Promise((done) => upstream.close(done));
+  });
+  const view = options.view ?? new FleetView();
+  const dashboard = await fixture(t, {
+    view,
+    researchImport: {
+      url: `http://127.0.0.1:${upstream.address().port}`,
+      apiKey,
+      observe: (event) => view.observe(event),
+    },
+    commands: {
+      submit: async (command) => {
+        commandCalls.push(command);
+        return { code: 202, body: { status: "submitted" } };
+      },
+    },
+  });
+  const send = (headers) =>
+    fetch(`${dashboard.url}/api/research/imports`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(input),
+    });
+  return {
+    ...dashboard,
+    input,
+    receipt,
+    taskState,
+    apiKey,
+    upstreamUrl: `http://127.0.0.1:${upstream.address().port}`,
+    upstreamCalls,
+    commandCalls,
+    send,
+  };
+}
+
+test("research import authentication and origin failures have no upstream or worker effects", async (t) => {
+  const { url, view, upstreamCalls, commandCalls, send } =
+    await researchImportFixture(t);
+  assert.equal((await send({ origin: url })).status, 401);
+  const cookie = await login(url);
+  assert.equal(
+    (await send({ cookie, origin: "https://elsewhere.example" })).status,
+    403,
+  );
+  assert.deepEqual(upstreamCalls, []);
+  assert.deepEqual(commandCalls, []);
+  assert.deepEqual(view.snapshot().resources.sessions, []);
+  assert.deepEqual(view.snapshot().observations, []);
+});
+
+test("research import authenticated route forwards only the confirmed reference and returns its canonical task", async (t) => {
+  const { url, input, receipt, apiKey, upstreamCalls, commandCalls, send } =
+    await researchImportFixture(t);
+  const cookie = await login(url);
+  const response = await send({ cookie, origin: url });
+  assert.equal(response.status, 201);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), receipt);
+  assert.deepEqual(upstreamCalls, [
+    {
+      method: "POST",
+      path: "/v1/fleet/research-intakes",
+      authorization: `Bearer ${apiKey}`,
+      body: JSON.stringify(input),
+    },
+  ]);
+  assert.deepEqual(commandCalls, []);
+});
+
+test("research import capability is explicit and disabled configuration submits nothing", async (t) => {
+  const { url } = await fixture(t);
+  const cookie = await login(url);
+  const capabilities = await (
+    await fetch(`${url}/api/capabilities`, { headers: { cookie } })
+  ).json();
+  const response = await fetch(`${url}/api/research/imports`, {
+    method: "POST",
+    headers: { cookie, origin: url, "content-type": "application/json" },
+    body: JSON.stringify({
+      schema: "hi/agamemnon/research-import/v1",
+      intakeId: "research-01",
+      requestDigest: "a".repeat(64),
+    }),
+  });
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    error: "not_configured",
+    outcome: "not_submitted",
+  });
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(capabilities.researchImport, { enabled: false });
+});
+
+test("research import capability reports configured service without submitting", async (t) => {
+  const { url, upstreamCalls } = await researchImportFixture(t);
+  const cookie = await login(url);
+  const response = await fetch(`${url}/api/capabilities`, {
+    headers: { cookie },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(upstreamCalls, []);
+  assert.deepEqual((await response.json()).researchImport, { enabled: true });
+});
+
+test("research import router rejects missing origin and malformed bodies before forwarding", async (t) => {
+  const { url, input, upstreamCalls } = await researchImportFixture(t);
+  const cookie = await login(url);
+  for (const [name, body, headers, expected] of [
+    ["missing origin", JSON.stringify(input), {}, 403],
+    [
+      "wrong content type",
+      JSON.stringify(input),
+      { origin: url, "content-type": "text/plain" },
+      400,
+    ],
+    ["invalid UTF-8", Buffer.from([0xff, 0xfe]), { origin: url }, 400],
+    [
+      "extra selection",
+      JSON.stringify({ ...input, url: "https://elsewhere.example" }),
+      { origin: url },
+      400,
+    ],
+    ["4097 bytes", JSON.stringify(input).padEnd(4097), { origin: url }, 400],
+    [
+      "multibyte overflow",
+      JSON.stringify({ ...input, title: "λ".repeat(2100) }),
+      { origin: url },
+      400,
+    ],
+  ]) {
+    await t.test(name, async () => {
+      const response = await fetch(`${url}/api/research/imports`, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json", ...headers },
+        body,
+      });
+      assert.equal(response.status, expected);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      assert.deepEqual(upstreamCalls, []);
+    });
+  }
+  const accepted = await fetch(`${url}/api/research/imports`, {
+    method: "POST",
+    headers: { cookie, origin: url, "content-type": "application/json" },
+    body: JSON.stringify(input).padEnd(4096),
+  });
+  assert.equal(accepted.status, 201);
+  assert.equal(upstreamCalls.length, 1);
+  assert.deepEqual(JSON.parse(upstreamCalls[0].body), input);
+});
+
+test("research task read requires authentication before any canonical lookup", async (t) => {
+  const { url, receipt, upstreamCalls, commandCalls } =
+    await researchImportFixture(t);
+  const response = await fetch(`${url}/api/research/tasks/${receipt.taskId}`);
+  assert.equal(response.status, 401);
+  assert.deepEqual(upstreamCalls, []);
+  assert.deepEqual(commandCalls, []);
+});
+
+test("research task authenticated read projects the known unclaimed task using only canonical GET", async (t) => {
+  const { url, view, receipt, apiKey, upstreamCalls, commandCalls } =
+    await researchImportFixture(t);
+  const cookie = await login(url);
+  const response = await fetch(`${url}/api/research/tasks/${receipt.taskId}`, {
+    headers: { cookie },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), {
+    schema: "hi/odysseus/research-task/v1",
+    taskId: receipt.taskId,
+    state: "Pending",
+    layer: "L3_TaskAgent",
+    provenance: receipt.provenance,
+    issue: receipt.issue,
+    assignment: null,
+    claim: null,
+    owner: null,
+    resolution: null,
+  });
+  assert.deepEqual(upstreamCalls, [
+    {
+      method: "GET",
+      path: `/v1/tasks/${receipt.taskId}/state`,
+      authorization: `Bearer ${apiKey}`,
+      body: "",
+    },
+  ]);
+  assert.deepEqual(commandCalls, []);
+  assert.deepEqual(view.snapshot().resources.sessions, []);
+});
+
+async function mainProcess(t, configuration) {
+  const directory = await mkdtemp(join(tmpdir(), "odysseus-main-fixture-"));
+  const reservation = createServer();
+  await new Promise((resolve) => reservation.listen(0, "127.0.0.1", resolve));
+  const port = reservation.address().port;
+  await new Promise((resolve) => reservation.close(resolve));
+  const environment = {
+    PATH: dirname(process.execPath),
+    HOME: directory,
+    LANG: "C.UTF-8",
+    ODYSSEUS_WEB_STATE_DIR: join(directory, "state"),
+    ODYSSEUS_WEB_TOKEN: fixtureCredential,
+    ODYSSEUS_WEB_PORT: String(port),
+  };
+  for (const [key, value] of Object.entries(configuration))
+    if (value !== undefined) environment[key] = value;
+  const child = spawn(
+    process.execPath,
+    [fileURLToPath(new URL("../server/main.mjs", import.meta.url))],
+    {
+      env: environment,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let stdout = "";
+  let stderr = "";
+  const closed = new Promise((resolve) =>
+    child.once("close", (code, signal) => resolve({ code, signal })),
+  );
+  const started = new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error("Main fixture did not start or exit within five seconds"),
+        ),
+      5000,
+    );
+    const finish = (value) => {
+      clearTimeout(timer);
+      resolve(value);
+    };
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+      if (stdout.includes(`Odysseus Fleet: http://127.0.0.1:${port}`))
+        finish({ kind: "listening" });
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    closed.then((result) => finish({ kind: "exit", ...result }));
+  });
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null)
+      child.kill("SIGTERM");
+    let killTimer;
+    let closeTimer;
+    try {
+      await Promise.race([
+        closed,
+        new Promise((resolve) => {
+          killTimer = setTimeout(() => {
+            child.kill("SIGKILL");
+            resolve();
+          }, 2000);
+        }),
+      ]);
+      await Promise.race([
+        closed,
+        new Promise((_, reject) => {
+          closeTimer = setTimeout(
+            () =>
+              reject(
+                new Error("Owned main fixture did not exit after termination"),
+              ),
+            2000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(killTimer);
+      clearTimeout(closeTimer);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+  const outcome = await started;
+  assert.equal(
+    stderr.includes("EADDRINUSE"),
+    false,
+    "A port collision is a fixture setup failure",
+  );
+  return { url: `http://127.0.0.1:${port}`, outcome, stderr };
+}
+
+test("research import main process requires explicit opt-in and wires the configured service", async (t) => {
+  for (const [flag, enabled] of [
+    [undefined, false],
+    ["1", true],
+  ]) {
+    await t.test(enabled ? "enabled" : "disabled", async (t) => {
+      const { upstreamUrl, apiKey, input, receipt, upstreamCalls } =
+        await researchImportFixture(t);
+      const main = await mainProcess(t, {
+        ODYSSEUS_ENABLE_RESEARCH_IMPORT: flag,
+        ODYSSEUS_AGAMEMNON_URL: upstreamUrl,
+        AGAMEMNON_API_KEY: apiKey,
+      });
+      assert.equal(main.outcome.kind, "listening");
+      const cookie = await login(main.url);
+      const capabilities = await (
+        await fetch(`${main.url}/api/capabilities`, { headers: { cookie } })
+      ).json();
+      assert.deepEqual(capabilities.researchImport, { enabled });
+      const response = await fetch(`${main.url}/api/research/imports`, {
+        method: "POST",
+        headers: {
+          cookie,
+          origin: main.url,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(input),
+      });
+      assert.equal(response.status, enabled ? 201 : 503);
+      const imports = upstreamCalls.filter(
+        (call) => call.path === "/v1/fleet/research-intakes",
+      );
+      assert.equal(imports.length, enabled ? 1 : 0);
+      if (enabled) assert.deepEqual(await response.json(), receipt);
+      // Main's existing full-resource collectors may make unrelated read-only GETs.
+      assert.ok(
+        upstreamCalls.every(
+          (call) =>
+            call.method === "GET" || call.path === "/v1/fleet/research-intakes",
+        ),
+      );
+    });
+  }
+});
+
+test("research import main process rejects enabled invalid configuration before accepting traffic", async (t) => {
+  for (const configuration of [
+    {},
+    { ODYSSEUS_AGAMEMNON_URL: "http://127.0.0.1:9876" },
+    {
+      ODYSSEUS_AGAMEMNON_URL: "http://127.0.0.1:9876/?invalid",
+      AGAMEMNON_API_KEY: fixtureCredential,
+    },
+  ]) {
+    await t.test(JSON.stringify(Object.keys(configuration)), async (t) => {
+      const main = await mainProcess(t, {
+        ODYSSEUS_ENABLE_RESEARCH_IMPORT: "1",
+        ...configuration,
+      });
+      assert.equal(main.outcome.kind, "exit");
+      assert.equal(main.outcome.code, 1);
+    });
+  }
+});
+
+test("research task router rejects selectors and bodies before any upstream read", async (t) => {
+  const { url, receipt, upstreamCalls } = await researchImportFixture(t);
+  const cookie = await login(url);
+  for (const suffix of [
+    `${receipt.taskId}?namespace=other`,
+    `${receipt.taskId}?digest=secret`,
+    `${receipt.taskId}/extra`,
+    "research-short",
+    `research-${"A".repeat(64)}`,
+    "%2Fother",
+  ]) {
+    const response = await fetch(`${url}/api/research/tasks/${suffix}`, {
+      headers: { cookie },
+    });
+    assert.equal(response.status, 400);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+  }
+  const status = await new Promise((resolve, reject) => {
+    const request = httpRequest(
+      `${url}/api/research/tasks/${receipt.taskId}`,
+      {
+        method: "GET",
+        headers: {
+          cookie,
+          "content-length": "2",
+          "content-type": "application/json",
+        },
+      },
+      (response) => {
+        response.resume();
+        response.on("end", () => resolve(response.statusCode));
+      },
+    );
+    request.on("error", reject);
+    request.end("{}");
+  });
+  assert.equal(status, 400);
+  assert.equal(
+    (
+      await fetch(`${url}/api/research/tasks/${receipt.taskId}`, {
+        method: "POST",
+        headers: { cookie, origin: url },
+      })
+    ).status,
+    404,
+  );
+  assert.equal(
+    (await fetch(`${url}/api/research/tasks`, { headers: { cookie } })).status,
+    404,
+  );
+  assert.deepEqual(upstreamCalls, []);
+  const disabled = await fixture(t);
+  const disabledCookie = await login(disabled.url);
+  const response = await fetch(
+    `${disabled.url}/api/research/tasks/${receipt.taskId}`,
+    { headers: { cookie: disabledCookie } },
+  );
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    error: "not_configured",
+    outcome: "not_submitted",
+  });
+});
+
+test("actual import observations reach bounded authenticated SSE history without leaking payload or freshness", async (t) => {
+  const view = new FleetView({ historyLimit: 3 });
+  const originalSources = structuredClone(view.snapshot().sources);
+  const initialCursor = view.snapshot().cursor;
+  const { url, input, receipt, apiKey, upstreamCalls } =
+    await researchImportFixture(t, { view });
+  const cookie = await login(url);
+  const observed = [];
+  for (let i = 0; i < 3; i++) {
+    const response = await fetch(`${url}/api/research/imports`, {
+      method: "POST",
+      headers: { cookie, origin: url, "content-type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    assert.equal(response.status, 201);
+    assert.deepEqual(await response.json(), receipt);
+    observed.push(...view.snapshot().observations.slice(-2));
+  }
+  assert.equal(upstreamCalls.length, 3);
+  assert.deepEqual(
+    observed.map((e) => e.operation),
+    ["request", "response", "request", "response", "request", "response"],
+  );
+  assert.equal(new Set(observed.map((e) => e.eventId)).size, 6);
+  assert.deepEqual(
+    observed.map((e) => e.sourceSequence),
+    [1, 2, 3, 4, 5, 6],
+  );
+  for (let i = 0; i < 6; i += 2) {
+    assert.equal(observed[i].messageId, observed[i + 1].messageId);
+    assert.equal(observed[i].bytes, Buffer.byteLength(JSON.stringify(input)));
+    assert.equal(observed[i].correlationId, input.intakeId);
+  }
+  const abort = new AbortController();
+  t.after(() => abort.abort());
+  const response = await fetch(
+    `${url}/api/events?after=${encodeURIComponent(initialCursor)}`,
+    { headers: { cookie }, signal: abort.signal },
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const reader = response.body.getReader();
+  let chunk = "";
+  while (!chunk.includes("\n\n"))
+    chunk += new TextDecoder().decode((await reader.read()).value);
+  await reader.cancel();
+  const snapshot = JSON.parse(
+    chunk
+      .split("\n")
+      .find((line) => line.startsWith("data: "))
+      .slice(6),
+  );
+  assert.equal(snapshot.gap, true);
+  assert.equal(snapshot.dropped, 3);
+  assert.deepEqual(snapshot.observations, observed.slice(-3));
+  assert.deepEqual(snapshot.sources, originalSources);
+  assert.deepEqual(snapshot.resources.sessions, []);
+  for (const event of snapshot.observations) {
+    assert.equal(event.transport, "http");
+    assert.equal(event.generation, undefined);
+    assert.equal(event.workerId, undefined);
+  }
+  for (const secret of [
+    apiKey,
+    input.requestDigest,
+    receipt.provenance.bodyDigest,
+    "synthetic-private-description",
+    "synthetic-private-delivery",
+  ])
+    assert.equal(chunk.includes(secret), false);
 });

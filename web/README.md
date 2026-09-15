@@ -33,6 +33,7 @@ and experiment execution remain implementation work.
 | `ODYSSEUS_ENABLE_RESEARCH_INTAKE` | `1` enables the authenticated Nestor intake proxy |
 | `ODYSSEUS_NESTOR_URL` | Nestor HTTP endpoint; HTTPS except for loopback HTTP |
 | `NESTOR_AUTH_TOKEN` | Backend-only bearer credential for Nestor |
+| `ODYSSEUS_ENABLE_RESEARCH_IMPORT` | `1` enables confirmed-intake import and known-task reads using the configured Agamemnon endpoint and credential |
 | `ODYSSEUS_ENABLE_COMMANDS` | `1` explicitly enables supported session commands |
 | `ODYSSEUS_EXECUTION_HOST` | Controller host identity for this machine; defaults to the operating-system hostname |
 | `ODYSSEUS_INPUT_SPOOLS` | JSON mapping of worker IDs to private absolute spool directories |
@@ -124,9 +125,24 @@ appears only after Nestor confirms the matching issue; uncertain responses keep
 the request locked. Other tabs adopt the retained request instead of creating a
 new identity. Storage failure prevents submission.
 
-This endpoint records a research issue. It does not dispatch research agents or
-complete research. See the [intake API and recovery guide](../docs/research-intake-api.md)
-for configuration, bounds, statuses and the browser retention scope.
+With the separate import flag enabled, **Import research task** submits only the
+confirmed intake ID and digest to Agamemnon. The browser persists that reference
+and expected issue before POST, under the same lock as intake retry and replacement.
+Unknown outcomes block a new selection; reload and sign-in never automatically
+POST. Explicit retries preserve the reference and later replay state.
+
+Task refresh uses only the known canonical task ID. The backend validates intrinsic
+L3/provenance identity and the exact raw claim/owner, then rereads the task to detect
+transitions. The UI compares the result with its selected receipt. Unavailable reads
+retain historical evidence without offering a guessed owner link. Assignment is
+distinct from activity, and imported tasks add no active agents.
+
+Actual import/read HTTP observations enter the existing bounded flow stream with
+correlation IDs and measured bytes where available. They do not invent worker
+generations or internal delivery/ACK events. These endpoints record an issue and
+its Pending task; they do not dispatch research agents or complete research. See
+the [intake API and recovery guide](../docs/research-intake-api.md) for routes,
+configuration, limits, ownership checks and recovery.
 
 ## Session commands and private input
 
