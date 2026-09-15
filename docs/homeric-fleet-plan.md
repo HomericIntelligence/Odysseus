@@ -475,8 +475,8 @@ it is not implemented by this web increment:
    still enforce private-root exclusions on future mounts and across restart;
    the web projection never authorizes a workspace.
 
-The current ownership regression fixture is the unchanged controlled Agamemnon
-export at `ef39b3506bb29debe7e728f33e8d80c0923a330c`, stored as
+The current ownership regression fixture targets the controlled Agamemnon
+build-export contract at `ef39b3506bb29debe7e728f33e8d80c0923a330c` and is stored as
 `web/tests/fixtures/agamemnon-build-contract.json`. Its SHA-256 is
 `079117d07c3c2a2d33c0b93242af3737dc4caa2afe8642b8ad88324973bd16b8`.
 It describes synthetic controller boundaries, not a live build or qualification.
