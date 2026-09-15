@@ -1,4 +1,4 @@
-# Research intake and canonical task status
+# Issue intake and canonical task status
 
 The Research intake view submits publishable requirements to Nestor's explicit
 Fleet intake API. Nestor owns the GitHub-backed intake record and work issue.
@@ -7,6 +7,8 @@ it does not create issues itself, keep an intake queue, or dispatch research
 agents. A confirmed issue is the intake endpoint's result, not completed research.
 An independently configured import action submits that confirmed reference to
 Agamemnon, which owns its durable task identity and execution admission.
+The separate planned-issue action imports an existing GitHub issue directly
+through Agamemnon. It does not require Nestor or create a work issue.
 
 ## Operator setup
 
@@ -143,8 +145,10 @@ The ID follows the same 8–64 character lowercase grammar; the digest is exactl
 64 lowercase hexadecimal characters. Title, body, namespace, repository, URL,
 credentials and alternate routing are not accepted. The backend calls only its
 configured controller origin and fixed path. Import and task reads share four
-in-flight slots and one five-second aggregate deadline per operation, including
-body consumption and any claim-read sequence. Each response is bounded to 2 MiB
+in-flight slots. An import has a forty-second aggregate backend deadline,
+including body consumption; task reads retain their five-second deadline across
+the entire claim-read sequence. The browser allows forty-five seconds for import
+and fifteen seconds for task reads. Each upstream response is bounded to 2 MiB
 and decoded as strict UTF-8 JSON. Redirects and automatic POST retries are disabled.
 
 Agamemnon revalidates the canonical Nestor record on every import. It returns a
@@ -190,11 +194,102 @@ import. An explicit retry sends the same reference. An unresolved import blocks
 action can recover in-memory Nestor confirmation after reload; import does not
 add a mandatory Nestor read or freshness timeout of its own.
 
+## Import an existing planned issue
+
+Set `ODYSSEUS_ENABLE_ISSUE_IMPORT=1` with the same backend-only
+`ODYSSEUS_AGAMEMNON_URL` and `AGAMEMNON_API_KEY`. This independent flag does not
+enable Nestor intake, research import, or session commands. Enabled but invalid
+configuration fails startup. The capability projection adds
+`issueImport.enabled: true` only when this adapter is configured; it does not
+assert controller availability. GitHub credentials remain in Agamemnon.
+
+Agamemnon owns a finite registry of work repositories. The browser offers only
+its authenticated projection of registered keys, canonical repository names,
+and repository native IDs. Registry selection is not a new repository authority.
+The controller validates the registered choice before its GitHub lookup and
+revalidates the issue identity and selected plan content during every POST.
+
+| Web operation | Supported Agamemnon operation |
+| --- | --- |
+| `GET /api/issue-intakes/repositories` | `GET /v1/fleet/issue-intakes/repositories` |
+| `GET /api/issue-intakes/{key}/{number}` | Same path under `/v1/fleet`, with optional `planCommentId` only |
+| `POST /api/issue-intakes` | `POST /v1/fleet/issue-intakes` |
+| `GET /api/tasks/{taskId}` | `GET /v1/tasks/{taskId}/state`, then the exact claimed target when present |
+
+These routes require local sign-in, return `Cache-Control: no-store`, and share
+four adapter slots. POST requires the matching Origin. Inspection and import
+have forty-second backend deadlines and forty-five-second browser deadlines;
+registry and task reads retain five seconds in the backend. The response reader
+is explicitly cancelled at deadline and released on success or failure.
+Redirects and automatic retries are prohibited. Requests are at most 4096 bytes;
+upstream responses are at most 2 MiB. Duplicate JSON keys and invalid Unicode
+are rejected. Digests are never query parameters or observation fields.
+
+Choose a registered repository, enter its positive issue number, and select
+**Inspect planned issue**. An optional plan-comment native ID selects that
+comment instead of the issue body. Inspection returns the canonical issue link,
+native repository/issue IDs, title, open/closed state, content digest and
+observation time. It returns no plan body. Inspection is not approval and imposes
+no browser freshness TTL. A content-equivalent edit/revert preserves the digest;
+the controller decides whether the retained content and identity still match.
+
+**Import planned issue** explicitly sends the retained closed reference:
+
+```json
+{
+  "schema": "hi/agamemnon/issue-import/v1",
+  "repositoryKey": "implementation",
+  "issueNumber": 42,
+  "repositoryId": "R_native",
+  "issueId": "I_native",
+  "plan": { "kind": "issue_body", "digest": "<64 lowercase hex characters>" }
+}
+```
+
+The alternative plan is exactly `kind: issue_comment`, its native `nodeId`,
+and `digest`. A request cannot choose a task ID, routing, credentials or GitHub
+origin. The browser validates the selected repository and the controller receipt
+separately; a response cannot silently replace the selected issue.
+
+The `hi/agamemnon/issue-import-receipt/v1` response contains `taskId`, `state`,
+`provenance`, `issue` and `routing`. Provenance is the separate
+`hi/agamemnon/issue-intake/v1` variant with forge `github`, native identities,
+canonical issue, selected plan, retained observation time and fixed routing
+`pipeline` / `task-agent` / `implementation`. It is not a Nestor receipt. The
+task key is `issue-` plus SHA-256 of compact UTF-8 JSON in lexical key order:
+`forge`, `issueId`, `repositoryId`, `schema`; the key schema is
+`hi/agamemnon/issue-task-key/v1`. Repository selectors and observation times are
+not key inputs. New `201` receipts must be Pending; `200` replays retain the
+original provenance and report the current canonical state.
+
+Before POST, origin-scoped storage under `odysseus.issue-import.v1` must retain
+and read back the exact selected reference. Web Locks serialize competing tabs.
+Storage failure or changed selection prevents sending. An uncertain response,
+sign-in renewal or reload retains that reference and never triggers an automatic
+POST. **Retry same import** resends it explicitly. A `409` remains a conflict,
+including work already imported through the research entrypoint; it is not
+converted into a receipt of another provenance kind. Missing or timed-out
+responses cannot authorize another identity or prove that remote creation failed.
+
+Only a confirmed import enables **Choose another planned issue**. This explicit
+action clears local selection metadata under the same lock; it does not delete
+or cancel an Agamemnon task. Registry removal does not erase retained metadata.
+Retry requires the same registered identity to be available again. Operator
+reconciliation, controller persistence and shared cross-entrypoint deduplication
+remain Agamemnon responsibilities; the browser is not their durable authority.
+
 ## Read the selected task and owner
 
 Task refresh accepts only the known `research-` task ID in its path. Query and body
 selection inputs are rejected. It never enumerates tasks, POSTs to poll, or uses
 the optional Projects view as task authority.
+
+The neutral `/api/tasks/{taskId}` endpoint additionally accepts a known `issue-`
+key and returns `hi/odysseus/imported-task/v1`. It validates either the research
+or direct provenance variant, rejecting mixed variants. The backend validates
+intrinsic task/provenance identity without receiving a selection or digest in
+the URL. The browser compares that allowlisted result with its retained typed
+receipt. Both routes use the same exact owner/readback checks below.
 
 The backend validates outer and nested task ID/state/layer agreement, the
 standalone research L3 shape, typed provenance, canonical repository/issue and
@@ -259,3 +354,8 @@ override qualifies that executable only, not an absent default Playwright browse
 
 These checks do not prove live GitHub CAS ownership, research worker dispatch,
 interviews, epic registration, or the full research-to-implementation flow.
+Planned-issue cases also cover explicit registered selection, same-reference
+retry after an uncertain response and reload, storage failures, competing tabs,
+canonical owner matching, response-reader cleanup and import-only deadlines.
+Controlled wire examples are labelled as fixtures; real controller-produced
+payload verification is a separate compatibility gate, not live GitHub traffic.

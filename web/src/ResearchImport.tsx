@@ -80,7 +80,7 @@ type ManualResolution = {
   outcome: "completed" | "failed";
   decision: "approve_completion" | "reject_completion";
 };
-type TaskStatus = {
+export type TaskStatus = {
   taskId: string;
   state: string;
   assignment: { agentId: string } | null;
@@ -431,7 +431,7 @@ export function ResearchImport({
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify(intent.reference),
-            signal: AbortSignal.timeout(15000),
+            signal: AbortSignal.timeout(45000),
           });
           if (response.status !== 200 && response.status !== 201) {
             if (response.status === 409) {
@@ -607,6 +607,90 @@ export function ResearchImport({
     }
   }
 
+  if (!enabled && !operation) return null;
+  return (
+    <section className="research-status" aria-label="Research task">
+      <h3>Research task</h3>
+      <div className="research-actions">
+        <button
+          type="button"
+          disabled={!enabled || busy}
+          onClick={() => void submit()}
+        >
+          {operation ? "Retry same import" : "Import research task"}
+        </button>
+        {operation?.receipt && (
+          <button
+            type="button"
+            disabled={!enabled || busy}
+            onClick={() => void refresh()}
+          >
+            Refresh task status
+          </button>
+        )}
+      </div>
+      {error && (
+        <p className="warning" role="alert">
+          {error}
+        </p>
+      )}
+      <div role="status" aria-label="Research task status">
+        <strong>{message}</strong>
+        {operation?.receipt && (
+          <>
+            <p className="mono">{operation.receipt.taskId}</p>
+            <p>Confirmed import receipt: {operation.receipt.state}.</p>
+          </>
+        )}
+        {task && <p>Read-only task status: {task.state}.</p>}
+        {task?.resolution && (
+          <p>
+            Manual resolution: {task.resolution.outcome}. Approval is not
+            verified.
+          </p>
+        )}
+      </div>
+      {operation?.receipt && (
+        <ImportedTaskOwner
+          task={task}
+          busy={busy}
+          label="Research task"
+          items={items}
+          sessions={sessions}
+          observations={observations}
+          ownershipLive={ownershipLive}
+          onSelect={onSelect}
+          onPacket={onPacket}
+        />
+      )}
+      <ImportedTaskTrace
+        observations={observations}
+        onPacket={onPacket}
+        correlationId={selection.intakeId}
+        taskId={operation?.receipt?.taskId}
+        label="Research task"
+      />
+      <p className="fine-print">
+        Import records a task in Agamemnon. Worker admission and execution are
+        separate.
+      </p>
+    </section>
+  );
+}
+
+export function ImportedTaskOwner({
+  task,
+  busy,
+  label,
+  items,
+  sessions,
+  ownershipLive,
+  onSelect,
+}: {
+  task: TaskStatus | null;
+  busy: boolean;
+  label: string;
+} & ResearchViewProps) {
   const owner = task?.owner;
   const terminalClaim = Boolean(
     owner &&
@@ -663,150 +747,166 @@ export function ResearchImport({
     (owner.targetKind !== "sessions" || candidate.id === owner.targetId)
       ? candidate
       : undefined;
+  return (
+    <section aria-label={`${label} owner`}>
+      <h3>Task ownership</h3>
+      {task ? (
+        <>
+          <p>
+            Retained assignment: {task.assignment?.agentId ?? "Unassigned"}.
+          </p>
+          {owner ? (
+            <>
+              <p>
+                {terminalClaim
+                  ? "Retained terminal claim."
+                  : "Claim verified at the last task refresh."}
+              </p>
+              <dl>
+                <dt>Target</dt>
+                <dd>
+                  {owner.targetKind} / {owner.targetId}
+                </dd>
+                <dt>Worker</dt>
+                <dd>{owner.workerId}</dd>
+                <dt>Agent</dt>
+                <dd>{owner.agentId}</dd>
+                <dt>Generation</dt>
+                <dd>{owner.generation}</dd>
+                <dt>Status</dt>
+                <dd>
+                  {owner.status} / {owner.claimStatus}
+                </dd>
+              </dl>
+              <button
+                type="button"
+                disabled={busy || !ownerSession}
+                onClick={() => {
+                  if (ownerSession) onSelect(ownerSession);
+                }}
+              >
+                Open owner session
+              </button>
+              {!ownerSession && (
+                <p>
+                  Session navigation is unavailable without an exact current
+                  session and generation.
+                </p>
+              )}
+            </>
+          ) : (
+            <p>No current owner claim.</p>
+          )}
+        </>
+      ) : (
+        <p>
+          Current task ownership is unavailable. Refresh task status to inspect
+          it.
+        </p>
+      )}
+      {!ownershipLive && (
+        <p>Current Fleet ownership data is unavailable or stale.</p>
+      )}
+    </section>
+  );
+}
+
+export function ImportedTaskTrace({
+  observations,
+  onPacket,
+  correlationId,
+  taskId,
+  label,
+}: Pick<ResearchViewProps, "observations" | "onPacket"> & {
+  correlationId: string;
+  taskId?: string;
+  label: string;
+}) {
   const trace = observations
     .filter(
       (packet) =>
-        packet.correlationId === selection.intakeId ||
-        (operation?.receipt && packet.taskId === operation.receipt.taskId),
+        packet.correlationId === correlationId ||
+        (taskId && packet.taskId === taskId),
     )
     .slice(-30)
     .reverse();
 
-  if (!enabled && !operation) return null;
   return (
-    <section className="research-status" aria-label="Research task">
-      <h3>Research task</h3>
-      <div className="research-actions">
-        <button
-          type="button"
-          disabled={!enabled || busy}
-          onClick={() => void submit()}
-        >
-          {operation ? "Retry same import" : "Import research task"}
-        </button>
-        {operation?.receipt && (
+    <section className="trace-panel" aria-label={`${label} trace`}>
+      <h3>Observed messages</h3>
+      <div className="trace-list">
+        {trace.map((packet) => (
           <button
             type="button"
-            disabled={!enabled || busy}
-            onClick={() => void refresh()}
+            className="trace-row"
+            key={`${packet.sourceId ?? packet.source}:${packet.eventId}`}
+            onClick={() => onPacket(packet)}
           >
-            Refresh task status
+            <span className="trace-dot" />
+            <span>
+              <strong>
+                {packet.source} → {packet.target}
+              </strong>
+              <small>
+                {packet.operation} · {packet.eventId}
+              </small>
+            </span>
           </button>
-        )}
+        ))}
+        {!trace.length && <p>No matching message observations are retained.</p>}
       </div>
-      {error && (
-        <p className="warning" role="alert">
-          {error}
-        </p>
-      )}
-      <div role="status" aria-label="Research task status">
-        <strong>{message}</strong>
-        {operation?.receipt && (
-          <>
-            <p className="mono">{operation.receipt.taskId}</p>
-            <p>Confirmed import receipt: {operation.receipt.state}.</p>
-          </>
-        )}
-        {task && <p>Read-only task status: {task.state}.</p>}
-        {task?.resolution && (
-          <p>
-            Manual resolution: {task.resolution.outcome}. Approval is not
-            verified.
-          </p>
-        )}
-      </div>
-      {operation?.receipt && (
-        <section aria-label="Research task owner">
-          <h3>Task ownership</h3>
-          {task ? (
-            <>
-              <p>
-                Retained assignment: {task.assignment?.agentId ?? "Unassigned"}.
-              </p>
-              {owner ? (
-                <>
-                  <p>
-                    {terminalClaim
-                      ? "Retained terminal claim."
-                      : "Claim verified at the last task refresh."}
-                  </p>
-                  <dl>
-                    <dt>Target</dt>
-                    <dd>
-                      {owner.targetKind} / {owner.targetId}
-                    </dd>
-                    <dt>Worker</dt>
-                    <dd>{owner.workerId}</dd>
-                    <dt>Agent</dt>
-                    <dd>{owner.agentId}</dd>
-                    <dt>Generation</dt>
-                    <dd>{owner.generation}</dd>
-                    <dt>Status</dt>
-                    <dd>
-                      {owner.status} / {owner.claimStatus}
-                    </dd>
-                  </dl>
-                  <button
-                    type="button"
-                    disabled={busy || !ownerSession}
-                    onClick={() => {
-                      if (ownerSession) onSelect(ownerSession);
-                    }}
-                  >
-                    Open owner session
-                  </button>
-                  {!ownerSession && (
-                    <p>
-                      Session navigation is unavailable without an exact current
-                      session and generation.
-                    </p>
-                  )}
-                </>
-              ) : (
-                <p>No current owner claim.</p>
-              )}
-            </>
-          ) : (
-            <p>
-              Current task ownership is unavailable. Refresh task status to
-              inspect it.
-            </p>
-          )}
-          {!ownershipLive && (
-            <p>Current Fleet ownership data is unavailable or stale.</p>
-          )}
-        </section>
-      )}
-      <section className="trace-panel" aria-label="Research task trace">
-        <h3>Observed research messages</h3>
-        <div className="trace-list">
-          {trace.map((packet) => (
-            <button
-              type="button"
-              className="trace-row"
-              key={`${packet.sourceId ?? packet.source}:${packet.eventId}`}
-              onClick={() => onPacket(packet)}
-            >
-              <span className="trace-dot" />
-              <span>
-                <strong>
-                  {packet.source} → {packet.target}
-                </strong>
-                <small>
-                  {packet.operation} · {packet.eventId}
-                </small>
-              </span>
-            </button>
-          ))}
-          {!trace.length && (
-            <p>No matching message observations are retained.</p>
-          )}
-        </div>
-      </section>
-      <p className="fine-print">
-        Import records a task in Agamemnon. Worker admission and execution are
-        separate.
-      </p>
     </section>
   );
+}
+
+// Identity/provenance is validated by each typed import before using this
+// common ownership projection. It never joins arbitrary task IDs to sessions.
+export function importedTaskStatus(
+  value: unknown,
+  schema: "hi/odysseus/research-task/v1" | "hi/odysseus/imported-task/v1",
+  taskId: string,
+): TaskStatus | null {
+  if (
+    !plain(value) ||
+    value.schema !== schema ||
+    value.taskId !== taskId ||
+    value.layer !== "L3_TaskAgent" ||
+    typeof value.state !== "string" ||
+    ![
+      "Pending",
+      "Decomposing",
+      "Delegated",
+      "InProgress",
+      "Escalated",
+      "Completed",
+      "Failed",
+    ].includes(value.state) ||
+    !(value.claim === null || validClaim(value.claim)) ||
+    !validOwner(value.owner, value.claim as Claim | null) ||
+    !validResolution(
+      value.resolution,
+      value.claim as Claim | null,
+      value.state,
+    ) ||
+    !(
+      value.assignment === null ||
+      (plain(value.assignment) &&
+        Object.keys(value.assignment).length === 1 &&
+        typeof value.assignment.agentId === "string" &&
+        value.assignment.agentId.length > 0 &&
+        new TextEncoder().encode(value.assignment.agentId).length <= 1024)
+    ) ||
+    (value.claim !== null &&
+      (!plain(value.assignment) ||
+        value.assignment.agentId !== (value.claim as Claim).agentId))
+  )
+    return null;
+  return {
+    taskId,
+    state: value.state,
+    assignment: value.assignment as TaskStatus["assignment"],
+    claim: value.claim as Claim | null,
+    owner: value.owner as Owner | null,
+    resolution: value.resolution as ManualResolution | null,
+  };
 }

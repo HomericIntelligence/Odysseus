@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,575 @@ import { createDashboardServer } from "../server/http.mjs";
 import { FleetView } from "../server/view.mjs";
 
 const fixtureCredential = randomBytes(24).toString("base64url");
+
+test("planned issue routes stay authenticated and unavailable without configuration", async (t) => {
+  const { url, view } = await fixture(t);
+  const input = {
+    schema: "hi/agamemnon/issue-import/v1",
+    repositoryKey: "project",
+    issueNumber: 42,
+    repositoryId: "R_project",
+    issueId: "I_work",
+    plan: { kind: "issue_body", digest: "a".repeat(64) },
+  };
+  const routes = [
+    ["/api/issue-intakes/repositories", "GET"],
+    ["/api/issue-intakes/project/42", "GET"],
+    ["/api/issue-intakes", "POST"],
+    [`/api/tasks/issue-${"a".repeat(64)}`, "GET"],
+  ];
+  const send = (path, method, cookie) =>
+    fetch(`${url}${path}`, {
+      method,
+      headers: {
+        origin: url,
+        "content-type": "application/json",
+        ...(cookie ? { cookie } : {}),
+      },
+      ...(method === "POST" ? { body: JSON.stringify(input) } : {}),
+    });
+  for (const [path, method] of routes)
+    assert.equal((await send(path, method)).status, 401);
+  const cookie = await login(url);
+  for (const [path, method] of routes) {
+    const response = await send(path, method, cookie);
+    assert.equal(response.status, 503, path);
+    assert.deepEqual(await response.json(), {
+      error: "not_configured",
+      outcome: "not_submitted",
+    });
+    assert.equal(response.headers.get("cache-control"), "no-store");
+  }
+  assert.deepEqual(view.snapshot().observations, []);
+});
+
+test("planned issue repository selection comes from authenticated controller configuration without Nestor", async (t) => {
+  const calls = [];
+  const apiKey = randomBytes(24).toString("hex");
+  const registry = {
+    schema: "hi/agamemnon/issue-repositories/v1",
+    repositories: [
+      { key: "first", repository: "Example/First", repositoryId: "R_first" },
+      { key: "second", repository: "Example/Second", repositoryId: "R_second" },
+    ],
+  };
+  const { url } = await fixture(t, {
+    issueImport: {
+      url: "http://127.0.0.1:9876/operator-base",
+      apiKey,
+      fetchImpl: async (target, options) => {
+        calls.push({ target: String(target), ...options });
+        return new Response(JSON.stringify(registry), { status: 200 });
+      },
+    },
+  });
+  assert.equal(
+    (await fetch(`${url}/api/issue-intakes/repositories`)).status,
+    401,
+  );
+  assert.deepEqual(calls, []);
+  const cookie = await login(url);
+  const response = await fetch(`${url}/api/issue-intakes/repositories`, {
+    headers: { cookie },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), registry);
+  assert.equal(calls.length, 1);
+  assert.equal(
+    calls[0].target,
+    "http://127.0.0.1:9876/v1/fleet/issue-intakes/repositories",
+  );
+  assert.equal(calls[0].method, "GET");
+  assert.equal(calls[0].headers.authorization, `Bearer ${apiKey}`);
+  assert.equal(calls[0].redirect, "error");
+  assert.ok(calls[0].signal instanceof AbortSignal);
+  const capability = await (
+    await fetch(`${url}/api/capabilities`, { headers: { cookie } })
+  ).json();
+  assert.equal(capability.issueImport.enabled, true);
+  assert.equal(capability.researchIntake.enabled, false);
+  assert.equal(capability.researchImport.enabled, false);
+});
+
+test("planned issue registry rejects duplicate native IDs and preserves reordered mappings", async (t) => {
+  const entries = [
+    { key: "first", repository: "Example/First", repositoryId: "R_first" },
+    { key: "second", repository: "Example/Second", repositoryId: "R_second" },
+  ];
+  let repositories = [...entries].reverse();
+  const calls = [];
+  const { url } = await fixture(t, {
+    issueImport: {
+      url: "http://127.0.0.1:9876/operator-base",
+      apiKey: randomBytes(24).toString("hex"),
+      fetchImpl: async (target, options) => {
+        calls.push([new URL(target).pathname, options.method]);
+        return Response.json({
+          schema: "hi/agamemnon/issue-repositories/v1",
+          repositories,
+        });
+      },
+    },
+  });
+  const cookie = await login(url);
+  const read = () =>
+    fetch(`${url}/api/issue-intakes/repositories`, {
+      headers: { cookie },
+    });
+  const positive = await read();
+  assert.equal(positive.status, 200);
+  assert.deepEqual(await positive.json(), {
+    schema: "hi/agamemnon/issue-repositories/v1",
+    repositories: [entries[1], entries[0]],
+  });
+  repositories = [entries[0], { ...entries[1], repositoryId: "R_first" }];
+  const ambiguous = await read();
+  assert.equal(ambiguous.status, 503);
+  assert.deepEqual(await ambiguous.json(), {
+    error: "registry_unavailable",
+    outcome: "not_submitted",
+  });
+  assert.deepEqual(calls, [
+    ["/v1/fleet/issue-intakes/repositories", "GET"],
+    ["/v1/fleet/issue-intakes/repositories", "GET"],
+  ]);
+});
+
+// Controlled wire examples follow Agamemnon issue510's frozen wire-v1 spec.
+// They are not recorded controller output; the final producer fixture is separate.
+async function plannedIssueFixture(t, options = {}) {
+  const calls = [];
+  const apiKey = randomBytes(24).toString("hex");
+  const issue = {
+    repository: "Example/Project",
+    number: 42,
+    url: "https://github.com/Example/Project/issues/42",
+  };
+  const input = {
+    schema: "hi/agamemnon/issue-import/v1",
+    repositoryKey: "project",
+    issueNumber: 42,
+    repositoryId: "R_project",
+    issueId: "I_work",
+    plan: { kind: "issue_body", digest: "a".repeat(64) },
+  };
+  const routing = {
+    domain: "pipeline",
+    hmasRole: "task-agent",
+    stage: "implementation",
+  };
+  const inspection = {
+    schema: "hi/agamemnon/issue-inspection/v1",
+    repositoryKey: input.repositoryKey,
+    repositoryId: input.repositoryId,
+    issueId: input.issueId,
+    issue,
+    title: "Implement the selected plan",
+    state: "open",
+    plan: input.plan,
+    observedAt: "2026-09-13T06:00:00Z",
+  };
+  const receipt = {
+    schema: "hi/agamemnon/issue-import-receipt/v1",
+    // Independently calculated with Python lexical JSON from the wire contract.
+    taskId:
+      "issue-25074367d8e8ec5e691f3246b29ff0a062128d856eab137b7f6c8885715188e2",
+    state: "Pending",
+    provenance: {
+      schema: "hi/agamemnon/issue-intake/v1",
+      forge: "github",
+      repositoryId: input.repositoryId,
+      issueId: input.issueId,
+      issue,
+      plan: input.plan,
+      routing,
+      observedAt: inspection.observedAt,
+    },
+    issue,
+    routing,
+  };
+  const task = {
+    task_id: receipt.taskId,
+    state: "Pending",
+    layer: "L3_TaskAgent",
+    task: {
+      id: receipt.taskId,
+      state: "Pending",
+      layer: "L3_TaskAgent",
+      brief_id: "",
+      parent_task_id: "",
+      module: "",
+      blocked_by: [],
+      child_task_ids: [],
+      repo: issue.repository,
+      issue: issue.number,
+      assigned_lead_id: "",
+      description: "synthetic-private-plan",
+      delivery: { issueIntake: receipt.provenance },
+    },
+  };
+  const view = new FleetView();
+  const server = await fixture(t, {
+    view,
+    issueImport: {
+      url: "http://127.0.0.1:9876/operator-base",
+      apiKey,
+      observe: (event) => view.observe(event),
+      fetchImpl: async (url, request) => {
+        const call = {
+          path: new URL(url).pathname + new URL(url).search,
+          ...request,
+        };
+        calls.push(call);
+        if (options.reply)
+          return options.reply(call, { inspection, receipt, task });
+        if (request.method === "POST")
+          return new Response(JSON.stringify(receipt), { status: 201 });
+        if (call.path.startsWith("/v1/tasks/"))
+          return new Response(JSON.stringify(task), { status: 200 });
+        return new Response(JSON.stringify(inspection), { status: 200 });
+      },
+    },
+  });
+  const cookie = await login(server.url);
+  return { ...server, cookie, calls, apiKey, input, inspection, receipt, task };
+}
+
+test("planned issue inspection and explicit import preserve the selected native identity and snapshot", async (t) => {
+  const { url, cookie, calls, input, inspection, receipt, view, apiKey } =
+    await plannedIssueFixture(t);
+  const inspected = await fetch(`${url}/api/issue-intakes/project/42`, {
+    headers: { cookie },
+  });
+  assert.equal(inspected.status, 200);
+  assert.deepEqual(await inspected.json(), inspection);
+  assert.deepEqual(
+    calls.map((call) => [call.path, call.method]),
+    [["/v1/fleet/issue-intakes/project/42", "GET"]],
+  );
+  const imported = await fetch(`${url}/api/issue-intakes`, {
+    method: "POST",
+    headers: { cookie, origin: url, "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  assert.equal(imported.status, 201);
+  assert.deepEqual(await imported.json(), receipt);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].path, "/v1/fleet/issue-intakes");
+  assert.equal(calls[1].method, "POST");
+  assert.deepEqual(JSON.parse(calls[1].body), input);
+  for (const call of calls) {
+    assert.equal(call.headers.authorization, `Bearer ${apiKey}`);
+    assert.equal(call.redirect, "error");
+    assert.ok(call.signal instanceof AbortSignal);
+  }
+  const events = view.snapshot().observations;
+  assert.deepEqual(
+    events.map((event) => event.operation),
+    ["request", "response", "request", "response"],
+  );
+  assert.equal(events[0].messageId, events[1].messageId);
+  assert.equal(events[2].messageId, events[3].messageId);
+  assert.equal(events[2].correlationId, input.issueId);
+  assert.equal(events[2].transport, "http");
+  const raw = JSON.stringify(events);
+  assert.equal(raw.includes(apiKey), false);
+  assert.equal(raw.includes(input.plan.digest), false);
+  assert.equal(raw.includes(inspection.title), false);
+  assert.deepEqual(view.snapshot().resources.sessions, []);
+});
+
+test("planned issue selectors and request bodies reject ambiguous input before controller calls", async (t) => {
+  const { url, cookie, calls, input } = await plannedIssueFixture(t);
+  for (const path of [
+    "/api/issue-intakes/project/42?digest=private",
+    "/api/issue-intakes/project/42?planCommentId=one&planCommentId=two",
+    "/api/issue-intakes/project/0",
+    "/api/issue-intakes/project/2147483648",
+    "/api/issue-intakes/project/42/extra",
+    "/api/issue-intakes/%2Fother/42",
+  ]) {
+    assert.equal(
+      (await fetch(`${url}${path}`, { headers: { cookie } })).status,
+      400,
+      path,
+    );
+  }
+  const validBody = JSON.stringify(input);
+  for (const invalid of [
+    { ...input, repository: "Other/Repository" },
+    { ...input, issueNumber: 1.5 },
+    { ...input, plan: { ...input.plan, digest: "A".repeat(64) } },
+    { ...input, plan: { kind: "issue_comment", digest: input.plan.digest } },
+    validBody.replace(
+      '"repositoryKey":"project"',
+      '"repositoryKey":"other","repositoryKey":"project"',
+    ),
+  ]) {
+    const response = await fetch(`${url}/api/issue-intakes`, {
+      method: "POST",
+      headers: { cookie, origin: url, "content-type": "application/json" },
+      body: typeof invalid === "string" ? invalid : JSON.stringify(invalid),
+    });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).outcome, "not_submitted");
+  }
+  assert.deepEqual(calls, []);
+});
+
+test("planned issue comment inspection binds the exact selected same-issue plan reference", async (t) => {
+  const plan = {
+    kind: "issue_comment",
+    nodeId: "IC_selected",
+    digest: "b".repeat(64),
+  };
+  const { url, cookie, calls, inspection } = await plannedIssueFixture(t, {
+    reply: async (_call, value) =>
+      new Response(JSON.stringify({ ...value.inspection, plan }), {
+        status: 200,
+      }),
+  });
+  const response = await fetch(
+    `${url}/api/issue-intakes/project/42?planCommentId=IC_selected`,
+    { headers: { cookie } },
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ...inspection, plan });
+  assert.equal(calls.length, 1);
+  assert.equal(
+    calls[0].path,
+    "/v1/fleet/issue-intakes/project/42?planCommentId=IC_selected",
+  );
+});
+
+test("planned issue task status is a neutral intrinsic projection without another task authority", async (t) => {
+  const { url, cookie, calls, receipt, task } = await plannedIssueFixture(t);
+  const response = await fetch(`${url}/api/tasks/${receipt.taskId}`, {
+    headers: { cookie },
+  });
+  assert.equal(response.status, 200);
+  const value = await response.json();
+  assert.deepEqual(value, {
+    schema: "hi/odysseus/imported-task/v1",
+    taskId: receipt.taskId,
+    state: task.state,
+    layer: task.layer,
+    provenance: receipt.provenance,
+    issue: receipt.issue,
+    assignment: null,
+    claim: null,
+    owner: null,
+    resolution: null,
+  });
+  assert.deepEqual(
+    calls.map((call) => [call.path, call.method]),
+    [[`/v1/tasks/${receipt.taskId}/state`, "GET"]],
+  );
+  assert.equal(JSON.stringify(value).includes("synthetic-private-plan"), false);
+});
+
+test("neutral task route accepts claimed research provenance and rejects mixed kinds before owner lookup", async (t) => {
+  const { receipt, taskState, upstreamCalls } = await researchImportFixture(t);
+  const claim = {
+    schema: "hi/fleet/claim/v1",
+    targetKind: "sessions",
+    targetId: "session-research",
+    workerId: "worker-research",
+    agentId: "agent-research",
+    generation: 2,
+    workspace: "/private/research-worktree",
+  };
+  taskState.state = taskState.task.state = "Delegated";
+  taskState.task.assigned_lead_id = claim.agentId;
+  taskState.task.fleet_claim = claim;
+  const resource = {
+    schema: "hi/fleet/v1",
+    kind: claim.targetKind,
+    id: claim.targetId,
+    taskId: receipt.taskId,
+    workerId: claim.workerId,
+    agentId: claim.agentId,
+    generation: claim.generation,
+    workspace: claim.workspace,
+    sessionId: claim.targetId,
+    status: "admitted",
+    claimStatus: "reserved",
+  };
+  let document = taskState;
+  const direct = await plannedIssueFixture(t, {
+    reply: async (call) =>
+      Response.json(call.path.startsWith("/v1/tasks/") ? document : resource),
+  });
+  const read = (taskId) =>
+    fetch(`${direct.url}/api/tasks/${taskId}`, {
+      headers: { cookie: direct.cookie },
+    });
+  const positive = await read(receipt.taskId);
+  assert.equal(positive.status, 200);
+  const projected = await positive.json();
+  assert.equal(projected.schema, "hi/odysseus/imported-task/v1");
+  assert.equal(projected.taskId, receipt.taskId);
+  assert.deepEqual(projected.provenance, receipt.provenance);
+  assert.equal(projected.owner.workerId, claim.workerId);
+  assert.equal(projected.owner.claimStatus, "reserved");
+  assert.equal(JSON.stringify(projected).includes(claim.workspace), false);
+  assert.deepEqual(
+    direct.calls.map((call) => [call.path, call.method]),
+    [
+      [`/v1/tasks/${receipt.taskId}/state`, "GET"],
+      [`/v1/fleet/sessions/${claim.targetId}`, "GET"],
+      [`/v1/tasks/${receipt.taskId}/state`, "GET"],
+    ],
+  );
+  // The direct identity/key/claim would all pass without the mixed-kind guard.
+  // A research-key document with added direct provenance would instead fail
+  // the separate direct-key check and would not isolate this boundary.
+  document = structuredClone(direct.task);
+  document.state = document.task.state = "Delegated";
+  document.task.assigned_lead_id = claim.agentId;
+  document.task.fleet_claim = claim;
+  resource.taskId = direct.receipt.taskId;
+  const directPositive = await read(direct.receipt.taskId);
+  assert.equal(directPositive.status, 200);
+  assert.deepEqual(
+    (await directPositive.json()).provenance,
+    direct.receipt.provenance,
+  );
+  assert.equal(direct.calls.length, 6);
+  document.task.delivery.researchIntake = receipt.provenance;
+  const mixed = await read(direct.receipt.taskId);
+  assert.equal(mixed.status, 503);
+  assert.deepEqual(await mixed.json(), {
+    error: "task_unavailable",
+    outcome: "unknown",
+  });
+  assert.deepEqual(
+    direct.calls.slice(6).map((call) => [call.path, call.method]),
+    [[`/v1/tasks/${direct.receipt.taskId}/state`, "GET"]],
+  );
+  assert.deepEqual(upstreamCalls, []);
+});
+
+test("planned issue identity rejects a lone surrogate before any controller call", async (t) => {
+  const { url, cookie, calls, input } = await plannedIssueFixture(t);
+  const response = await fetch(`${url}/api/issue-intakes`, {
+    method: "POST",
+    headers: { cookie, origin: url, "content-type": "application/json" },
+    body: JSON.stringify({ ...input, issueId: "I_\ud800" }),
+  });
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).outcome, "not_submitted");
+  assert.deepEqual(calls, []);
+});
+
+test("planned issue receipts reject duplicate keys in actual upstream JSON", async (t) => {
+  const { url, cookie, calls, input } = await plannedIssueFixture(t, {
+    reply: async (_call, { receipt }) =>
+      new Response(
+        JSON.stringify(receipt).replace(
+          '"state":"Pending"',
+          '"state":"Completed","state":"Pending"',
+        ),
+        { status: 201 },
+      ),
+  });
+  const response = await fetch(`${url}/api/issue-intakes`, {
+    method: "POST",
+    headers: { cookie, origin: url, "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    error: "import_unconfirmed",
+    outcome: "unknown",
+  });
+  assert.equal(calls.length, 1);
+});
+
+test("actual controller issue fixture passes the adapter with Pending and reserved canonical ownership", async (t) => {
+  // Exact output of Agamemnon FleetIssueConfigured.ExportsActualImportAndCanonicalOwnerTransition.
+  // Its controlled GitHub/publisher execution is separate from this replay check.
+  const raw = readFileSync(
+    new URL("./fixtures/agamemnon-issue-contract.json", import.meta.url),
+  );
+  assert.equal(
+    createHash("sha256").update(raw).digest("hex"),
+    "b68d8ff2e4f5e2ca9d7a3e0384fd886702fab4f9f035b9461ee1cc1151dc4612",
+  );
+  const producer = JSON.parse(raw);
+  let claimed = false;
+  const { url, cookie, calls, view } = await plannedIssueFixture(t, {
+    reply: async (call) => {
+      let body;
+      if (call.method === "POST") {
+        assert.deepEqual(JSON.parse(call.body), producer.importRequest);
+        return new Response(
+          JSON.stringify(
+            claimed ? producer.replayReceipt : producer.importReceipt,
+          ),
+          { status: claimed ? 200 : 201 },
+        );
+      }
+      if (call.path.endsWith("/repositories")) body = producer.registry;
+      else if (call.path.startsWith("/v1/fleet/issue-intakes/"))
+        body = producer.inspection;
+      else if (call.path.startsWith("/v1/tasks/"))
+        body = claimed ? producer.claimedTask : producer.pendingTask;
+      else body = producer.session;
+      return new Response(JSON.stringify(body), { status: 200 });
+    },
+  });
+  const get = async (path) => {
+    const response = await fetch(`${url}${path}`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  assert.deepEqual(
+    await get("/api/issue-intakes/repositories"),
+    producer.registry,
+  );
+  assert.deepEqual(
+    await get(
+      `/api/issue-intakes/${producer.importRequest.repositoryKey}/${producer.importRequest.issueNumber}`,
+    ),
+    producer.inspection,
+  );
+  for (const expected of [producer.importReceipt, producer.replayReceipt]) {
+    const response = await fetch(`${url}/api/issue-intakes`, {
+      method: "POST",
+      headers: { cookie, origin: url, "content-type": "application/json" },
+      body: JSON.stringify(producer.importRequest),
+    });
+    assert.equal(response.status, claimed ? 200 : 201);
+    assert.deepEqual(await response.json(), expected);
+    const task = await get(`/api/tasks/${expected.taskId}`);
+    assert.equal(task.schema, "hi/odysseus/imported-task/v1");
+    assert.equal(task.state, expected.state);
+    assert.deepEqual(task.provenance, expected.provenance);
+    if (!claimed) assert.equal(task.owner, null);
+    else {
+      assert.equal(task.assignment.agentId, producer.session.agentId);
+      assert.equal(task.claim.generation, producer.session.generation);
+      assert.equal(task.owner.claimStatus, "reserved");
+      assert.equal(task.owner.status, "admitted");
+      assert.deepEqual(
+        calls.slice(-3).map((call) => call.path),
+        [
+          `/v1/tasks/${expected.taskId}/state`,
+          `/v1/fleet/sessions/${producer.session.id}`,
+          `/v1/tasks/${expected.taskId}/state`,
+        ],
+      );
+    }
+    assert.equal(
+      JSON.stringify(task).includes(producer.session.workspace),
+      false,
+    );
+    claimed = true;
+  }
+  assert.equal(calls.filter((call) => call.method === "POST").length, 2);
+  assert.deepEqual(view.snapshot().resources.sessions, []);
+});
 
 async function fixture(t, options = {}) {
   const view = options.view ?? new FleetView();
@@ -680,6 +1250,82 @@ async function mainProcess(t, configuration) {
   );
   return { url: `http://127.0.0.1:${port}`, outcome, stderr };
 }
+
+test("planned issue main process uses the explicit feature flag and controller credentials", async (t) => {
+  const registry = {
+    schema: "hi/agamemnon/issue-repositories/v1",
+    repositories: [
+      {
+        key: "project",
+        repository: "Example/Project",
+        repositoryId: "R_project",
+      },
+    ],
+  };
+  const calls = [];
+  const authorityKey = randomBytes(24).toString("hex");
+  const controller = createServer((request, response) => {
+    calls.push({
+      method: request.method,
+      path: request.url,
+      authorization: request.headers.authorization,
+    });
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify(
+        request.url === "/v1/fleet/issue-intakes/repositories"
+          ? registry
+          : { items: [], total: 0 },
+      ),
+    );
+  });
+  await new Promise((done) => controller.listen(0, "127.0.0.1", done));
+  t.after(async () => {
+    controller.closeAllConnections();
+    await new Promise((done) => controller.close(done));
+  });
+  for (const flag of [undefined, "1"]) {
+    await t.test(flag ? "enabled" : "disabled", async (t) => {
+      const main = await mainProcess(t, {
+        ODYSSEUS_ENABLE_ISSUE_IMPORT: flag,
+        ODYSSEUS_AGAMEMNON_URL: `http://127.0.0.1:${controller.address().port}`,
+        AGAMEMNON_API_KEY: authorityKey,
+      });
+      assert.equal(main.outcome.kind, "listening");
+      const cookie = await login(main.url);
+      const capabilities = await (
+        await fetch(`${main.url}/api/capabilities`, { headers: { cookie } })
+      ).json();
+      assert.equal(capabilities.issueImport?.enabled === true, flag === "1");
+      const response = await fetch(
+        `${main.url}/api/issue-intakes/repositories`,
+        { headers: { cookie } },
+      );
+      assert.equal(response.status, flag ? 200 : 503);
+      if (flag) assert.deepEqual(await response.json(), registry);
+    });
+  }
+  assert.equal(
+    calls.filter((call) => call.path === "/v1/fleet/issue-intakes/repositories")
+      .length,
+    1,
+  );
+  assert.ok(
+    calls.every(
+      (call) =>
+        call.method === "GET" &&
+        call.authorization === `Bearer ${authorityKey}`,
+    ),
+  );
+  await t.test(
+    "enabled incomplete configuration rejects startup",
+    async (t) => {
+      const main = await mainProcess(t, { ODYSSEUS_ENABLE_ISSUE_IMPORT: "1" });
+      assert.equal(main.outcome.kind, "exit");
+      assert.equal(main.outcome.code, 1);
+    },
+  );
+});
 
 test("research import main process requires explicit opt-in and wires the configured service", async (t) => {
   for (const [flag, enabled] of [

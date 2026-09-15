@@ -1028,9 +1028,47 @@ test("imports and task reads share four operation slots and release every comple
   assert.equal((await next).code, 200);
 });
 
+test("owned import reader releases its lock after normal data, stream errors and cancellation errors", async (t) => {
+  for (const kind of ["normal", "stream error", "cancel error"]) {
+    await t.test(kind, async () => {
+      const stream =
+        kind === "normal"
+          ? null
+          : new ReadableStream({
+              start(controller) {
+                if (kind === "stream error")
+                  controller.error(
+                    new Error("controlled upstream stream error"),
+                  );
+                else controller.enqueue(new Uint8Array(2 * 1024 * 1024 + 1));
+              },
+              cancel() {
+                throw new Error("controlled upstream cancellation error");
+              },
+            });
+      const response = stream
+        ? new Response(stream, { status: 201 })
+        : jsonResponse();
+      assert.equal(response.body.locked, false);
+      const result = await adapter(async () => response).submit(input);
+      assert.equal(result.code, kind === "normal" ? 201 : 503);
+      if (kind !== "normal")
+        assert.deepEqual(result.body, {
+          error: "import_unconfirmed",
+          outcome: "unknown",
+        });
+      assert.equal(
+        response.body.locked,
+        false,
+        "the adapter must release its owned body reader even when cancellation rejects",
+      );
+    });
+  }
+});
+
 test(
-  "real HTTP operations enforce one five-second deadline across headers body and owner rereads",
-  { concurrency: true, timeout: 9000 },
+  "real HTTP operations give imports forty seconds while owner rereads retain five seconds",
+  { concurrency: true, timeout: 46000 },
   async (t) => {
     await Promise.all(
       ["import headers", "import body", "owner reread body"].map((phase) =>
@@ -1038,8 +1076,13 @@ test(
           const { document, resource } = claimedTask();
           const requests = [];
           const timers = [];
+          let closed;
+          const responseClosed = new Promise((resolve) => {
+            closed = resolve;
+          });
           t.after(() => timers.forEach(clearTimeout));
           const url = await loopback(t, (request, response) => {
+            response.once("close", closed);
             requests.push({ method: request.method, path: request.url });
             const index = requests.length;
             if (phase === "owner reread body" && index <= 2) {
@@ -1074,9 +1117,29 @@ test(
           const elapsed = performance.now() - started;
           assert.equal(result.code, 503);
           assert.ok(
-            elapsed >= 4500 && elapsed < 7000,
+            phase === "owner reread body"
+              ? elapsed >= 4500 && elapsed < 7000
+              : elapsed >= 39500 && elapsed < 44000,
             `actual elapsed ${elapsed} ms`,
           );
+          if (phase === "import body") {
+            await Promise.race([
+              responseClosed,
+              new Promise((_, reject) =>
+                timers.push(
+                  setTimeout(
+                    () =>
+                      reject(
+                        new Error(
+                          "owned import response did not close after deadline",
+                        ),
+                      ),
+                    1000,
+                  ),
+                ),
+              ),
+            ]);
+          }
           assert.equal(requests.length, phase === "owner reread body" ? 3 : 1);
           assert.equal(
             events.filter((e) => e.operation === "request").length,
