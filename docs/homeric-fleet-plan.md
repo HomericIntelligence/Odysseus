@@ -1,6 +1,6 @@
 # Homeric Fleet implementation plan
 
-Updated: 2026-09-11. Status: consolidated implementation plan; acceptance has not run.
+Updated: 2026-09-17. Status: implementation plan; real-worker acceptance has not run.
 
 This plan integrates the laptop/SSH/Slurm operational requirements with the
 [Odysseus architecture](architecture.md) and the subsequently approved Fleet
@@ -490,6 +490,44 @@ cross-component documentation, and integration harness. Preserve review/publicat
 rules, accepted ADRs, and canonical configuration coordination; update submodule
 pins only after explicit integration sign-off.
 
+### Immediate delivery order
+
+Prove a small working multi-agent system before capacity experiments. Use this
+order to select the next work. The workstreams below remain the full scope;
+research interviews, broader dashboards, and scheduling do not have to precede
+the first planned-issue worker.
+
+| Milestone | Scope | Required evidence before proceeding |
+|---|---|---|
+| A. Minimum execution path | Integrate Agamemnon orchestration, the Keystone gateway, the Hephaestus worker, and the pinned AchaeanFleet image; connect Odysseus ownership and message observations | Compatible source and image revisions; each required PR has local CI/CD, applicable hosted checks, and a delivered Athena GO for its current commit; the integrated path preserves durable admission and execution controls |
+| B. One real worker | Authenticate one runtime independently, admit one eligible existing GitHub issue, execute normal Codex tools, return reviewed output, and display ownership and observed messages | Confirmed GitHub-backed claim before dispatch; enforced workspace and tool isolation; actual tool and build/test receipts; linked output with independent review; correlated issue, task, agent, host, conversation, and message records in Odysseus |
+| C. Three-site collaboration | Run one logical agent on the laptop, one on M1, and one on M2; pass dependent work between hosts and test a disconnect/reconnect | Actual admitted work on all three sites; a downstream task starts only after confirmed upstream completion; reconnect preserves ownership, replays unacknowledged results, and creates no duplicate execution; Odysseus shows the handoff and any observation gap |
+| D. Measured scale | Run the planned laptop and cluster ramps, then the combined demonstration | Scylla and Argus measurements at each ramp; all required recovery gates pass before the combined 12 + 48 + 48 real-work run |
+
+For milestone B, select one reviewed issue with an available writer claim and a
+known toolchain. Use Agamemnon's existing planned-issue entry point. Do not require
+Nestor research intake or Telemachy epic creation for an already-planned issue.
+Retain the research and interactive flows as delivery requirements and validate
+them before final acceptance.
+
+Record the tested source commits, image digest, issue and task identifiers, claim
+generation, worker and host identity, conversation identifier, and event cursors.
+Keep authentication and private conversation data in backend/runtime storage.
+Only actual execution and transport observations establish these milestones;
+component CI, mock services, idle conversations, and animated traffic do not.
+
+For milestone C, record upstream and downstream issue dependencies and the exact
+reviewed output that crosses hosts. A disconnected laptop permits only completion
+of already-admitted remote work. Test replay and reconciliation before admitting
+new work after reconnect. Heartbeat expiry alone cannot transfer ownership.
+
+The three-agent milestone does not reduce the final 108-agent target. Prepare
+eligible work for each ramp as capacity increases; prepare all 108 independent
+issues and replacements before the combined run. Scheduled operation remains
+disabled until final acceptance.
+
+### Full implementation workstreams
+
 | Phase | Deliverables | Required evidence before promotion |
 |---|---|---|
 | 1. Architecture and persistence | Proposed ADRs; ownership/storage boundaries; API/manifests; durable claims and command intent; restart hydration; Projects projection | GitHub failure injection rejects dispatch; no memory-only Fleet; duplicate/concurrent claims fenced; restart reproduces state; Project mapping and repair work |
@@ -514,6 +552,11 @@ Use real service/container/cluster canaries for transport, authentication, cgrou
 snapshot receipts, and recovery claims. A mocked integration test does not satisfy
 an infrastructure acceptance gate. Publish reproducible `just`/`pixi run` commands
 and retain independently generated artifacts for review.
+
+Test containers must run their actual test command and exit when it finishes.
+Set finite deadlines for setup, tests, and result collection. Preserve the test
+exit status and confirm the owned container has stopped after success, failure,
+or timeout. Do not retain test environments with `sleep infinity`.
 
 ## 10. Reconciliation with the attached draft
 

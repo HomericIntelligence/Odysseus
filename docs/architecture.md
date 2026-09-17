@@ -296,6 +296,19 @@ artifact digests bind exact sources; deployment and the 12 + 48 + 48 real-work
 acceptance experiment remain separate gates. Scheduled allocations stay disabled
 until acceptance completes.
 
+Delivery proceeds through four milestones: the minimum integrated execution
+path, one authenticated worker on a real planned issue, three-site collaboration,
+and measured scale. The first worker uses Agamemnon's planned-issue entry point
+and must execute normal Codex tools, return independently reviewed output, and
+show its ownership and observed messages in Odysseus. Research intake is a
+separate entry path and is not a prerequisite for an already-planned issue.
+
+The three-site milestone uses one agent on the laptop, one on M1, and one on M2.
+It must demonstrate a dependency handoff between hosts and a tested reconnect
+with durable ownership and replay. These milestones establish evidence for the
+later capacity ramps; the final target remains 12 + 48 + 48 active agents.
+See the [delivery order and evidence gates](homeric-fleet-plan.md#immediate-delivery-order).
+
 ---
 
 ## Task State Machine
