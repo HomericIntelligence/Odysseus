@@ -1,26 +1,63 @@
-# Runbook: Add a New Agent Type to the HomericIntelligence Ecosystem
+# Runbook: Add a New Containerized Agent Type
+
+## Choose the Deployment Type
+
+Use the main procedure only when the exact Myrmidons schema and approved
+desired state select a Docker/container deployment that needs an AchaeanFleet
+vessel. Do not create a vessel merely because an agent type is new.
+
+For a `local` deployment, use the [Local Deployment Branch](#local-deployment-branch)
+below. The AchaeanFleet worktree, container runtime, image build, and
+AchaeanFleet component or integration-PR steps do not apply.
 
 ## Important: Submodule Layout (Accepted: ADR-007)
 
-Per [ADR-007 — Replace Symlinks with Real Git Submodules](../adr/007-symlinks-over-submodules.md) (**Accepted**), every subdirectory referenced in this runbook (`infrastructure/AchaeanFleet`, `provisioning/Myrmidons`, `shared/Mnemosyne`, etc.) is now a real git submodule (`git ls-files -s` reports mode `160000`). When making changes to these repos, the recommended workflow is:
+Per [ADR-007 — Replace Symlinks with Real Git Submodules](../adr/007-symlinks-over-submodules.md) (**Accepted**), every component directory referenced in this runbook (including `infrastructure/AchaeanFleet` and `provisioning/Myrmidons`) is a real git submodule (`git ls-files -s` reports mode `160000`). Use this workflow:
 
-1. `cd` into the submodule path inside the Odysseus checkout (e.g. `cd infrastructure/AchaeanFleet`) — it has its own `.git` link and acts as a normal repo clone of the submodule's branch.
-2. Make commits and push to the submodule's GitHub remote.
-3. Return to the Odysseus root and `git add` the submodule path to bump the recorded gitlink SHA.
-4. Commit and push the submodule SHA bump in Odysseus.
+1. Treat the component worktrees inside Odysseus as read-only. Work on a
+   feature branch in an isolated worktree of each owning component repository.
+2. Let component CI and review finish before merging that component PR.
+3. After explicit integration approval identifies the exact merged commits,
+   update the corresponding gitlinks in a separate Odysseus integration PR.
 
-> Older versions of this runbook described a symlink-based layout (the
-> situation before ADR-007 was accepted). If you encounter a checkout where
-> these paths are still symlinks, re-run `just bootstrap` to materialise the
-> real submodule worktrees.
+An uninitialized submodule appears as an empty directory or a `-`-prefixed
+entry in `git submodule status`; `just bootstrap` materializes it. A symlink is
+not a valid current layout and is not repaired by assuming it points to a
+branch.
 
 ## Prerequisites
 
 - You have cloned the Odysseus repo with submodules (`just bootstrap`).
-- You have standalone clones of AchaeanFleet, Myrmidons, and Mnemosyne repositories (see Step 6).
-- You have write access to AchaeanFleet, Myrmidons, and Mnemosyne repos.
-- Podman is installed and the Podman socket is running (ADR 001).
-- Agamemnon is running and accessible at `$AGAMEMNON_URL`.
+- You have isolated, feature-branch worktrees for Myrmidons and, for the
+  container path only, AchaeanFleet, prepared from verified remote base
+  commits.
+- You have write access to those component repositories.
+- For the container path, a working Podman or compatible container runtime is
+  installed (ADR 001).
+- Any live Agamemnon test is explicitly authorized and isolated from
+  production desired state.
+
+## Local Deployment Branch
+
+For a local agent type, work only in the isolated Myrmidons worktree unless a
+separately scoped change has another owner:
+
+1. Create the template from the nearest current local-deployment example and
+   validate every field against `schemas/agent-v1.schema.json`.
+2. Keep the deployment discriminator explicit. Preserve the current program,
+   `programArgs`, model, role, lane, and provider defaults unless the approved
+   task expressly changes one; do not add image or vessel fields.
+3. Run the Myrmidons repository's `just validate` and `just test` front doors.
+4. Use only the pinned Agamemnon reconciler's documented plan/diff route. A
+   live apply needs separate authority, isolation, exact-result readback, and
+   guaranteed cleanup.
+5. Deliver the Myrmidons PR through its own CI/CD and exact-head
+   `$athena:pr-review`. After it merges, update only the Myrmidons gitlink in a
+   separately approved Odysseus integration PR and repeat those exact-head
+   gates.
+
+Stop here for a local deployment. The remaining steps are the container-only
+branch.
 
 ---
 
@@ -28,140 +65,152 @@ Per [ADR-007 — Replace Symlinks with Real Git Submodules](../adr/007-symlinks-
 
 ### 1. Create the Dockerfile in AchaeanFleet
 
-Navigate to the AchaeanFleet submodule and create a new vessel directory:
+In the isolated AchaeanFleet worktree, create a new vessel directory:
 
 ```bash
-cd infrastructure/AchaeanFleet/vessels/
-mkdir <agent-name>
+cd /path/to/AchaeanFleet/vessels/
+agent_name='replace-with-agent-name'
+mkdir "$agent_name"
 ```
 
 Create a `Dockerfile` in that directory. Follow the conventions in existing vessels:
 - Base image should be a minimal, OCI-compatible image.
 - The entrypoint should be the agent binary or script.
-- Include a `LABEL hi.agamemnon.agent-type=<agent-name>` for discoverability.
 - Document required environment variables in a comment block at the top of the Dockerfile.
+- Update AchaeanFleet's checked-in vessel/base routing and its tests so
+  `just build-vessel <agent-name>` recognizes the new name.
 
 ### 2. Build the vessel image
 
 From the AchaeanFleet root:
 
 ```bash
-cd infrastructure/AchaeanFleet
-just build-vessel <agent-name>
+cd /path/to/AchaeanFleet
+agent_name='replace-with-agent-name'
+just build-vessel "$agent_name"
 ```
 
-This builds the image and tags it as `homeric-intelligence/<agent-name>:latest`. Verify the build succeeded:
+The current AchaeanFleet recipe tags a vessel as
+`achaean-<agent-name>:latest`. Verify the build succeeded:
 
 ```bash
-podman images | grep <agent-name>
+agent_name='replace-with-agent-name'
+podman images | rg "achaean-${agent_name}"
 ```
 
-### 3. Verify with Agamemnon agent launch
+### 3. Plan the Agamemnon Change
 
-Test that Agamemnon can launch a container from the new image:
-
-```bash
-curl -X POST $AGAMEMNON_URL/v1/agents \
-  -H "Content-Type: application/json" \
-  -d '{
-    "image": "homeric-intelligence/<agent-name>:latest",
-    "name": "test-<agent-name>",
-    "env": {}
-  }'
-```
-
-Check that the container starts and Agamemnon reports it as running:
-
-```bash
-curl $AGAMEMNON_URL/v1/agents | jq '.[] | select(.name == "test-<agent-name>")'
-```
-
-Clean up the test agent before proceeding:
-
-```bash
-curl -X DELETE $AGAMEMNON_URL/v1/agents/test-<agent-name>
-```
+Do not launch a live agent from a hand-written payload. The pinned Agamemnon
+OpenAPI document and reconciler are the interface authorities; a Myrmidons
+description remains desired-state input, not proof of deployment. After Step 4,
+use the reconciler's documented plan/diff route in
+`control/Agamemnon/tools/reconciler/`. Apply only to an explicitly authorized
+environment, verify the returned agent identity and convergence, and guarantee
+cleanup of any sandbox agent created for the smoke test.
 
 ### 4. Add a YAML template to Myrmidons
 
-Navigate to Myrmidons and add a template for the new agent type:
+In the isolated Myrmidons worktree, add a template for the new agent type:
 
 ```bash
-cd provisioning/Myrmidons/_templates/
+cd /path/to/Myrmidons/agents/_templates/
 ```
 
-Create `<agent-name>.yaml` following the format of existing templates. At minimum, include:
-- `name`: a template variable (e.g., `{{ name }}`)
-- `image`: `homeric-intelligence/<agent-name>:latest`
-- `env`: required environment variables as template variables
-- `tags`: include `agent-type: <agent-name>` for filtering
+Create `<agent-name>.yaml` from the closest existing template. Validate every
+field against `schemas/agent-v1.schema.json`; do not copy field names from this
+runbook. Keep the deployment type explicit and place Docker-specific image and
+resource data under the schema's Docker deployment object.
 
-### 5. Register in Mnemosyne marketplace.json
+### 5. Validate the Myrmidons Dataset
 
-Navigate to Mnemosyne and add the new agent type to the marketplace catalog:
+From the Myrmidons root, use its checked-in task front door:
 
 ```bash
-cd shared/Mnemosyne
+just validate
+just test
 ```
 
-Edit `marketplace.json` to add an entry for the new agent type. Include:
-- `name`: human-readable name
-- `type`: `<agent-name>`
-- `image`: `homeric-intelligence/<agent-name>:latest`
-- `description`: what the agent does
-- `template`: path to the Myrmidons template (e.g., `provisioning/Myrmidons/_templates/<agent-name>.yaml`)
-- `version`: `1.0.0`
+Mnemosyne is a knowledge backend and has no agent-type marketplace. Do not add
+an agent definition there. If the new agent also needs a genuinely reusable,
+user-invoked workflow, propose a discriminating skill in Athena as a separate
+change; most agent types need no new skill.
 
-### 6. Commit and push changes
+### 6. Open the Component Pull Requests
 
-Per [ADR-007](../adr/007-symlinks-over-submodules.md) (**Accepted**), the
-submodule paths are real git submodule worktrees. You can `cd` into each
-submodule path inside the Odysseus checkout and commit there directly; the
-final step is to bump the recorded submodule SHA in the Odysseus root:
-
-#### 6a. Commit in AchaeanFleet submodule
+Commit and push feature branches, never component default branches directly.
+For AchaeanFleet:
 
 ```bash
-cd infrastructure/AchaeanFleet
-git add vessels/<agent-name>/
-git commit -m "feat: add <agent-name> vessel"
-git push origin main
+cd /path/to/AchaeanFleet
+agent_name='replace-with-agent-name'
+issue_number='replace-with-issue-number'
+git add "vessels/${agent_name}/"
+git commit -m "feat: add ${agent_name} vessel"
+git push -u origin "${issue_number}-add-${agent_name}-vessel"
+gh pr create --title "feat: add ${agent_name} vessel"
 ```
 
-#### 6b. Commit in Myrmidons standalone clone
-
-Navigate to your Myrmidons repository clone:
+For Myrmidons:
 
 ```bash
 cd /path/to/Myrmidons
-git add _templates/<agent-name>.yaml
-git commit -m "feat: add <agent-name> template"
-git push origin main
+agent_name='replace-with-agent-name'
+issue_number='replace-with-issue-number'
+git add "agents/_templates/${agent_name}.yaml"
+git commit -m "feat: add ${agent_name} template"
+git push -u origin "${issue_number}-add-${agent_name}-template"
+gh pr create --title "feat: add ${agent_name} template"
 ```
 
-#### 6c. Commit in Mnemosyne standalone clone
+Each PR must pass `$athena:pr-review` and its repository-owned CI/CD contract
+before merge. If an Athena skill was independently justified, deliver it
+through its own Athena PR; do not couple it to a Mnemosyne marketplace change.
 
-Navigate to your Mnemosyne repository clone:
+### 7. Update Odysseus Gitlinks After Approval
+
+After both component PRs merge, obtain explicit integration approval and bind
+their exact merged SHAs. In an isolated Odysseus integration branch, check out
+those commits in the component worktrees and stage the gitlink paths:
 
 ```bash
-cd /path/to/Mnemosyne
-git add marketplace.json
-git commit -m "feat: register <agent-name> in marketplace"
-git push origin main
+agent_name='replace-with-agent-name'
+issue_number='replace-with-issue-number'
+odysseus_base_sha='replace-with-verified-origin-main-sha'
+achaean_fleet_sha='replace-with-merged-achaean-fleet-sha'
+myrmidons_sha='replace-with-merged-myrmidons-sha'
+git -C /path/to/Odysseus fetch origin main
+git -C /path/to/Odysseus rev-parse --verify 'origin/main^{commit}'
+git -C /path/to/Odysseus worktree add \
+  -b "${issue_number}-integrate-${agent_name}" \
+  "/path/to/worktrees/Odysseus-${issue_number}" \
+  "$odysseus_base_sha"
+cd "/path/to/worktrees/Odysseus-${issue_number}"
+git submodule update --init infrastructure/AchaeanFleet provisioning/Myrmidons
+
+git -C infrastructure/AchaeanFleet fetch origin
+git -C infrastructure/AchaeanFleet rev-parse --verify \
+  "${achaean_fleet_sha}^{commit}"
+git -C infrastructure/AchaeanFleet checkout --detach \
+  "$achaean_fleet_sha"
+
+git -C provisioning/Myrmidons fetch origin
+git -C provisioning/Myrmidons rev-parse --verify \
+  "${myrmidons_sha}^{commit}"
+git -C provisioning/Myrmidons checkout --detach "$myrmidons_sha"
+
+git add infrastructure/AchaeanFleet provisioning/Myrmidons
+git commit -m "chore: integrate ${agent_name} agent type"
+git push -u origin "${issue_number}-integrate-${agent_name}"
+gh pr create --title "chore: integrate ${agent_name} agent type"
 ```
 
-#### 6d. Update submodule pins in Odysseus (optional)
+The commit SHAs live in the gitlink entries, not `.gitmodules`; do not edit
+`.gitmodules` unless a component path or remote URL itself changes.
 
-If you have pinned specific commit SHAs in the Odysseus `.gitmodules` for these repos, return to Odysseus and update those pins:
-
-```bash
-cd /path/to/Odysseus
-git add .gitmodules
-git commit -m "chore: update submodule pins for <agent-name> agent type"
-git push origin main
-```
-
-Otherwise, the symlinks in Odysseus will point to the latest main branch of each repo, and no pin update is needed.
+The Odysseus integration PR is a separate pull request and must independently
+pass every live required CI/CD check plus terminal `$athena:pr-review` `GO` on
+its exact current head before merge. Do not treat the component-PR results as
+evidence for the changed integration tree.
 
 ---
 
@@ -169,8 +218,12 @@ Otherwise, the symlinks in Odysseus will point to the latest main branch of each
 
 - [ ] `Dockerfile` created in `infrastructure/AchaeanFleet/vessels/<agent-name>/`
 - [ ] `just build-vessel <agent-name>` succeeds
-- [ ] Agamemnon `/v1/agents` can launch a container from the image
-- [ ] Template added to `provisioning/Myrmidons/_templates/<agent-name>.yaml`
-- [ ] Entry added to `shared/Mnemosyne/marketplace.json`
-- [ ] Submodule pins updated in Odysseus root
-- [ ] Proteus CI pipeline passes for all modified repos
+- [ ] AchaeanFleet routing/tests recognize the vessel and its actual image tag
+- [ ] Template added to `provisioning/Myrmidons/agents/_templates/<agent-name>.yaml`
+- [ ] Myrmidons schema, reference, and dataset tests pass
+- [ ] An authorized Agamemnon plan shows the intended change
+- [ ] Any authorized sandbox apply converges and cleanup is verified
+- [ ] Component PR review and CI pass
+- [ ] Exact gitlinks are updated only in a separately approved integration PR
+- [ ] The exact integration-PR head passes its own Athena review and required
+      CI/CD checks before merge

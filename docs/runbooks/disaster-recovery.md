@@ -1,6 +1,10 @@
 # Runbook: Disaster Recovery
 
-This runbook covers recovery scenarios for the HomericIntelligence ecosystem, including total loss of the primary Agamemnon host.
+This runbook covers recovery scenarios for the HomericIntelligence ecosystem,
+including loss of an Agamemnon host. Bind the exact deployed revision,
+topology, service manager, state location, and recovery target before acting.
+Commands in this runbook are diagnostics unless an operator has approved the
+corresponding live-state effect.
 
 ---
 
@@ -10,186 +14,150 @@ This runbook covers recovery scenarios for the HomericIntelligence ecosystem, in
 
 - Agent lifecycle API is unavailable.
 - New tasks cannot be queued.
-- Hermes stops receiving webhooks (no new NATS events).
-- Existing agents running on other hosts continue running until they poll Agamemnon for instructions.
-- NATS JetStream continues operating on any surviving leaf nodes.
+- Hermes and NATS have independent health and may continue handling signed
+  webhooks and events; do not infer their state from Agamemnon's state.
+- Existing agents may continue their current process, but lifecycle and task
+  transitions that require Agamemnon are unavailable.
+- JetStream remains available only where a surviving, verified NATS server has
+  its expected storage and quorum.
 
 ### Recovery steps
 
-#### Step 1: Diagnose the failure
+### Step 1: Diagnose the failure
+
+Set the health URL from the deployment record; do not substitute a remembered
+host address.
 
 ```bash
-# Check if Agamemnon process is running
-systemctl status agamemnon   # or: ps aux | grep agamemnon
-
-# Check if the host itself is reachable
-ping 172.20.0.1
-
-# Check disk space (common cause of process death)
+AGAMEMNON_HEALTH_URL="${AGAMEMNON_HEALTH_URL:?set the verified Agamemnon base URL}"
+set -o pipefail
+curl --fail --silent --show-error "${AGAMEMNON_HEALTH_URL%/}/v1/health" \
+  | python3 -c 'import json, sys; body=json.load(sys.stdin); assert body.get("status") == "ok"'
 df -h /
 ```
 
-#### Step 2: Attempt in-place restart
+Inspect the process through the service manager recorded for that deployment.
+For example, use `systemctl status agamemnon` only when the deployed unit is
+actually named `agamemnon`; otherwise inspect the bound container or process.
 
-If the host is reachable but the process is down:
+### Step 2: Attempt in-place restart
 
-```bash
-systemctl start agamemnon
-# Wait 10 seconds
-curl http://172.20.0.1:8080/health
-```
+If the host is reachable but the process is down, first preserve logs and
+identify the cause. Obtain approval for the restart, use the deployment's
+recorded service-manager command, and then re-run the versioned health probe
+above. A healthy process is not proof that registry state is complete; continue
+to Step 4. If the process cannot be restored, continue to Step 3.
 
-If this succeeds, proceed to Step 5 (verify state). If not, proceed to Step 3.
+### Step 3: Restore Agamemnon on a fresh host
 
-#### Step 3: Restore Agamemnon on a fresh host
+If the host is unrecoverable, obtain approval for the replacement target and
+provision it using [`add-new-host.md`](add-new-host.md). Install the exact
+known-good Agamemnon revision and restore its deployment configuration and
+secrets through the operator-owned secret path. Set `AGAMEMNON_URL` for clients
+only after the replacement endpoint, authentication, and network exposure have
+been verified; this runbook does not choose or discover that address.
 
-If the primary host is unrecoverable, provision a new host (see `add-new-host.md` for the base setup), then restore Agamemnon state:
+### Step 4: Restore or reconcile agent state
 
-```bash
-# On the new host: install and start Agamemnon
-# Follow ~/Agamemnon/ for installation instructions
+Restore the last verified Agamemnon state backup when one is available. The
+current pinned Myrmidons repository is a dataset package and has no `apply`
+recipe; Odysseus therefore has no `apply-all` recovery command. A checkout of
+authored YAML is not proof of live desired state.
 
-# Update AGAMEMNON_URL in your environment to point to the new host
-export AGAMEMNON_URL=http://<new-host-tailscale-ip>:8080
-```
+If no backup is available, stop before changing live state. Query the fresh
+reconciler, verify that no conflicting task is active, and obtain explicit
+operator approval for the exact version-matched dataset and effects. Use only
+a documented reconciler path from the pinned Agamemnon checkout. If that path
+is absent or cannot prove convergence, record the recovery as incomplete and
+escalate rather than inventing a wrapper.
 
-#### Step 4: Re-apply state from Myrmidons
+After an approved restoration or reconciliation, use Agamemnon's documented
+status endpoint to compare the live registry with the approved recovery
+inventory. Preserve that readback as the recovery receipt.
 
-Myrmidons holds the declarative desired state for all agents. Apply it to the fresh Agamemnon instance to reconstruct the agent registry:
+### Step 5: Verify NATS consumer state
 
-```bash
-cd /path/to/Odysseus
-just apply-all
-```
+Read the live stream and consumer inventory and compare it with the pre-incident
+receipt. Do not run a generic `nats consumer next` command: it can advance a
+consumer and is not a topology-neutral replay mechanism. If a particular
+consumer requires recovery, bind its exact stream, durable name, last known
+sequence, idempotence behavior, and component-owned recovery procedure. Obtain
+operator approval for that replay and retain the before/after consumer
+readbacks as its receipt. If no compatible procedure exists, report recovery
+as incomplete.
 
-This calls `just apply` in `provisioning/Myrmidons`, which reads all YAML manifests and reconciles agents, tasks, and configurations via the Agamemnon REST API.
+### Step 6: Verify Hermes and NATS independently
 
-Verify agents are registered:
+Hermes does not use an Agamemnon callback URL at the pinned revision. Do not
+edit or restart Hermes merely because Agamemnon moved. Use Hermes's own health
+and signed-webhook verification procedure, and use an authorized NATS identity
+with the least-privilege subject scope when checking publication. A broad
+`hi.>` subscription is not a generic recovery probe.
 
-```bash
-curl $AGAMEMNON_URL/v1/agents | jq 'length'
-# Should match the number of agent manifests in Myrmidons
-```
+### Step 7: Notify all submodule services
 
-#### Step 5: Replay missed NATS events from JetStream
-
-If consumers (Telemachy, Argus, Scylla) missed events during the outage, replay them from JetStream:
-
-```bash
-# List available streams
-nats stream list
-
-# Check the last sequence number processed by each consumer
-nats consumer info homeric-tasks <consumer-name>
-
-# Replay from a specific sequence number
-nats consumer next homeric-tasks <consumer-name> --count 1000
-```
-
-Durable consumers will automatically catch up from their last acknowledged sequence on reconnect. Manual replay is only needed if you want to reprocess events for debugging.
-
-#### Step 6: Verify Hermes webhook receiver
-
-Ensure Hermes is configured with the new Agamemnon host's webhook URL:
-
-```bash
-cd infrastructure/Hermes
-# Update the AGAMEMNON_URL in the Hermes config
-just restart
-```
-
-Confirm webhooks are flowing:
-
-```bash
-nats sub "hi.>" --count 5
-# Should see events when agents are created/started
-```
-
-#### Step 7: Notify all submodule services
-
-Restart or reconfigure any services that had a hardcoded reference to the old host's IP:
-- Argus (scrape targets)
-- Telemachy (AGAMEMNON_URL)
-- Keystone (secret injection targets)
+Search the exact deployed manifests and service environments for consumers of
+the old Agamemnon endpoint. Reconfigure only verified consumers, using their
+component runbooks and an approved endpoint change. Do not infer consumers from
+this document or restart unrelated services.
 
 ---
 
 ## Scenario 2: NATS Cluster Goes Down
 
-#### Step 1: Restart the primary NATS server
+### Step 1: Bind the failed NATS deployment
 
-```bash
-nats-server -c /etc/nats/server.conf
-```
+Identify the exact server or cluster revision, service manager, config,
+credential source, JetStream storage path, and last good stream/peer receipt.
+Preserve logs and storage before changing the service. The source files in
+`configs/nats/` do not prove which config or credentials the host deployed.
 
-#### Step 2: Verify leaf nodes reconnect
+### Step 2: Verify leaf nodes reconnect
 
-Leaf nodes (secondary hosts) will automatically attempt to reconnect. Check connectivity:
+After approval, restart through the deployment-owned service manager. Do not
+launch a second ad hoc `nats-server` process against the same ports or storage.
+Read back the actual leaf connections and compare their identities with the
+bound topology; report missing peers rather than assuming automatic recovery.
 
-```bash
-nats server info
-# All leaf nodes should appear in the cluster info
-```
+### Step 3: Verify JetStream state is intact
 
-#### Step 3: Verify JetStream state is intact
-
-```bash
-nats stream report
-# Verify message counts match pre-outage values
-# JetStream persists to disk at the store_dir in server.conf
-```
+Use an authorized system identity to obtain the stream and consumer reports.
+Compare them with the pre-incident receipt and verify the deployed storage
+path. A running server or a checked-in `store_dir` alone is not evidence that
+the expected JetStream state survived.
 
 ---
 
 ## Scenario 3: Re-bootstrap a Completely Fresh Host from Scratch
 
-Use this when setting up a net-new replacement for a completely lost host with no data recovery possible.
+Use this only after an operator approves the exact replacement host, known-good
+Odysseus revision, component pins, intended topology, and recovery inventory.
 
-```bash
-# 1. Clone Odysseus with all submodules
-git clone --recurse-submodules https://github.com/HomericIntelligence/Odysseus.git
-cd Odysseus
-
-# 2. Install pixi and just
-curl -fsSL https://pixi.sh/install.sh | bash
-pixi install
-
-# 3. Bootstrap submodules
-just bootstrap
-
-# 4. Install and start Agamemnon (follow ~/Agamemnon/)
-
-# 5. Install and start NATS with server config
-nats-server -c configs/nats/server.conf &
-
-# 6. Render and start Nomad server
-export NOMAD_ADVERTISE_ADDR=$(tailscale ip -4); export NOMAD_SERVER_IP=$NOMAD_ADVERTISE_ADDR
-just render-nomad-configs
-nomad agent -config /etc/nomad.d/server.hcl &
-
-# 7. Apply desired state from Myrmidons
-just apply-all
-
-# 8. Start Hermes event bridge
-just hermes-start
-
-# 9. Start Argus observability
-just argus-start
-
-# 10. Verify
-just status
-curl $AGAMEMNON_URL/health
-```
+1. Provision the host through [`add-new-host.md`](add-new-host.md), using the
+   approved network and secret-distribution path.
+2. Check out the approved immutable Odysseus commit and initialize its exact
+   submodule pins. Do not update gitlinks while recovering a host.
+3. Install the root and component dependencies from their locked manifests.
+4. Restore NATS only through the bound deployment procedure and verified
+   storage backup. Do not directly launch the checked-in config against live
+   ports or enable the optional Nomad path unless those actions were separately
+   approved for this topology.
+5. Restore Agamemnon and desired state as described in Scenario 1, Steps 3-4.
+6. Start only the services in the approved recovery inventory, using each
+   component's deployment procedure.
+7. Record the health, state, peer, stream, and consumer readbacks that actually
+   completed. Preserve a truthful incomplete result for any unavailable check.
 
 ---
 
 ## Recovery Checklist
 
-- [ ] Agamemnon is running and `/health` returns 200
-- [ ] `just apply-all` completed without errors
-- [ ] Agent count matches expected count in `provisioning/Myrmidons/`
-- [ ] NATS server is running and all leaf nodes have reconnected
-- [ ] JetStream stream report shows correct message counts
-- [ ] Hermes is receiving webhooks and publishing to NATS
-- [ ] Argus Grafana dashboard shows all hosts
-- [ ] Nomad `node status` shows all hosts as ready
+- [ ] Agamemnon `/v1/health` returns HTTP 200 with JSON `status` equal to `ok`
+- [ ] A verified Agamemnon backup was restored, or an explicitly approved,
+      version-matched reconciliation completed with a convergence receipt
+- [ ] Live agent state matches the approved recovery inventory
+- [ ] The approved NATS topology is healthy, or NATS was explicitly out of scope
+- [ ] JetStream and consumer readbacks match the bound recovery inventory
+- [ ] Hermes was independently verified, or was explicitly out of scope
+- [ ] Each approved observability target is reporting, or its gap is recorded
+- [ ] Optional Nomad state was verified only if Nomad belongs to this deployment

@@ -3,14 +3,48 @@
 # All interactions via curl against NATS monitoring HTTP API.
 
 NATS_MONITOR_PORT="${NATS_MONITOR_PORT:-8222}"
+NATS_MONITOR_REQUEST_SECONDS=2
+NATS_MONITOR_MAX_BYTES=1048576
 
 # Compute URL lazily so port overrides take effect after source-time
 _nats_monitor_url() { echo "http://localhost:${NATS_MONITOR_PORT}"; }
 
+_nats_monitor_json() {
+    local endpoint="$1"
+    if ! command -v curl_bounded >/dev/null 2>&1; then
+        echo "ERROR: bounded curl support is unavailable" >&2
+        return 1
+    fi
+    (
+        set -o pipefail
+        curl_bounded "$NATS_MONITOR_REQUEST_SECONDS" --silent --show-error \
+            --fail --write-out '\n%{http_code}' \
+            "$(_nats_monitor_url)$endpoint" 2>/dev/null \
+            | python3 -c '
+import json
+import sys
+
+limit = int(sys.argv[1])
+raw = sys.stdin.buffer.read(limit + 5)
+if len(raw) > limit + 4 or len(raw) < 4 or raw[-4:] != b"\n200":
+    raise SystemExit(1)
+body = raw[:-4]
+try:
+    value = json.loads(body)
+except (UnicodeDecodeError, json.JSONDecodeError):
+    raise SystemExit(1)
+if not isinstance(value, dict):
+    raise SystemExit(1)
+sys.stdout.buffer.write(body)
+' "$NATS_MONITOR_MAX_BYTES"
+    )
+}
+
 # ─── Health ──────────────────────────────────────────────────────────────────
 
 nats_health() {
-    curl -sf "$(_nats_monitor_url)/healthz" >/dev/null 2>&1
+    curl -sf --connect-timeout 2 --max-time 2 \
+        "$(_nats_monitor_url)/healthz" >/dev/null 2>&1
 }
 
 nats_wait_healthy() {
@@ -21,7 +55,8 @@ nats_wait_healthy() {
 # ─── Server Variables (/varz) ────────────────────────────────────────────────
 
 nats_varz() {
-    curl -sf "$(_nats_monitor_url)/varz" 2>/dev/null
+    curl -sf --connect-timeout 2 --max-time 2 \
+        "$(_nats_monitor_url)/varz" 2>/dev/null
 }
 
 nats_msg_count() {
@@ -39,7 +74,7 @@ nats_connection_count() {
 # ─── Connections (/connz) ────────────────────────────────────────────────────
 
 nats_connz() {
-    curl -sf "$(_nats_monitor_url)/connz" 2>/dev/null
+    _nats_monitor_json "/connz"
 }
 
 # Returns list of distinct client IDs (one per line)
@@ -74,7 +109,7 @@ for ip in sorted(ips):
 # ─── JetStream (/jsz) ───────────────────────────────────────────────────────
 
 nats_jsz() {
-    curl -sf "$(_nats_monitor_url)/jsz?streams=true" 2>/dev/null
+    _nats_monitor_json "/jsz?streams=true"
 }
 
 # Get message count for a specific JetStream stream
@@ -114,7 +149,7 @@ sys.exit(1)
 # ─── Subscriptions (/subsz) ─────────────────────────────────────────────────
 
 nats_subsz() {
-    curl -sf "$(_nats_monitor_url)/subsz?subs=1" 2>/dev/null
+    _nats_monitor_json "/subsz?subs=1"
 }
 
 nats_subscription_count() {
@@ -131,46 +166,110 @@ nats_can_restart() { [ "${IPC_TOPOLOGY:-}" = "t1" ]; }
 
 # Kill the NATS server (T1). Returns 0 once the monitor endpoint stops answering.
 nats_kill() {
+    local identity_status signal_status signal_owned_process=0
     [ "${IPC_TOPOLOGY:-}" = "t1" ] || return 1
     [ -n "${NATS_BG_PID:-}" ] || return 1
-    if ! kill -KILL "$NATS_BG_PID" 2>/dev/null; then
-        :  # already gone — nothing to do
+    [ -n "${NATS_BG_IDENTITY:-}" ] || return 1
+    [ -n "${NATS_BG_OWNER:-}" ] || return 1
+    if ! command -v _process_identity_status >/dev/null 2>&1 \
+        || ! command -v _signal_bound_process >/dev/null 2>&1; then
+        return 1
+    fi
+    if _process_identity_status "$NATS_BG_PID" "$NATS_BG_IDENTITY"; then
+        signal_owned_process=1
+    else
+        identity_status=$?
+        if [ "$identity_status" -ne 1 ]; then
+            echo "ERROR: could not verify the registered NATS process identity" >&2
+            return 1
+        fi
+    fi
+    if [ "$signal_owned_process" -eq 1 ]; then
+        if _signal_bound_process "$NATS_BG_PID" "$NATS_BG_IDENTITY" \
+            "$NATS_BG_OWNER" -KILL; then
+            :
+        else
+            signal_status=$?
+            if [ "$signal_status" -eq 1 ]; then
+                signal_owned_process=0
+            else
+                echo "ERROR: could not signal the registered NATS process" >&2
+                return 1
+            fi
+        fi
+        if [ "$signal_owned_process" -eq 1 ]; then
+            if _process_identity_status "$NATS_BG_PID" \
+                "$NATS_BG_IDENTITY" "$NATS_BG_OWNER"; then
+                # SIGKILL delivery is asynchronous; monitor extinction below
+                # is the externally observable completion proof.
+                :
+            else
+                identity_status=$?
+                if [ "$identity_status" -ne 1 ]; then
+                    echo "ERROR: could not prove NATS process signal state" >&2
+                    return 1
+                fi
+            fi
+        fi
     fi
     for _ in $(seq 1 10); do
         nats_health || return 0      # monitor no longer answering => down
-        sleep 1
+        if ! sleep 1; then
+            echo "ERROR: interrupted while waiting for the NATS monitor to stop" >&2
+            return 1
+        fi
     done
+    echo "ERROR: NATS monitor remains reachable after the kill attempt" >&2
     return 1
 }
 
 # Restart NATS (T1) reusing the EXACT params start_nats_bg used (no hardcoded
 # fallbacks — avoids silent divergence from process.sh). Waits until healthy.
 nats_restart() {
+    local old_pid="${NATS_BG_PID:-}" old_identity="${NATS_BG_IDENTITY:-}"
+    local wait_status identity_status
     [ "${IPC_TOPOLOGY:-}" = "t1" ] || return 1
+    if ! command -v _resolve_bound_nats_data_dir >/dev/null 2>&1 \
+        || ! command -v _start_nats_guarded >/dev/null 2>&1; then
+        echo "ERROR: guarded NATS restart support is unavailable" >&2
+        return 1
+    fi
+    if ! _resolve_bound_nats_data_dir >/dev/null; then
+        echo "ERROR: refusing NATS restart with unbound storage" >&2
+        return 1
+    fi
     # Reap the old PID and wait for the port to be free before relaunching.
     # SIGKILL→immediate relaunch can race a JetStream store lock or TIME_WAIT.
-    local old_pid="${NATS_BG_PID:-}"
-    if [ -n "$old_pid" ]; then
-        if wait "$old_pid" 2>/dev/null; then :; fi
+    if [ -n "$old_pid" ] || [ -n "$old_identity" ]; then
+        if [ -z "$old_pid" ] || [ -z "$old_identity" ]; then
+            echo "ERROR: incomplete prior NATS process receipt" >&2
+            return 1
+        fi
+        if wait "$old_pid" 2>/dev/null; then
+            wait_status=0
+        else
+            wait_status=$?
+        fi
+        if [ "$wait_status" -eq 127 ]; then
+            if _process_identity_status "$old_pid" "$old_identity"; then
+                echo "ERROR: prior NATS process is still live and cannot be reaped" >&2
+                return 1
+            else
+                identity_status=$?
+                if [ "$identity_status" -ne 1 ]; then
+                    echo "ERROR: could not prove prior NATS process extinction" >&2
+                    return 1
+                fi
+            fi
+        fi
+        command -v unregister_pid >/dev/null 2>&1 || return 1
+        if ! unregister_pid "$old_pid" "$old_identity"; then
+            echo "ERROR: could not retire the prior NATS process receipt" >&2
+            return 1
+        fi
     fi
-    local i
-    for i in $(seq 1 10); do
-        (echo >/dev/tcp/localhost/"${NATS_PORT:?}") 2>/dev/null || break
-        sleep 1
-    done
-    "${NATS_BIN:?NATS_BIN unset — start_nats_bg must run first}" -js \
-        -p "${NATS_PORT:?}" \
-        -m "${NATS_MONITOR_PORT:?}" \
-        --store_dir "${NATS_DATA_DIR:?}" >/dev/null 2>&1 &
-    NATS_BG_PID=$!; export NATS_BG_PID
-    # register_pid lives in process.sh, which not every caller sources next to
-    # nats.sh (nats-crash-reconnect.sh doesn't) — logged as "register_pid:
-    # command not found" in CI. Register for cleanup only when available; the
-    # restart itself must not depend on it.
-    if command -v register_pid >/dev/null 2>&1; then
-        register_pid "$NATS_BG_PID"
-    fi
-    nats_wait_healthy 30
+    _start_nats_guarded \
+        "${NATS_BIN:?NATS_BIN unset — start_nats_bg must run first}" 30
 }
 
 # ─── Assertions ──────────────────────────────────────────────────────────────

@@ -27,14 +27,53 @@ teams:
           processes of the same role must stay safe (durable consumers),
           seeder must never double-dispatch an in-flight lease. Chaos case:
           SIGKILL a worker mid-implementation; recovery via label rescan.
+          Change only the versioned Odysseus requirements artifact; do not
+          change runtime behavior. Complete when focused validation proves
+          that each named invariant and failure case is recorded.
         assign_to: loop-planner
-      - subject: Plan harness extension and chaos cases (advise-gated)
+      - subject: e2e launcher for N per-role worker processes
         description: >-
-          Run athena:advise planning mode first. Decompose into child issues:
-          e2e launcher for N worker processes with per-role env; DRY_RUN
-          scripted ladder run across processes; crash-and-recover test;
-          Argus log panels for hi.logs.myrmidon. Respect host limits:
-          MaxAckPending 3 equals the three-heavy-agents budget on hermes.
+          Extend the e2e harness to launch one mesh-worker process per role
+          with per-role environment on hermes (bare processes, local NATS),
+          per the requirements captured in the requirements child of this
+          epic. Change only the launcher, its configuration, and tests;
+          preserve role and model defaults. Complete when a controlled test
+          starts one process per role and proves deterministic cleanup.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for multi-process operation
+      - subject: DRY_RUN scripted label-ladder run across processes
+        description: >-
+          Run the DRY_RUN scripted needs-plan-to-merged ladder across separate
+          worker processes (one process per role) against local NATS. Add only
+          deterministic fixtures and harness changes; do not write to live
+          remote state. Complete when the script verifies every transition
+          and the terminal merged state across the process boundary.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for multi-process operation
+          - e2e launcher for N per-role worker processes
+      - subject: Crash-and-recover chaos case (SIGKILL mid-stage)
+        description: >-
+          Chaos test: SIGKILL a worker mid-implementation and verify seeder
+          recovery via label rescan; restart = re-run holds across processes.
+          Respect host limits: a host-wide semaphore or scheduler must cap
+          aggregate heavy invocations at three across all role consumers;
+          MaxAckPending 3 is only a per-consumer in-flight cap. Change only the
+          chaos harness and tests; keep both concurrency controls and cleanup.
+          Complete when a controlled SIGKILL run recovers exactly once and
+          leaves no worker process or lease behind.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for multi-process operation
+          - e2e launcher for N per-role worker processes
+      - subject: Argus log panels for hi.logs.myrmidon
+        description: >-
+          Argus log panels surfacing hi.logs.myrmidon facts emitted by the
+          mesh workers during multi-process runs. Change only dashboard
+          resources and their validation; do not mutate source log data.
+          Complete when a fixture-backed query shows the expected per-worker
+          facts and the dashboard checks pass.
         assign_to: loop-planner
         blocked_by:
           - Requirements and invariants for multi-process operation

@@ -120,7 +120,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ${PROJECT_ROOT}/e2e/prometheus.runtime.yml:/etc/prometheus/prometheus.yml:ro
+      - ${PROMETHEUS_CONFIG:-./e2e/prometheus.yml}:/etc/prometheus/prometheus.yml:ro
     networks: [homeric-mesh]
     deploy:
       resources:

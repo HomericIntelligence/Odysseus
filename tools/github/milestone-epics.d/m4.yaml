@@ -1,6 +1,5 @@
-# Milestone M4 epic registration payload (issue #468; Proposed ADR-020 context).
-# Consumed by tools/github/register-milestone-epics.py. Field names follow the
-# canonical workflow contract: subject / blocked_by (never title / depends_on).
+# Milestone M4 issue identity, routing, and operator-gate policy data (#468).
+# Authored task and gate text lives only in the referenced Telemachy workflow.
 # Cross-repo children are filed in their owning repo and cross-referenced from
 # the epic body (design context: Proposed ADR-020 section 6).
 milestone: M4
@@ -17,76 +16,36 @@ children:
   - id: M4.1
     repo: Odysseus
     subject: Requirements and invariants for dogfooded operation
-    description: >-
-      Capture: every milestone epic from here on is worked BY the mesh
-      (fallback to the supported single-device loop per issue is allowed and
-      must be recorded as a comment marker); every mesh-produced PR must
-      satisfy its owning repository's binding policies and retained CI gates,
-      while Proposed ADR-014 records broader evidence-integrity rationale;
-      both legacy myrmidon harnesses remain live through exact-pin parity and
-      one real M4 dogfood run, with retirement reserved for a later, separate
-      human-reviewed change; include a cross-host hermes-hub to epimetheus
-      check.
     blocked_by: []
   - id: M4.2
     repo: Odysseus
     subject: Runbook docs/runbooks/operate-mesh-loop.md
-    description: >-
-      Numbered, executable runbook for operating the mesh loop top-to-bottom
-      without prior context (AGENTS.md runbook convention).
     blocked_by: [M4.1]
   - id: M4.3
     repo: Odysseus
     subject: Select and track first real dogfood backlog issue
-    description: >-
-      Select the first real HomericIntelligence backlog issue to be merged
-      with the mesh only and track it as the M4 exit-criterion dogfood target.
     blocked_by: [M4.1]
   - id: M4.4
     repo: Proteus
     subject: Vessel CI build/push on Hephaestus merges plus agamemnon-apply dispatch
-    description: >-
-      Proteus builds and pushes both mesh vessel variants on Hephaestus
-      merges, then triggers agamemnon-apply so the fleet reconciles.
     blocked_by: [M4.1]
   - id: M4.5
     repo: Hermes
     subject: Hermes merged-PR webhook bridge publishing the learn trigger
-    description: >-
-      Bridge GitHub PR-merged webhooks into hi.pipeline so athena:learn runs
-      post-merge; Proposed ADR-020 section 8 records the target design.
     blocked_by: [M4.1]
   - id: M4.6
     repo: Argus
     subject: Stage-latency budget-exhaustion merger-bounce dashboards
-    description: >-
-      Argus dashboards for stage latency, budget exhaustion, and merger
-      bounce during mesh-driven operation.
     blocked_by: [M4.1]
   - id: M4.7
     repo: Hephaestus
-    subject: Document supported single-device fallback and mode selection
-    description: >-
-      Document the supported single-device hephaestus-automation-loop fallback
-      and explicit mode selection after mesh parity. Both modes retain their
-      shared labels and journal; Proposed ADR-020 section 9 records the target
-      fallback strategy.
+    subject: Single-device entry-point support and mode-selection note
     blocked_by: [M4.1]
   - id: M4.8
     repo: Odysseus
-    subject: Execute exact-pin mesh-only dogfood and record terminal evidence
     manual: true
+    workflow_metadata_prefix: manual_gate
     requires_verified: [M4.2, M4.3, M4.4, M4.5, M4.6, M4.7]
     completion_condition: successful_mesh_only_merge
     failure_effect: keep_open
-    description: >-
-      Hold this operator gate outside automatic mesh dispatch. First verify
-      M4.2 through M4.7: each owning PR has the required review and green CI,
-      and each merge or release SHA is present in the exact integrated
-      Odysseus pins. Record the approval and pin evidence. Then run one real
-      HomericIntelligence backlog issue through the mesh-only path and verify
-      routing, the three-heavy-worker limit, timeouts, isolation, tool scopes,
-      restart and retry behavior, issue binding, and the branch and PR
-      lifecycle. Record actual terminal receipts. A separate legacy-harness
-      retirement PR remains ineligible until this gate is complete.
     blocked_by: []

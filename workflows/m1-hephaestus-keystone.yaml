@@ -31,18 +31,95 @@ teams:
           attempt greater than 1; exclusive state-label mutation with
           readback; facts published to hi.tasks verbs with agent_id and
           exec_host; logs to hi.logs.myrmidon. Invariant: only Hephaestus
-          automation writes state labels; GitHub stays the sole journal.
+          automation writes state labels; GitHub is the durable evidence
+          journal, while the configured Agamemnon task store retains
+          task-tree authority.
+          Change only the versioned Hephaestus requirements artifact; do not
+          change runtime behavior. Complete when focused validation proves
+          that the artifact records every named invariant consistently.
         assign_to: loop-planner
-      - subject: Plan the keystone decomposition (advise-gated)
+      - subject: "Mesh claim-loop module (ADR-013 section 1 consumer semantics)"
         description: >-
-          Run athena:advise planning mode first. Decompose into child issues:
-          claim-loop module; stage executor entry points reusing prompts,
-          tool_scopes, claude_invoke/opencode runtime; next-dispatch
-          publisher; merger investigation module extracting merge_wait proof
-          logic for reuse by both single-device and mesh modes; seeder CLI;
-          [mesh] extra plus console scripts hephaestus-mesh-worker and
-          hephaestus-mesh-seed; unit tests and canned-response DRY_RUN.
+          Implement the durable pull consumer claim loop for
+          hephaestus/mesh_worker: AckExplicit acks, AckWait 900s lease,
+          MaxDeliver 3, heartbeat every 5 min, fetch(1). Enforce hi/v1
+          envelope validation and the idempotency preamble on attempts
+          greater than 1, per the requirements captured in the requirements
+          child of this epic. Limit changes to the claim-loop source and its
+          tests; preserve model, lane, and provider defaults. Complete when
+          controlled tests prove claim, acknowledgment, retry, and invalid
+          hi/v1 envelope behavior.
         assign_to: loop-planner
         blocked_by:
           - Requirements and invariants for the mesh worker package
+      - subject: Stage executor entry points reusing prompts and runtime adapters
+        description: >-
+          Per-role stage executor entry points that reuse the existing
+          prompts, tool_scopes, and claude/codex/pi/opencode runtime adapters
+          already used by the single-device loop. One entry point per
+          pipeline stage. Change only executor entry points and their tests;
+          preserve adapter interfaces and defaults. Complete when focused
+          tests run every existing stage through the shared executor path.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for the mesh worker package
+      - subject: Next-dispatch publisher
+        description: >-
+          Write the next stage's state:* label exclusively (with readback)
+          and publish the next-stage pointer packet under this task's
+          pointer-only requirement; Proposed ADR-013 section 6 records the
+          design rationale. Change only publisher code and tests; do not
+          broaden label or tool authority. Complete when tests prove exclusive
+          label mutation, readback, and one valid next-stage pointer packet.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for the mesh worker package
+      - subject: Merger investigation module extracting merge_wait proof logic
+        description: >-
+          Extract the merge_wait proof logic so it is shared by both the
+          single-device loop and the mesh merger verifier (design context:
+          Proposed ADR-020 section 3). No behavior change to the existing
+          single-device path. Refactor only merger proof code and its tests.
+          Complete when both modes pass the same focused proof suite and the
+          existing single-device behavior stays unchanged.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for the mesh worker package
+      - subject: Seeder CLI hephaestus-mesh-seed
+        description: >-
+          Label rescan/re-publish CLI that seeds dispatches from
+          state:needs-plan issues; must never double-dispatch an in-flight
+          lease (target consumer semantics described by Proposed ADR-013
+          section 1). Change only the seeder CLI and its tests; preserve the
+          current envelope and dispatch subjects. Complete when tests prove
+          eligible rescan, republish, and in-flight lease deduplication.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for the mesh worker package
+      - subject: "[mesh] extra packaging plus console scripts"
+        description: >-
+          Add the [mesh] extra and console script entry points
+          hephaestus-mesh-worker and hephaestus-mesh-seed. Change only package
+          metadata, entry points, and packaging tests; do not change model or
+          provider defaults. Complete when an isolated install exposes both
+          commands and the package checks pass.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for the mesh worker package
+      - subject: DRY_RUN end-to-end test across the full label ladder
+        description: >-
+          Canned-response DRY_RUN test walking an issue needs-plan to merged
+          in one multi-threaded process against a local NATS (this registry's
+          M1 exit criterion; Proposed ADR-020 section 9 supplies design
+          context). Add only deterministic fixtures and test-harness changes;
+          do not write to live remote state. Complete when the test traverses
+          the full label ladder, verifies terminal state, and cleans up.
+        assign_to: loop-planner
+        blocked_by:
+          - "Mesh claim-loop module (ADR-013 section 1 consumer semantics)"
+          - Stage executor entry points reusing prompts and runtime adapters
+          - Next-dispatch publisher
+          - Merger investigation module extracting merge_wait proof logic
+          - Seeder CLI hephaestus-mesh-seed
+          - "[mesh] extra packaging plus console scripts"
 teardown: on_completion

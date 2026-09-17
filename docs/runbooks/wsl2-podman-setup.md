@@ -1,120 +1,200 @@
 # Runbook: WSL2 Rootless Podman Setup
 
-This runbook enables rootless podman on WSL2 (Ubuntu/Debian) so that `just e2e-up` and the full compose stack work correctly. Run these steps once per WSL2 instance.
+Use this runbook when the local Compose workflow needs Podman's rootless API
+socket inside a WSL2 distribution. It separates read-only diagnosis from host
+changes. None of the commands here prove or authorize a production deployment,
+cross-host network access, or a change to another WSL distribution.
 
-## Prerequisites
+Microsoft documents the WSL configuration and restart behavior in
+[Advanced settings configuration in WSL][wsl-config]. Podman documents the
+rootless socket path and socket-activation model in
+[`podman system service`][podman-service].
 
-- WSL2 with Ubuntu 22.04 or later (or Debian 12+)
-- Windows 11 or Windows 10 Build 22000+ (required for WSL2 systemd support)
-- podman installed (verified via `just doctor`)
+## Scope and authority
 
----
+The read-only checks below are safe to run locally. Editing `/etc/wsl.conf`,
+shutting down WSL, changing linger state, installing packages, and enabling a
+user service are host mutations. Before each such change:
 
-## Steps
+1. Confirm the exact WSL distribution and user account in scope.
+2. Obtain approval from the host operator.
+3. Record the current value and the rollback command.
+4. Stop if another distribution, user, or managed host would be affected.
 
-### 1. Enable WSL2 Systemd
+`wsl.exe --shutdown` stops every running WSL distribution, not just the current
+one. Run it only from Windows after the operator confirms that blast radius.
 
-Add the following to `/etc/wsl.conf` (create if it does not exist):
+## Read-only preflight
+
+From the WSL distribution, inspect the current state:
+
+```bash
+uname -a
+podman --version
+podman compose version
+ps -p 1 -o comm=
+systemctl --user status
+systemctl --user status podman.socket
+loginctl show-user "$USER" -p Linger
+printf 'XDG_RUNTIME_DIR=%s\n' "${XDG_RUNTIME_DIR:-unset}"
+```
+
+From Windows PowerShell, identify WSL and distribution state:
+
+```powershell
+wsl.exe --version
+wsl.exe --list --verbose
+```
+
+Interpret these checks independently:
+
+- A missing or broken `podman --version` is a package-installation problem.
+- PID 1 not being `systemd` is a WSL initialization problem.
+- A missing `podman.socket` unit is a Podman packaging/unit-installation
+  problem; enabling systemd does not install that unit.
+- A present but inactive socket is a user-service state problem.
+- Linger controls whether a user manager can persist without an interactive
+  login. It is not required merely to run Podman in a current session.
+
+Resolve only the branch that matches the observed state.
+
+## Enable systemd only when it is absent
+
+If PID 1 is already `systemd`, skip this section.
+
+After operator approval, inspect and back up the exact file before editing it:
+
+```bash
+sudo test -e /etc/wsl.conf && sudo cp -a /etc/wsl.conf /etc/wsl.conf.pre-systemd
+sudoedit /etc/wsl.conf
+```
+
+Preserve every existing section and key. Ensure the resulting file contains one
+`[boot]` section with this setting:
 
 ```ini
 [boot]
 systemd=true
 ```
 
-Then restart WSL2 from a Windows PowerShell/CMD prompt:
+Then, after confirming that all WSL distributions may be stopped, run this from
+Windows PowerShell:
 
 ```powershell
-wsl --shutdown
-wsl
+wsl.exe --shutdown
 ```
 
-Verify systemd is running after restart:
+Reopen the intended distribution and verify the result:
 
 ```bash
+test "$(ps -p 1 -o comm= | tr -d '[:space:]')" = systemd
 systemctl --user status
-# Should show: State: running
 ```
 
-### 2. Enable User Linger
+If verification fails, restore `/etc/wsl.conf.pre-systemd` (when it existed),
+or remove only the newly added `systemd=true` key, then perform the same approved
+WSL shutdown and verify the previous state.
 
-Linger allows user services (like the podman socket) to start at boot without an active login session:
+## Start the rootless Podman socket
+
+First prove the packaged user unit exists:
 
 ```bash
-sudo loginctl enable-linger $USER
+systemctl --user cat podman.socket
 ```
 
-Verify:
+If the unit is missing, stop. Install Podman and its systemd user units through
+the distribution's supported package process, or have the host operator review
+an exact custom unit. Do not copy a guessed source-tree template into the user
+configuration and call that installation complete.
+
+For the current session only:
 
 ```bash
-loginctl show-user $USER | grep Linger
-# Expected: Linger=yes
+systemctl --user start podman.socket
 ```
 
-### 3. Enable and Start the Podman Socket
+If the operator explicitly wants the socket enabled for future user sessions:
 
 ```bash
 systemctl --user enable --now podman.socket
 ```
 
-Verify the socket exists:
+Verify both unit state and the rootless socket owned by the current user:
 
 ```bash
-ls $XDG_RUNTIME_DIR/podman/podman.sock
-# Expected: /run/user/1000/podman/podman.sock (or similar)
+systemctl --user is-active podman.socket
+test -n "${XDG_RUNTIME_DIR:-}"
+test -S "$XDG_RUNTIME_DIR/podman/podman.sock"
+podman info
 ```
 
-### 4. Verify with Doctor
+Rollback for a newly enabled socket is:
+
+```bash
+systemctl --user disable --now podman.socket
+```
+
+Use that rollback only if the socket was disabled before this procedure.
+
+## Enable linger only for an approved persistence requirement
+
+If the socket must activate without an interactive login and the operator
+approves persistent user services, record the current value and enable linger:
+
+```bash
+loginctl show-user "$USER" -p Linger
+sudo loginctl enable-linger "$USER"
+loginctl show-user "$USER" -p Linger
+```
+
+If linger was disabled before this change, its rollback is:
+
+```bash
+sudo loginctl disable-linger "$USER"
+```
+
+Do not change linger merely to repair a missing Podman binary or unit.
+
+## Repository verification
+
+The repository doctor validates the selected local role. Local mode does not
+run Tailscale or claim cross-host readiness:
 
 ```bash
 just doctor --role worker
-# Expected: ✓ podman compose, ✓ podman socket
 ```
 
----
-
-## Troubleshooting
-
-### Unit podman.socket could not be found (source-built podman)
-
-If podman was installed from source rather than via `apt`, the systemd unit files may not be installed. Find and install them from the podman source tree:
+Then run the local stack through the repository entry point:
 
 ```bash
-# Find the source directory
-find ~/.local/src /usr/local/src -name "podman.socket" 2>/dev/null
-
-# Install unit files (substitute <version> with actual path found above)
-cp ~/.local/src/podman-<version>/contrib/systemd/user/podman.socket ~/.config/systemd/user/
-sed "s|@@PODMAN@@|$(which podman)|g" \
-    ~/.local/src/podman-<version>/contrib/systemd/user/podman.service.in \
-    > ~/.config/systemd/user/podman.service
-systemctl --user daemon-reload
-systemctl --user enable --now podman.socket
+just e2e-up
 ```
 
-### rootlessport binary not found (compose stack hangs)
+If Compose fails, preserve the exact failing output and inspect only the current
+user's state:
 
-If `podman compose up` hangs at health checks and logs show `rootlessport binary not found`, bridge-network port binding is unavailable. Workaround: start containers individually with `--network=host` (see `e2e/start-stack.sh` comments).
+```bash
+systemctl --user status podman.socket
+podman info
+podman ps --all
+```
 
-The full fix is enabling WSL2 systemd (Step 1 above) which makes rootlessport available.
+Do not switch the stack to host networking as a generic workaround. Network
+mode changes isolation and port ownership; they require a separately reviewed,
+topology-specific change.
 
-### /run/user/1000 does not exist
+## Completion
 
-This directory is created by systemd when a user session is active. If it is missing, systemd is not running. Repeat Step 1 and ensure WSL2 was fully restarted (`wsl --shutdown` from Windows, not just closing the terminal).
+This procedure is complete only when:
 
----
+- `podman --version` and `podman compose version` succeed;
+- the intended WSL distribution is still the only distribution changed;
+- the rootless socket is active at `$XDG_RUNTIME_DIR/podman/podman.sock`;
+- any requested linger state matches the operator's decision;
+- `just doctor --role worker` reports truthful local results; and
+- `just e2e-up` either proves complete stack readiness or exits non-zero with
+  the failed checks.
 
-## Verification Checklist
-
-- [ ] WSL2 systemd is enabled (`systemctl --user status` shows "State: running")
-- [ ] User linger is enabled (`loginctl show-user $USER | grep Linger=yes`)
-- [ ] Podman socket is active (`ls $XDG_RUNTIME_DIR/podman/podman.sock` succeeds)
-- [ ] `just doctor --role worker` shows podman compose and socket as passing
-- [ ] `just e2e-up` starts the full stack without hanging
-
----
-
-## See Also
-
-- `just doctor --role worker --install` — auto-installs missing prerequisites
-- `e2e/doctor.sh` — full prerequisite check implementation
-- HomericIntelligence/Odysseus#107 — tracking issue for WSL2 podman setup
+[wsl-config]: https://learn.microsoft.com/windows/wsl/wsl-config#systemd-support
+[podman-service]: https://docs.podman.io/en/latest/markdown/podman-system-service.1.html

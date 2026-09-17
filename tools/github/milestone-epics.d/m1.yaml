@@ -1,6 +1,5 @@
-# Milestone M1 epic registration payload (issue #468; Proposed ADR-020 context).
-# Consumed by tools/github/register-milestone-epics.py. Field names follow the
-# canonical workflow contract: subject / blocked_by (never title / depends_on).
+# Milestone M1 issue identity and routing data (issue #468).
+# Task descriptions live only in the referenced Telemachy workflow.
 milestone: M1
 title: "M1 Epic: Hephaestus mesh keystone (ADR-020)"
 epic_home: Hephaestus
@@ -15,71 +14,32 @@ children:
   - id: M1.1
     repo: Hephaestus
     subject: Requirements and invariants for the mesh worker package
-    description: >-
-      Capture the JetStream durable-pull-consumer target described by Proposed
-      ADR-013 section 1 (AckExplicit, AckWait 900s, MaxDeliver 3, heartbeat
-      every 5 min,
-      fetch(1)); envelope hi/v1 validation; idempotency preamble on attempt
-      greater than 1; exclusive state-label mutation with readback; facts
-      published to hi.tasks verbs with agent_id and exec_host; logs to
-      hi.logs.myrmidon. Invariant: only Hephaestus automation writes state
-      labels; GitHub stays the sole journal.
     blocked_by: []
   - id: M1.2
     repo: Hephaestus
     subject: "Mesh claim-loop module (ADR-013 section 1 consumer semantics)"
-    description: >-
-      Implement the durable pull consumer claim loop for hephaestus/mesh_worker:
-      AckExplicit acks, AckWait 900s lease, MaxDeliver 3, heartbeat every
-      5 min, fetch(1). Enforce hi/v1 envelope validation and the idempotency
-      preamble on attempts greater than 1, per the requirements captured in
-      the requirements child of this epic.
     blocked_by: [M1.1]
   - id: M1.3
     repo: Hephaestus
     subject: Stage executor entry points reusing prompts and runtime adapters
-    description: >-
-      Per-role stage executor entry points that reuse the existing prompts,
-      tool_scopes, and claude/codex/pi/opencode runtime adapters already used
-      by the single-device loop. One entry point per pipeline stage.
     blocked_by: [M1.1]
   - id: M1.4
     repo: Hephaestus
     subject: Next-dispatch publisher
-    description: >-
-      Write the next stage's state:* label exclusively (with readback) and
-      publish the next-stage pointer packet under this task's pointer-only
-      requirement; Proposed ADR-013 section 6 records the design rationale.
     blocked_by: [M1.1]
   - id: M1.5
     repo: Hephaestus
     subject: Merger investigation module extracting merge_wait proof logic
-    description: >-
-      Extract the merge_wait proof logic so it is shared by both the
-      single-device loop and the mesh merger verifier (design context:
-      Proposed ADR-020 section 3). No behavior change to the existing
-      single-device path.
     blocked_by: [M1.1]
   - id: M1.6
     repo: Hephaestus
     subject: Seeder CLI hephaestus-mesh-seed
-    description: >-
-      Label rescan/re-publish CLI that seeds dispatches from state:needs-plan
-      issues; must never double-dispatch an in-flight lease (target consumer
-      semantics described by Proposed ADR-013 section 1).
     blocked_by: [M1.1]
   - id: M1.7
     repo: Hephaestus
     subject: "[mesh] extra packaging plus console scripts"
-    description: >-
-      Add the [mesh] extra and console script entry points hephaestus-mesh-worker
-      and hephaestus-mesh-seed.
     blocked_by: [M1.1]
   - id: M1.8
     repo: Hephaestus
     subject: DRY_RUN end-to-end test across the full label ladder
-    description: >-
-      Canned-response DRY_RUN test walking an issue needs-plan to merged in
-      one multi-threaded process against a local NATS (this registry's M1 exit
-      criterion; Proposed ADR-020 section 9 supplies design context).
     blocked_by: [M1.2, M1.3, M1.4, M1.5, M1.6, M1.7]

@@ -9,14 +9,16 @@
 ADR-003 accepted Nomad as the container scheduler for HomericIntelligence,
 chosen over Kubernetes for its single-binary simplicity and right-sized
 operational footprint. The canonical Nomad configs live in `configs/nomad/`
-(`server.hcl`, `client.hcl`) and the deployment runbook
-(`docs/deployment.md`, Step 5) describes a single-node bootstrap.
+(`server.hcl`, `client.hcl`). The deployment runbook's Step 5 now treats their
+activation as an operator-owned optional path rather than a generic bootstrap.
 
 However, the agent mesh does not yet schedule agents across multiple hosts
-through Nomad. Today, Myrmidons supports only `local` and `docker` deployment
-types, and the Myrmidons worker pool is a single-host, pull-based pool. The
-architecture document (`docs/architecture.md`) describes multi-host scheduling
-as "planned for a future phase."
+through Nomad. The pinned Myrmidons schema enumerates `local`, `docker`, and a
+future-reserved `nomad` discriminator, while its current runtime scheduling
+paths implement only `local` and `docker`; checked-in manifests and proposed
+pull-worker descriptions do not prove an active worker pool. The architecture document
+(`docs/architecture.md`) describes multi-host scheduling as target work rather
+than deployed state.
 
 A "planned" state with no durable tracker can go stale indefinitely. The prior
 attempts to track this work were GitHub issues that have since been closed
@@ -32,9 +34,11 @@ deferral.
 
 Key points:
 
-- **Current supported state:** Myrmidons supports single-host deployments with
-  the `local` and `docker` deployment types only. The worker pool is a
-  single-host, pull-based pool (`MaxAckPending=1`).
+- **Current supported surface:** The pinned Myrmidons schema admits `local`,
+  `docker`, and a future-reserved `nomad` deployment discriminator. Current
+  runtime scheduling implements `local` and `docker`; live placement and
+  worker-pool state require a reconciler readback, and no current Nomad
+  scheduling path is claimed.
 - **What is deferred:** Multi-host agent scheduling and clustering via Nomad —
   i.e., Myrmidons submitting Nomad job specs that place agent containers across
   the Tailscale-connected host fleet, as envisioned in ADR-003.
@@ -67,7 +71,8 @@ Key points:
 
 **Neutral:**
 - No code or configuration changes. `configs/nomad/` remains the canonical
-  single-node bootstrap config; ADR-003 remains the accepted scheduler choice.
+  source for the optional Nomad path, while activation stays operator-owned;
+  ADR-003 remains the accepted scheduler choice.
 
 ## References
 

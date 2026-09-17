@@ -17,9 +17,9 @@ GitHub issue through planning, plan review, implementation, PR review, merge,
 and learning — is today a **single-device program**: one operator-launched
 `hephaestus-automation-loop` process runs an in-process thread-pool worker
 pool on one host. All stage sequencing lives in memory
-(`hephaestus/automation/pipeline/routing.py`); Claude/Codex/Pi agents are
-invoked as local child processes; restart recovery works only because GitHub
-labels and comments are the durable journal.
+(`hephaestus/automation/pipeline/routing.py`); the configured agent adapter is
+resolved per invocation and launched as a local child process; restart recovery
+works only because GitHub labels and comments are the durable journal.
 
 The rest of the ecosystem already assumes distribution. Proposed ADR-013 defines
 role-addressed dispatch (`hi.myrmidon.{domain}.{role}.task.{task_id}`),
@@ -31,17 +31,18 @@ labels. The provisioning side is scaffolded but idle: AchaeanFleet ships an
 already carries mesh pool manifests for `pipeline.chief-architect`,
 `pipeline.task-agent`, and `research.chief-architect`.
 
-Meanwhile the loop's execution substrate changed: the operator no longer holds
-a Claude account, and Hephaestus' runtime abstraction gained an opencode
-adapter (`AgentName = Literal["claude", "codex", "pi", "opencode"]`). The
-mesh must therefore be provider-neutral in fact, not just in code.
+Provider availability and selection are operational state. Hephaestus resolves
+the configured adapter at each invocation, so the mesh wire and role/stage
+routing must remain provider-neutral rather than encoding one operator's
+account state or a static adapter catalog.
 
-Finally, the HMAS hierarchy itself has two competing shapes: Agamemnon
-dispatches against a 4-level role ladder, while Odyssey maintains the more
-detailed 6-level / 30-agent hierarchy (`agents/hierarchy.md`, mirrored in its
-`.claude/agents/*.md` frontmatter definitions with `level`, `delegates_to`,
-and `receives_from`). Agent definitions are currently scattered across
-consumer repos, contradicting Myrmidons' role as GitOps source of truth.
+Finally, two different kinds of role have been conflated. Agamemnon and
+Myrmidons use runtime mesh roles to route and provision work. Odyssey's former
+6-level / 30-agent hierarchy instead described repository instruction roles
+and delegation guidance. The modernization retains nine Odyssey instruction
+roles with live consumers; it does not turn that instruction catalog into
+runtime topology. Runtime manifests and repository instructions therefore need
+separate owners and validation boundaries.
 
 ## Decision
 
@@ -61,78 +62,96 @@ in-flight lease. Restart = re-run remains the recovery contract.
 | Loop stage | Queue (`hi.myrmidon.pipeline.{role}.task.>`) | Lane | Notes |
 |---|---|---|---|
 | Intake | — | — | Epic children arrive labeled `state:needs-plan` |
-| Planning | `chief-architect` | Planning | advise-before gate |
+| Planning | `chief-architect` | Planning | contextually selected knowledge lookup |
 | Plan review | `plan-reviewer` (new) | Review | read-only scope |
 | Implementation | `task-agent` | Implementation | writer scope |
-| PR review | `pr-reviewer` (new) | Review | sole writer of `implementation-go/-no-go` |
-| Merge | `merger` (new) | Mechanical | see §3 |
-| Learn | aux queue post-merge | Mechanical→Review | learn-after gate |
+| PR review | `pr-reviewer` (new) | Review | writes the initial `implementation-go/-no-go` outcome |
+| Merge | `merger` (new) | Mechanical | may downgrade GO on failed fresh evidence; see §3 |
+| Learn | optional aux queue post-merge | Mechanical→Review | evidence-backed reusable lesson only |
 
 ### 3. Merger agent
 
 A dedicated mechanical worker subscribes to impl-go review outcomes. On each
-packet it independently investigates: fresh head-SHA readback, zero open
-review threads, exclusive-label consistency, and CI status. If all criteria
-hold it arms squash auto-merge; otherwise it writes
+packet it independently investigates: a fresh PR head-SHA readback, exactly
+one authenticated terminal Athena `GO` carrier whose review commit and
+`artifact_binding.revision` both equal that freshly read head, a valid carrier
+chain, zero open review threads, exclusive-label consistency, and CI status
+bound to the same head. It repeats the head and review-snapshot readback before
+arming merge and fails closed if either changed. A missing, stale, ambiguous,
+or superseded carrier is not merge authority. If all criteria hold, it reads
+the repository's live merge and auto-merge settings and uses only an enabled
+method; otherwise it writes
 `state:implementation-no-go` and publishes a remediation packet back to the
 `task-agent` queue carrying the failing evidence. Bounded by the existing
-merge retry budget (5); exhaustion follows the standard `state:skip` path.
+merge retry budget (5); exhaustion follows the established `state:skip`
+transition and records the actual failing evidence.
 The merger runs with least-scoped credentials (merge + label write only) in
 its own vessel.
 
-### 4. Provider-neutral lanes; opencode-first deployment
+### 4. Provider-neutral lanes
 
-The agent backend is per-manifest configuration resolved through the
-existing Hephaestus runtime abstraction. The operator lane runs **opencode**;
-Claude remains fully available for other contributors. Models are assigned
-per **lane**, pinned in Myrmidons manifests (`model:` field), never in code:
-Planning, Implementation, Review, and Mechanical lanes may each use different
-models. Changing a lane model is a one-line manifest edit.
+The agent backend is per-invocation or per-manifest configuration resolved
+through the existing Hephaestus runtime abstraction. This ADR adds no provider,
+model, role, or lane default. Planning, Implementation, Review, and Mechanical
+lanes may use different explicit assignments without encoding them in the wire
+contract.
 
-### 5. Odyssey's 6-level hierarchy is the canonical HMAS structure
+### 5. Runtime roles and repository instruction roles remain separate
 
-Myrmidons adopts Odyssey's 6-level / 30-agent hierarchy
-(`research/Odyssey/agents/hierarchy.md`) as the canonical mesh structure:
-L0 meta-orchestrator (chief-architect), L1 six section orchestrators, L2 four
-design/review-routing agents, L3 seventeen specialists, L4 five engineers,
-L5 junior engineers. The `.claude/agents/*.md` frontmatter format
-(`name/description/level/phase/tools/model/delegates_to/receives_from`)
-becomes the import source; definitions land in a new
-`provisioning/Myrmidons/agents/hierarchy/` area with a lint/sync gate so
-per-repo copies validate against (or derive from) Myrmidons. Domain-specific
-leaves (e.g., Mojo specialists) generalize per domain; level semantics,
-delegation graph, and model-tier mapping stay fixed.
+Myrmidons owns only the runtime role manifests required by the stage-to-role
+map in section 2 and other current mesh consumers. Each runtime role must have
+an exact current routing consumer. Agamemnon continues to interpret roles
+through its existing wire contract; this proposal does not extend its role
+ladder merely to mirror an instruction catalog.
 
-Agamemnon gains a work item: extend `mesh_role_name()` from 4 levels to the
-6-level naming so dispatch subjects address every hierarchy level.
+Odyssey retains these nine repository instruction roles:
+`chief-architect`, `implementation-engineer`, `ci-failure-analyzer`,
+`code-review-orchestrator`, `general-review-specialist`,
+`mojo-language-review-specialist`, `numerical-stability-specialist`,
+`security-review-specialist`, and `test-review-specialist`. Odyssey owns their
+instruction definitions and migrates every live consumer to one retained role
+or a classified removal. The former 6-level / 30-agent hierarchy is not
+imported into Myrmidons and does not create queues, credentials, models, or
+runtime authority.
 
-### 6. GitHub remains the sole backing store; packets stay pointers
+Structural checks validate runtime role references against Myrmidons and
+instruction-role references against Odyssey. They also reject any unapproved
+mapping that would make a repository instruction role a runtime role. Models
+remain external runtime configuration rather than a fixed role-to-tier map.
 
-Every milestone is tracked as a **GitHub epic with child issues in the repo
-that owns most of the milestone's work** (per-repo epics). Every child issue
-is exactly one dispatchable task. NATS packets carry only the ADR-013 pointer
-envelope (`repo`, `issue`, `epic_key`, `branch`, `attempt`, budget counters);
-workers read the full task description from GitHub at claim time. Labels
-remain the only journal; Agamemnon's store remains the only task tree;
-NATS carries facts, never authority.
+### 6. GitHub supplies the durable work journal; packets stay pointers
+
+In this proposal, every milestone is tracked as a **GitHub epic with child
+issues in the repo that owns most of the milestone's work** (per-repo epics).
+Every child issue is exactly one dispatchable task. NATS packets carry only the
+ADR-013 pointer envelope (`repo`, `issue`, `epic_key`, `branch`, `attempt`,
+budget counters); workers read the full task description from GitHub at claim
+time. GitHub issues and automation-owned labels provide the durable work
+description and journal. Agamemnon's configured store remains the task-tree
+authority; this proposal does not change its default store or make GitHub a
+backing store unless that write-through mode is configured. NATS carries
+facts, never authority.
 
 ### 7. Telemachy registers requirements; a planner agent plans the epic
 
 Telemachy does not plan. Milestone workflow YAMLs encode **requirements,
 goals, invariants, and research context**, then direct Telemachy's executor
 to launch a planner sub-agent for the epic decomposition. That planner runs
-under the **athena:advise** skill (planning mode: Mnemosyne knowledge-tree
-sync before any planning, fail-closed), produces the child-issue breakdown,
-and Telemachy registers the epic + children (`state:needs-plan`) and
-publishes `hi.pipeline.epic.{key}.registered`.
+with a discriminating knowledge lookup when the task benefits from Mnemosyne
+guidance, produces the child-issue breakdown, and Telemachy registers the epic
++ children (`state:needs-plan`) and publishes
+`hi.pipeline.epic.{key}.registered`. Knowledge unavailability is disclosed and
+does not stop unrelated planning unless the requested outcome genuinely
+depends on that knowledge.
 
-### 8. Advise-before / learn-after are mandatory gates
+### 8. Knowledge skills remain contextual
 
-Every planning surface (epic planning, per-issue planning stage) runs
-athena:advise before generating plans; every merged change triggers
-athena:learn post-merge, opening a Mnemosyne PR backed by a host-owned
-delivery receipt. Unavailability degrades to a recorded SKIP breadcrumb,
-never silent omission.
+Planning selects `athena:advise` only when its trigger matches the work.
+Post-merge processing selects `athena:learn` only for a reusable,
+evidence-backed lesson that is not already present. Skill selection never
+broadens task authority; any skill-caused pause or divergence is disclosed.
+An unavailable optional knowledge path is recorded truthfully without
+converting the primary task into completion or failure.
 
 ### 9. Staged rollout ladder
 
@@ -146,31 +165,36 @@ both modes share labels and journal, so handoff is seamless.
 ## Consequences
 
 **Positive:**
-- The PoC loop and the production mesh become the same system; no rewrite
+
++ The PoC loop and the production mesh become the same system; no rewrite
   cliff between validation and operation.
-- Horizontal scale: stages parallelize across hosts under the existing
-  ≤3-heavy-agents-per-host budget (MaxAckPending=3).
-- Provider and model choice become operational config, immune to account or
++ Horizontal scale: stages parallelize across hosts while a host-wide
+  semaphore or scheduler enforces the existing ≤3-heavy-agents-per-host
+  budget across all local role consumers. Per-consumer `MaxAckPending` limits
+  remain separate in-flight controls.
++ Provider and model choice become operational config, immune to account or
   vendor changes.
-- One canonical hierarchy ends the 4-level/6-level and scattered-definition
-  drift.
-- Advise/learn gates make institutional memory flow through Mnemosyne on
-  every task.
++ Separate canonical owners prevent instruction catalogs from silently
+  becoming runtime queues or authority.
++ Contextually selected advise/learn paths let reusable knowledge flow through
+  Mnemosyne without imposing a skill itinerary on every task.
 
 **Negative:**
-- More moving parts than the conductor alternative: next-dispatch logic now
+
++ More moving parts than the conductor alternative: next-dispatch logic now
   executes inside N workers instead of one process; misrouting bugs surface
   as lost items until the seeder re-walks labels.
-- The merger duplicates some merge_wait verification logic; drift risk
++ The merger duplicates some merge_wait verification logic; drift risk
   mitigated by extracting the shared proof module into the library both use.
-- Six-level role naming requires coordinated Agamemnon + Myrmidons changes
-  (cross-repo integration event).
-- Per-lane models complicate cost attribution and rate-limit budgeting.
++ Runtime-role changes still require coordinated Agamemnon + Myrmidons
+  compatibility work when they affect the wire or routing contract.
++ Per-lane models complicate cost attribution and rate-limit budgeting.
 
 **Neutral:**
-- The single-device loop stays supported indefinitely; it is the same library
+
++ The single-device loop stays supported indefinitely; it is the same library
   with a different executor binding.
-- The legacy harness remains live. Under this proposal it becomes eligible for
++ The legacy harness remains live. Under this proposal it becomes eligible for
   retirement only after exact-pin mesh parity and real M4 dogfood evidence.
 
 ## Follow-up Notes (M0 implementation artifact)
@@ -214,9 +238,9 @@ the same path (§3: bounded by the merge budget of 5; exhaustion → `state:skip
 
 ## References
 
-- [ADR 013](013-hmas-mesh-wire-contracts.md) — wire contracts this ADR builds on
-- [ADR 016](016-split-hephaestus.md) — Hephaestus library vs Athena plugins split
-- [Proposed ADR 021](021-defer-multi-host-nomad-scheduling.md) — multi-host
++ [ADR 013](013-hmas-mesh-wire-contracts.md) — wire contracts this ADR builds on
++ [ADR 016](016-split-hephaestus.md) — Hephaestus library vs Athena plugins split
++ [Proposed ADR 021](021-defer-multi-host-nomad-scheduling.md) — multi-host
   scheduling deferral
-- Odyssey hierarchy: `research/Odyssey/agents/hierarchy.md`
-- Hephaestus automation architecture: `shared/Hephaestus/docs/architecture.md`
++ Odyssey retained instruction roles: `research/Odyssey/.claude/agents/`
++ Hephaestus automation architecture: `shared/Hephaestus/docs/architecture.md`

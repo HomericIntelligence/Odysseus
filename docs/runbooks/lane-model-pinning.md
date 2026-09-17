@@ -22,6 +22,13 @@ other contributors.
 
 ## Steps
 
+Changing a model pin is not ordinary instruction-maintenance work. Perform
+Step 3 only when the current request explicitly scopes the exact lane change
+and the responsible operator has approved the provider/model delta. Otherwise,
+stop after verification and report the proposed change without editing the
+configuration. Propagating an approved pin into another repository remains a
+separately reviewed component change and integration event.
+
 1. Verify the current pin parses and print the table:
 
    ```bash
@@ -38,7 +45,8 @@ other contributors.
    # then start the loop with --agent opencode from the Hephaestus env
    ```
 
-3. Change a lane model (one line, config only — never code):
+3. After the scope and operator gates above are satisfied, change the approved
+   lane model (one line, config only — never code):
 
    ```bash
    $EDITOR configs/lane-models.yaml   # edit the one lane line

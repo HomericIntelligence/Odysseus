@@ -1,164 +1,149 @@
-# Runbook: Add a New Host to the HomericIntelligence Mesh
+# Runbook: Add a Host to an Approved HomericIntelligence Environment
 
-## Prerequisites
+This runbook prepares and verifies one explicitly selected host. It does not
+define a generic mesh-enrollment protocol or authorize a multi-host deployment.
+The current Myrmidons schema enumerates `local`, `docker`, and a future-reserved
+`nomad` discriminator, while runtime scheduling currently implements `local`
+and `docker`. Multi-host Nomad scheduling remains target state in
+[Proposed ADR-021](../adr/021-defer-multi-host-nomad-scheduling.md).
 
-- The new host is running WSL2 (or a compatible Linux environment).
-- You have SSH access to the new host.
-- Tailscale is available for installation on the new host.
-- You have access to the Agamemnon primary host's API at `http://172.20.0.1:8080` (or your configured `AGAMEMNON_URL`).
+The pinned Agamemnon service does not expose a host-sync or peer-registration
+contract, and Hermes is an inbound webhook bridge rather than a host inventory
+owner. Do not call historical `/v1/host-sync` or `/v1/hosts` routes, install an
+“Agamemnon agent,” or represent a successful local install as peer registration.
 
----
+## Authority and stop conditions
 
-## Steps
+Before any install, enrollment, firewall, remote-write, or service-start action:
 
-### 1. Install Agamemnon agent
+1. identify the exact host and operator-owned environment;
+2. record the immutable Odysseus and component revisions being evaluated;
+3. read back the host's current OS, network interfaces, firewall, services, and
+   relevant runtime state;
+4. define the exact intended effects and rollback route; and
+5. obtain operator approval for that host and effect set.
 
-On the new host, install the Agamemnon agent. It registers itself as a peer and exposes the REST API locally.
+Stop when the target identity, current state, supported component interface,
+credential path, approval, or post-state probe is missing. A historical host
+name, address, topology report, or successful command from another machine is
+not current evidence. Do not copy an address from this repository.
 
-```bash
-# Follow the Agamemnon installation guide
-# Refer to ~/Agamemnon/ for current instructions
-```
+## 1. Bind the host and repository state
 
-Configure the agent to use the primary host as the sync target by setting the `AGAMEMNON_URL` environment variable to the primary host's Agamemnon API URL.
-
-### 2. Install and configure Tailscale
-
-```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up --authkey=<your-tailscale-authkey>
-```
-
-Verify the new host appears in your Tailscale admin console and has been assigned an IP in the mesh network.
-
-### 3. Configure Host Firewall for Tailscale
-
-On hosts running `firewalld` (Debian 11, RHEL, Fedora), add the `tailscale0` interface
-to the `trusted` zone so service ports are reachable from other Tailscale nodes:
+On the selected host, record read-only identity and repository evidence:
 
 ```bash
-sudo firewall-cmd --permanent --zone=trusted --add-interface=tailscale0
-sudo firewall-cmd --reload
+hostname
+uname -a
+git -C ~/Projects/Odysseus rev-parse HEAD
+git -C ~/Projects/Odysseus submodule status --recursive
 ```
 
-Verify the zone assignment:
+Resolve any missing or drifting component before continuing. A component change
+belongs in its own repository; moving an Odysseus gitlink requires separate
+integration approval for the exact reviewed commit.
+
+Check local worker prerequisites without invoking Tailscale:
 
 ```bash
-firewall-cmd --get-zone-of-interface=tailscale0
-# Expected: trusted
+cd ~/Projects/Odysseus
+just doctor --role worker
 ```
 
-**Diagnostic note:** "No route to host" (ICMP reject) indicates the host kernel firewall is
-blocking the connection — check firewalld. "Connection timed out" (no response) suggests a
-Tailscale ACL or routing issue.
+This is the default for local development and CI. Record failures as failures;
+do not infer an install or a working topology from a skipped check.
 
-Skip this step if firewalld is not active (`systemctl is-active firewalld` returns inactive).
+## 2. Install approved local prerequisites
 
-### 4. Register the new host with Hermes host-sync
-
-Hermes maintains a synchronized host list. After Tailscale is up and the firewall is configured, trigger a host-sync from the primary host:
+After the operator approves the exact package and service effects reported by
+the read-only check:
 
 ```bash
-# On the primary host, from the Odysseus repo root
-curl -X POST http://172.20.0.1:8080/v1/host-sync \
-  -H "Content-Type: application/json" \
-  -d '{"action": "scan"}'
+just doctor --role worker --install
+just doctor --role worker
 ```
 
-Verify the new host appears in the Agamemnon host list:
+`--install` may install missing local dependencies, initialize pinned
+submodules, or enable a required local service. It does not change firewall
+policy and does not start the HomericIntelligence application stack. Review the
+actual post-state rather than relying on the command's exit alone.
+
+## 3. Verify an approved cross-host topology
+
+Skip this section unless a multi-host environment and exact host set are
+explicitly in scope. Enroll the host through the operator's current,
+officially supported Tailscale procedure. Keep enrollment credentials out of
+command history, process arguments, logs, and the repository.
+
+After enrollment, bind one literal peer IP from the approved live inventory and
+run the repository-owned topology check. Repeat for each approved peer:
 
 ```bash
-curl http://172.20.0.1:8080/v1/hosts | jq '.[] | .hostname'
+: "${PEER_TAILSCALE_IP:?set one operator-verified literal peer IP}"
+just doctor --role worker --cross-host --worker-ip "$PEER_TAILSCALE_IP"
 ```
 
-### 5. Deploy a NATS leaf node
+`just doctor --cross-host --capability-only` checks only local Tailscale
+capability. It is not peer reachability or topology evidence.
 
-The new host needs a NATS leaf node to participate in the event mesh.
+If the execution environment cannot run Tailscale, report topology verification
+as unavailable and rely on an authorized CI or operator environment. Do not
+convert a local-only doctor result into cross-host evidence.
 
-**Provision the leaf credential FIRST** (issue #176 — the hub is fail-closed:
-a leaf with no credential is rejected at connect time):
+### Firewall boundary
 
-```bash
-# RECOMMENDED: place a per-leaf NKey/JWT creds file (revocable, no shared secret)
-mkdir -p /etc/nats/certs
-chmod 700 /etc/nats/certs
-# Obtain leaf.creds from your operator/account JWT provisioning flow, then:
-cp leaf.creds /etc/nats/certs/leaf.creds
-chmod 600 /etc/nats/certs/leaf.creds
-# Uncomment the credentials line in leaf.conf after copying.
+Read the active firewall and interface policy before proposing a change. Adding
+the entire `tailscale0` interface to a trusted zone is a broad host-security
+change, not a routine prerequisite. Prefer deployment-owned least-privilege
+rules for the exact listeners and peers.
 
-# BOOTSTRAP fallback: shared token (must match $NATS_LEAF_TOKEN on the hub)
-# export NATS_LEAF_TOKEN=<shared-token-from-deployment-secrets>
-```
+The doctor does not apply or treat whole-interface trusted-zone membership as
+readiness. Use a deployment-owned procedure that binds the exact listeners,
+peers, current policy, change delta, rollback, operator approval, and
+post-change readback. An inactive or unavailable firewall control is not
+permission to substitute a different policy.
 
-Copy the leaf node config from this repo:
+## 4. Select only a supported deployment path
 
-Copy the leaf config and start the NATS leaf node (export `NATS_LEAF_URL` — the full URL of the primary NATS server):
+Host preparation does not select or activate services. Use
+[`../deployment.md`](../deployment.md) and the exact pinned component's README
+to choose a separately approved path.
 
-```bash
-cp configs/nats/leaf.conf /etc/nats/leaf.conf
-# Edit leaf.conf: set the remotes.url to the primary NATS server's Tailscale IP
-# (via $NATS_LEAF_URL below), and confirm the credential
-# (credentials=... or token=$NATS_LEAF_TOKEN) matches the hub.
-export NATS_LEAF_URL="nats+tls://<primary-nats-tailscale-ip>:7422"
-nats-server -c /etc/nats/leaf.conf &
-```
+- **Agamemnon/Myrmidons:** query the configured reconciler and current desired
+  state through its documented authenticated interface. The checked-in
+  Myrmidons data is not proof of live state, and no host-sync API is available.
+- **NATS:** the checked-in primary and leaf configurations have unresolved
+  exact-pin client and leaf-auth compatibility gates. Do not launch a leaf or
+  borrow another service's credentials. Follow
+  [`enable-nats-auth.md`](enable-nats-auth.md) only after compatible paths are
+  reviewed, integrated, and approved.
+- **Nomad:** do not start a generic background client. Use Nomad only for an
+  existing, operator-owned deployment with rendered host-specific config,
+  scoped ACL credentials, persistent state, a service manager, and authenticated
+  registration readback. It is not the default Myrmidons scheduler.
+- **Argus:** do not assume automatic discovery. Bind the deployed scrape or
+  service-discovery configuration and prove the expected target and metrics
+  through the operator-owned observability path.
 
-Verify connectivity:
+Never launch NATS or Nomad with an untracked `&` process from this runbook.
+Activation must use a deployment-owned lifecycle with logs, health checks,
+restart behavior, and cleanup.
 
-```bash
-nats --server nats://localhost:4222 sub "hi.>" &
-# Should see events forwarded from the primary cluster
-```
+## Completion receipt
 
-### 6. Deploy a Nomad client agent
+Host addition is complete only when the receipt records:
 
-Copy the client config and start Nomad:
+- the exact host identity and immutable repository/component revisions;
+- explicit approval and actual post-state for every local or remote effect;
+- a passing local worker check;
+- a passing `--cross-host` check when multi-host topology is in scope;
+- the supported, authenticated interface and desired-state readback for each
+  activated component;
+- least-privilege firewall and credential evidence; and
+- service-manager health, restart, and cleanup evidence for every started
+  process.
 
-Render the client config (resolves the `${NOMAD_SERVER_IP}` placeholder) then start Nomad:
-
-```bash
-export NOMAD_SERVER_IP=<primary-nomad-server-tailscale-ip>   # tailscale ip -4 on the Nomad server host
-# NOMAD_ADVERTISE_ADDR is only needed to satisfy the shared render recipe (which
-# renders both client.hcl and server.hcl); a Nomad client never uses the
-# advertise{} block, so the rendered /etc/nomad.d/server.hcl is unused here.
-export NOMAD_ADVERTISE_ADDR=$(tailscale ip -4)
-just render-nomad-configs                   # writes /etc/nomad.d/client.hcl (resolved, no ${...})
-
-# ACLs are enabled (issue #196): the client needs a token to register.
-# Obtain one from the server operator (a node-policy token, or the bootstrap
-# Secret ID from `nomad acl bootstrap` — see docs/deployment.md step 5c):
-export NOMAD_TOKEN=<token-from-server>
-
-nomad agent -config /etc/nomad.d/client.hcl &
-```
-
-Verify the new node appears in Nomad:
-
-```bash
-nomad node status
-# New host should appear with status "ready"
-```
-
-### 7. Verify Argus receives metrics
-
-Argus scrapes all known hosts. After the new host is registered, check that Argus has picked it up:
-
-```bash
-# From the primary host
-cd infrastructure/Argus && just status
-# Or check the Grafana dashboard for the new host's node_exporter metrics
-```
-
-If the host does not appear within 5 minutes, check the Argus service discovery config and ensure node_exporter is running on the new host.
-
----
-
-## Verification Checklist
-
-- [ ] Agamemnon agent is running on new host
-- [ ] New host appears in `curl http://172.20.0.1:8080/v1/hosts`
-- [ ] New host appears in Tailscale admin console
-- [ ] NATS leaf node is running and connected to primary cluster
-- [ ] Nomad node status shows new host as "ready"
-- [ ] Argus Grafana dashboard shows new host metrics
+List unavailable or failed checks as incomplete. Do not claim peer
+registration, host discovery, NATS federation, Nomad readiness, or Argus
+coverage unless that exact observable result was produced by the current,
+approved deployment.

@@ -1,322 +1,163 @@
 # Runbook: Enable NATS Mutual-TLS Authentication and Authorization
 
-This runbook enables the `verify_and_map` authentication and subject-scoped
-`accounts {}` authorization implemented by the checked-in NATS configuration.
-Follow these steps top-to-bottom on every host before restarting NATS with the
-updated `configs/nats/server.conf` and `configs/nats/leaf.conf`.
-
-**Governance status:** ADRs 008–010 are Proposed at this revision. This runbook
-operates the checked-in configuration; the proposals provide design context
-and do not prove the live state of any host.
-
-> **Already enabled?** For the operational lifecycle of these credentials — routine cert
-> rotation, CA rotation, and suspected-compromise / revocation response — see
-> [nats-credential-rotation](nats-credential-rotation.md).
-
-**CRITICAL:** Steps 1–3 must be completed and verified **before** restarting NATS in step 4.
-NATS with `verify_and_map = true` is fail-closed — all existing plain `nats://` connections
-will be rejected as soon as the new config is loaded.
-
----
-
-## Prerequisites
-
-- An internal CA provisioned per ADR-008 (`step ca init`). The CA must be reachable or its
-  offline key must be available to sign role certs.
-- The `step` CLI installed: <https://smallstep.com/docs/step-cli/>
-- `/etc/nats/certs/ca.pem` deployed on all hosts (existing, from ADR-008 TLS setup).
-
----
-
-## Step 1: Issue One SAN Cert Per Role
-
-For each role that will run on your mesh, issue a client cert with both a matching CN and a
-DNS Subject Alternative Name. The SAN-DNS value is the key used by NATS `verify_and_map` to
-look up the account user — a bare CN is never sufficient.
-
-Run the following on the host where the CA key is accessible (or via `step ca certificate`
-against a live CA):
-
-```bash
-# Directory to hold role certs
-mkdir -p /etc/nats/certs/clients
-chmod 700 /etc/nats/certs/clients
-
-# Hermes (event bridge, stream creator)
-step ca certificate hermes.homeric \
-  /etc/nats/certs/clients/hermes-cert.pem \
-  /etc/nats/certs/clients/hermes-key.pem \
-  --san hermes.homeric
-
-# Agent workers (Myrmidons)
-step ca certificate agent.homeric \
-  /etc/nats/certs/clients/agent-cert.pem \
-  /etc/nats/certs/clients/agent-key.pem \
-  --san agent.homeric
-
-# Keystone (DAG consumer)
-step ca certificate keystone.homeric \
-  /etc/nats/certs/clients/keystone-cert.pem \
-  /etc/nats/certs/clients/keystone-key.pem \
-  --san keystone.homeric
-
-# Telemachy (workflow runner)
-step ca certificate telemachy.homeric \
-  /etc/nats/certs/clients/telemachy-cert.pem \
-  /etc/nats/certs/clients/telemachy-key.pem \
-  --san telemachy.homeric
-
-# System account (NATS internal — issue if needed for system-level tooling)
-step ca certificate sys.homeric \
-  /etc/nats/certs/clients/sys-cert.pem \
-  /etc/nats/certs/clients/sys-key.pem \
-  --san sys.homeric
-
-# Fix permissions
-chmod 644 /etc/nats/certs/clients/*-cert.pem
-chmod 600 /etc/nats/certs/clients/*-key.pem
-```
-
-**Verify each cert carries the DNS SAN:**
-
-```bash
-openssl x509 -noout -ext subjectAltName \
-  -in /etc/nats/certs/clients/hermes-cert.pem
-# Expected output must include: DNS:hermes.homeric
-```
-
----
-
-## Step 2: Distribute Role Certs to Each Host
-
-Copy the relevant role cert(s) to `/etc/nats/certs/clients/` on each host that runs the
-corresponding service:
-
-| Host | Services | Certs needed |
-|------|----------|--------------|
-| Primary (epimetheus) | NATS hub, Hermes | `hermes-cert.pem`, `hermes-key.pem` |
-| Control host | Agamemnon, Telemachy | `telemachy-cert.pem`, `telemachy-key.pem` |
-| Worker hosts | Myrmidon agents | `agent-cert.pem`, `agent-key.pem` |
-| Keystone hosts | Keystone | `keystone-cert.pem`, `keystone-key.pem` |
-
-Use `scp` over Tailscale or your secret-distribution tool (Keystone / Myrmidons):
-
-```bash
-# Example: distribute Hermes cert to the primary host
-scp /etc/nats/certs/clients/hermes-{cert,key}.pem \
-  100.92.173.32:/etc/nats/certs/clients/
-```
-
----
-
-## Step 3: Configure Each Client to Use TLS and Present Its Cert
-
-Configure each downstream service **before** restarting NATS. The table below maps each
-service to the environment variables that enable mTLS. Set these in your deployment secrets,
-systemd unit `[Service]` block, or compose `.env` file.
-
-> **Note on Telemachy:** The `require_tls` gate in
-> `provisioning/Telemachy/src/telemachy/config.py` rejects plain `nats://` when
-> `REQUIRE_TLS=true` but does not yet load a client cert. Client-cert wiring for Telemachy
-> is tracked as a follow-up issue ("Telemachy: add NATS client-cert (mTLS) wiring").
-> Telemachy cannot connect to a `verify_and_map`-enforced NATS until that issue is resolved.
-
-| Service | Environment variables |
-|---------|----------------------|
-| **Hermes** (`infrastructure/Hermes/src/hermes/config.py:34`) | `NATS_URL=tls://<hub-tailscale-ip>:4222`<br>`TLS_CERT_FILE=/etc/nats/certs/clients/hermes-cert.pem`<br>`TLS_KEY_FILE=/etc/nats/certs/clients/hermes-key.pem`<br>`TLS_CA_BUNDLE=/etc/nats/certs/ca.pem` |
-| **Telemachy** (`provisioning/Telemachy/src/telemachy/config.py:21`) | `NATS_URL=tls://<hub-tailscale-ip>:4222`<br>`REQUIRE_TLS=true`<br>*(client-cert wiring pending — see note above)* |
-| **compose bridge** (`docker-compose.crosshost.yml:45`) | `NATS_URL=tls://nats:4222`<br>Mount `telemachy-cert.pem` / `telemachy-key.pem` into the container and set the corresponding `TLS_CERT_FILE` / `TLS_KEY_FILE` env vars. |
-
-Hermes is already mTLS-capable (`config.py:102-105` defines `tls_cert_file`, `tls_key_file`,
-`tls_ca_bundle`; `config.py:126 build_ssl_context()` activates when cert+key are set). Only
-the environment variables above are required — no code changes needed for Hermes.
-
-**PREREQUISITE: Provision the `hermes.homeric` cert before enabling enforcement.**
-Hermes creates JetStream streams (`homeric-agents`, `homeric-tasks`) on startup. If the
-Hermes cert is absent when NATS enforcement is activated, streams will not be created and the
-entire `hi.*` event pipeline will be inoperative.
-
----
-
-## Step 4: Restart NATS with the New Config
-
-On the **primary** NATS host (`server.conf`):
-
-```bash
-# If running via podman
-podman stop nats-server
-podman run -d \
-  --name nats-server \
-  --network homeric-mesh \
-  -p 4222:4222 \
-  -p 6222:6222 \
-  -p 7422:7422 \
-  -v /etc/nats/certs:/etc/nats/certs:ro \
-  -v $(pwd)/configs/nats/server.conf:/etc/nats/server.conf:ro \
-  nats:3.12.0 -c /etc/nats/server.conf
-
-# If running nats-server natively
-sudo systemctl restart nats
-```
-
-On each **leaf node** host (`leaf.conf`):
-
-```bash
-podman stop nats-leaf
-podman run -d \
-  --name nats-leaf \
-  --network homeric-mesh \
-  -p 4222:4222 \
-  -v /etc/nats/certs:/etc/nats/certs:ro \
-  -v $(pwd)/configs/nats/leaf.conf:/etc/nats/server.conf:ro \
-  nats:3.12.0 -c /etc/nats/server.conf
-```
-
-Check logs for startup errors:
-
-```bash
-podman logs nats-server 2>&1 | grep -iE "error|fatal|tls|account"
-```
-
-Expected: `Server is ready for connections on 0.0.0.0:4222` with no TLS/account errors.
-
----
-
-## Step 5: Functional Verification
-
-Run these checks against the running hardened NATS server to confirm auth enforcement:
-
-```bash
-HUB="tls://127.0.0.1:4222"
-CERTS="/etc/nats/certs/clients"
-CA="/etc/nats/certs/ca.pem"
-
-# 1. Anonymous connect MUST be rejected (no client cert)
-nats --server "$HUB" pub hi.test x 2>&1 \
-  | grep -qiE "tls|certificate|authorization required" \
-  && echo "PASS: anonymous connect rejected" \
-  || echo "FAIL: anonymous connect was NOT rejected"
-
-# 2. hermes.homeric cert MUST be able to create a JetStream stream
-nats --server "$HUB" \
-  --tlscert "$CERTS/hermes-cert.pem" \
-  --tlskey  "$CERTS/hermes-key.pem" \
-  --tlsca   "$CA" \
-  stream add homeric-agents-test \
-  --subjects "hi.agents.>" \
-  --defaults \
-  && echo "PASS: HERMES account can create a stream" \
-  || echo "FAIL: HERMES stream creation failed"
-
-# 3. agent.homeric cert MUST be denied subscribing to hi.tasks.> (not in AGENTS subscribe allow-list)
-#    AGENTS subscribe allow = ["hi.agents.>", "_INBOX.>"]; hi.tasks.> is genuinely
-#    outside that list, so this verifies the allow-list boundary is enforced.
-nats --server "$HUB" \
-  --tlscert "$CERTS/agent-cert.pem" \
-  --tlskey  "$CERTS/agent-key.pem" \
-  --tlsca   "$CA" \
-  sub "hi.tasks.>" 2>&1 \
-  | grep -qiE "permissions violation" \
-  && echo "PASS: AGENTS account denied hi.tasks.> (allow-list boundary enforced)" \
-  || echo "FAIL: AGENTS account was NOT denied hi.tasks.> (allow-list not enforced)"
-
-# 4. Hermes health endpoint (proves Hermes reconnected with its cert)
-curl -sf http://localhost:8085/health | grep -q '"status"' \
-  && echo "PASS: Hermes healthy (reconnected with client cert)" \
-  || echo "FAIL: Hermes health check failed"
-
-# 5. LEAF -> HUB PROPAGATION (run only on hosts with a leaf node)
-#    With named accounts{}, each leafnode remote bridges exactly ONE account, so the
-#    leaf.conf remotes block must carry one entry per account with an explicit
-#    `account:` binding. This check proves a leaf-attached AGENTS client's hi.agents.>
-#    events actually reach the hub — the gap a missing per-account remote would leave
-#    silently uncaught. Subscribe on the HUB, publish from the LEAF.
-LEAF="tls://127.0.0.1:4222"   # local leaf node client port
-HUB="tls://100.92.173.32:4222" # primary hub client port (update to your hub IP)
-AGENT_TLS=(--tlscert "$CERTS/agent-cert.pem" --tlskey "$CERTS/agent-key.pem" --tlsca "$CA")
-
-# Subscribe on the HUB for one message, in the background
-nats --server "$HUB" "${AGENT_TLS[@]}" sub "hi.agents.leafcheck" --count 1 > /tmp/leafcheck.out 2>&1 &
-SUB_PID=$!
-sleep 1
-# Publish from the LEAF node's local client port
-nats --server "$LEAF" "${AGENT_TLS[@]}" pub "hi.agents.leafcheck" "leaf-to-hub-ok"
-wait "$SUB_PID" 2>/dev/null
-grep -q "leaf-to-hub-ok" /tmp/leafcheck.out \
-  && echo "PASS: leaf-attached AGENTS hi.agents.> propagates to hub" \
-  || echo "FAIL: leaf hi.agents.> did NOT reach hub (check per-account remote in leaf.conf)"
-```
-
-All five checks must output `PASS` before this runbook is considered complete.
-(Check 5 applies only to hosts running a leaf node; skip it on the hub itself.)
-
----
-
-## Step 6: Rollback
-
-If clients cannot connect after enabling enforcement:
-
-1. Stop NATS.
-2. Restore the previous `server.conf` (remove `verify_and_map = true` and the `accounts {}`
-   block, or revert to the pre-ADR-010 config from git).
-3. Restart NATS.
-4. Diagnose cert/SAN issues with `openssl x509 -noout -ext subjectAltName -in <cert>` and
-   confirm `accounts {}` `user` values match the DNS SANs exactly.
-5. Re-run from Step 1.
-
-```bash
-# Quick rollback — revert to pre-auth config
-git -C /path/to/Odysseus show HEAD~1:configs/nats/server.conf \
-  > /tmp/server.conf.prev
-sudo cp /tmp/server.conf.prev /etc/nats/server.conf
-sudo systemctl restart nats
-```
-
----
-
-## Appendix: Telemachy Client mTLS Configuration (planned)
-
-> This section covers the **Telemachy client** side of NATS mTLS. The server-side
-> `verify_and_map` authentication and subject-scoped `accounts {}` authorization are
-> defined in ADR-010 and configured in the steps above.
->
-> **Status:** The Telemachy client-cert (mTLS) wiring described below is **not yet
-> shipped** in `provisioning/Telemachy`. It is tracked as the follow-up issue
-> "Telemachy: add NATS client-cert (mTLS) wiring" (see the note in Step 3). The
-> symbols referenced here (`telemachy.nats_client.connect_nats()`, the
-> `NatsConnectionError` gate, and the `test_client_cert_loaded_for_mtls` test) are the
-> **target design** for that issue and do not exist on a released submodule pin yet. This
-> appendix documents the intended operator-facing configuration so it is ready when the
-> code lands; do not expect `telemachy run` to perform the gate until the follow-up issue
-> is merged and the submodule pointer is bumped.
-
-Once the follow-up wiring lands, set the following environment variables so Telemachy
-connects over mutual TLS:
-
-| Component | `NATS_URL` | `TLS_CERT_FILE` | `TLS_KEY_FILE` | `TLS_CA_BUNDLE` |
-|-----------|------------|-----------------|----------------|-----------------|
-| Telemachy | `tls://…`  | role cert PEM   | role key PEM   | CA bundle PEM   |
-
-```bash
-export NATS_URL=tls://<nats-host>:4222
-export TLS_CERT_FILE=/etc/nats/certs/telemachy-cert.pem
-export TLS_KEY_FILE=/etc/nats/certs/telemachy-key.pem
-export TLS_CA_BUNDLE=/etc/nats/certs/ca.pem
-```
-
-Once implemented, when `NATS_URL=tls://…`, `telemachy run` is intended to perform a
-**fail-closed mTLS verification gate** before executing the workflow: it opens a NATS
-connection via `telemachy.nats_client.connect_nats()` (passing the client cert as
-`tls=`/`tls_hostname=`), then drains it. If the handshake fails (cert rejected, CA
-mismatch, server unreachable), `run` aborts with a clear `NatsConnectionError` message and
-a non-zero exit — it does not proceed to workflow execution.
-
-This gate is the planned complement to the `require_tls` gate in `agamemnon_client.py` that
-rejects plain `nats://` connections when `REQUIRE_TLS=true`.
-
-### CI note (applies once the wiring lands)
-
-When the follow-up wiring ships, CI images that run the Telemachy unit tests must ship the
-`openssl` binary. The planned `test_client_cert_loaded_for_mtls` test generates a
-self-signed cert at runtime into `tmp_path` via `openssl req -x509 …` and calls
-`pytest.skip` if `openssl` is absent.
+The checked-in NATS configuration uses mutual TLS with `verify_and_map` and
+subject-scoped accounts. This runbook defines the activation boundary; it does
+not assert that the configuration is deployed on any host. Proposed ADRs
+008-010 provide design context but are not operational authorization.
+
+Enabling this policy is a production authentication and availability change.
+Bind the exact deployment, obtain operator approval for the named hosts and
+effects, and preserve a verified rollback artifact before changing live state.
+
+## Stop conditions
+
+Do not activate the checked-in configuration when any of these conditions is
+true:
+
+- The active server revision, config hash, service manager, bind addresses,
+  firewall policy, credential source, or JetStream storage path is unknown.
+- Any active client lacks mutual-TLS client-certificate support or has no
+  least-privilege account in the selected server policy.
+- A certificate's DNS SAN does not exactly match its configured NATS user.
+- The staged server and leaf configurations use different authentication
+  schemes for the same connection.
+- The selected application-account topology cannot preserve the cross-role
+  subjects, streams, and consumers required by Accepted ADR-002 and ADR-005;
+  the checked-in four-account topology remains isolated without explicit
+  exports/imports.
+- The pre-change config, credential version, and state backup cannot be
+  restored as one versioned recovery set.
+- The change or its verification would require an unapproved remote write.
+
+At the current component pins, the full topology does not clear these gates:
+
+- Agamemnon and Nestor do not expose the complete client-cert configuration
+  required by the canonical broker policy.
+- Telemachy can require a TLS URL but does not load a client certificate.
+- Hermes constructs an SSL context in settings, but its pinned publisher does
+  not pass that context to the NATS connection.
+- The Odysseus console has no dedicated identity in `server.conf`; do not reuse
+  Hermes credentials for it.
+- `server.conf` expects a leaf user/password while `leaf.conf` supplies a
+  token. Those forms are not interoperable.
+- The four application accounts isolate identical subject names and JetStream
+  state, so Hermes publications cannot reach agent, Keystone, or Telemachy
+  consumers without an accepted and implemented topology resolution. Proposed
+  ADR-024 is design context only.
+
+Keep the affected paths unavailable until their owning component and config
+changes are approved, implemented, reviewed, and integrated.
+
+## 1. Bind the deployment and active clients
+
+Record the exact Odysseus and component commits, deployed config digest,
+server binary or image digest, service-manager unit, listener addresses,
+JetStream storage, and secret versions. Query the live server and deployment
+inventory for every client and leaf. Do not derive that inventory from this
+runbook or from checked-in manifests alone.
+
+For each verified client, map its identity to the current policy:
+
+| Identity | Intended scope in `server.conf` |
+|---|---|
+| `hermes.homeric` | Publish and subscribe on `hi.>` plus required JetStream APIs |
+| `agent.homeric` | Publish agent/task subjects; subscribe to agent subjects and inboxes |
+| `keystone.homeric` | Consume task subjects and use its bounded consumer APIs |
+| `telemachy.homeric` | Publish/subscribe task subjects plus required JetStream APIs |
+| `sys.homeric` | NATS system operations only |
+
+An account entry is not proof that the corresponding client can present its
+certificate. Verify client support at the exact deployed component pin.
+
+## 2. Stage credentials without replacing live files
+
+Use the operator-owned CA and secret-distribution system to issue one
+least-privilege certificate per approved role. Each client certificate must
+contain a DNS SAN exactly equal to its configured user, such as
+`hermes.homeric`; a common name alone is insufficient.
+
+Stage the CA, certificate, and private key at new versioned paths on each target
+host. Before activation:
+
+1. Verify certificate chain, validity, DNS SAN, and intended role.
+2. Verify that the certificate and private key form a matching pair.
+3. Restrict the private key to the service account and keep it out of Git,
+   logs, shell history, and test artifacts.
+4. Confirm the client reads all three staged paths and rejects a missing or
+   invalid credential.
+
+Do not overwrite the live cert or key during staging. Follow
+[`nats-credential-rotation.md`](nats-credential-rotation.md) for an already
+active identity.
+
+## 3. Validate a version-matched candidate
+
+Validate the candidate with the exact NATS binary or immutable image used by
+the deployment and with secrets supplied through the deployment's secret
+mechanism. Record the non-secret config digest, binary/image digest, command
+exit status, and output. Confirm that:
+
+- client, cluster, and leaf listeners bind only to approved interfaces;
+- persistent JetStream storage is mounted at the expected path;
+- every referenced credential exists with the expected ownership;
+- every active client has a compatible identity and subject scope; and
+- hub and leaf authentication methods match on both sides.
+
+The checked-in hub/leaf mismatch means the current multi-host pair must fail
+this preflight. Do not improvise a token, user, password, or account mapping in
+the live environment.
+
+## 4. Prove the policy in an isolated canary
+
+Before live activation, run a controlled canary with disposable storage and
+non-production credentials. The verification must propagate a failing command
+as a failing result and prove all of the following:
+
+- anonymous and untrusted certificates are rejected;
+- every approved role can perform one operation inside its exact scope;
+- every role is denied at least one representative operation outside its
+  scope;
+- JetStream operations required by the selected clients work; and
+- leaf traffic crosses the hub only when the same approved authentication
+  contract is configured at both ends.
+
+Use dedicated canary subjects within each role's allowed namespace. There is no
+single `hi.rotation.check` subject that is valid for every role. Never test a
+role by borrowing a more privileged certificate.
+
+## 5. Activate through the deployed service manager
+
+Proceed only after the stop conditions are cleared and the operator approves
+the exact candidate and rollback set. Use the deployment-owned service manager
+and its documented rolling procedure. Do not start a second ad hoc
+`nats-server`, publish unbound host ports, substitute a floating image tag, or
+reuse another role's credentials.
+
+For a cluster, change one approved node at a time and verify quorum, routes,
+storage, and clients before continuing. Activate leaves only after their
+authentication configuration matches the hub. If any required client cannot
+reconnect, stop the rollout and enter rollback.
+
+## 6. Verify and record completion
+
+Repeat the canary authorization matrix against the approved live endpoints
+using dedicated verification identities and bounded subjects. Also verify the
+actual client connections, JetStream streams/consumers, cluster peers, and leaf
+routes that belong to the bound topology. Use each component's pinned health
+recipe or its configured endpoint rather than a hardcoded port.
+
+Completion requires the exact post-change config and image/binary digests,
+successful command exit statuses, client/peer readbacks, and cleanup of any
+canary resources. A healthy process without authorization and state evidence
+is not completion. Preserve a truthful failure if any receipt is unavailable.
+
+## 7. Roll back as one versioned set
+
+Restore the exact pre-change config, credential paths/versions, and deployment
+settings through the same service manager. Restore certificate and key pairs
+together; never reconstruct the rollback config from `HEAD~1`, remove
+authentication directives by hand, or leave a mixed cert/key pair in place.
+
+After rollback, repeat health, client, peer, stream, and consumer readbacks and
+record the actual result. Keep the failed candidate and logs as protected
+diagnostic evidence without retaining private keys in the repository.

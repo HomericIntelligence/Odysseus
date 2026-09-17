@@ -1,179 +1,81 @@
-# NATS Subject Schema
+# NATS Interface Routes
 
-Central reference for the HomericIntelligence NATS event bus. See [ADR 005](adr/005-nats-subject-schema.md) for decision context.
+This page routes readers to the current wire authorities. It is not a copied
+schema or lifecycle specification. [Accepted ADR-005](adr/005-nats-subject-schema.md)
+records the original subject decision; later Proposed ADRs describe possible
+evolution but are not deployment evidence.
 
-The checked-in schema and runtime configuration define current wire behavior.
-ADRs 013 and 020 are Proposed at this revision; references to them below record
-rationale and target evolution, not accepted governance or deployment proof.
+## Current authorities
 
-## Subject Patterns
+- Agamemnon's pinned `docs/api/openapi.yaml` owns the subjects emitted by its
+  task and HMAS APIs and the task-status enum accepted by those APIs.
+- Hermes's pinned `openapi.json`, `src/hermes/models.py`, and
+  `src/hermes/publisher.py` own accepted webhook events, their NATS routing,
+  and the webhook-event envelope.
+- [`configs/schemas/dispatch-envelope.hi-v1.schema.json`](../configs/schemas/dispatch-envelope.hi-v1.schema.json)
+  owns the versioned `hi/v1` pipeline dispatch packet.
+- [`configs/nats/server.conf`](../configs/nats/server.conf) and
+  [`configs/nats/leaf.conf`](../configs/nats/leaf.conf) own the checked-in
+  broker permissions and stream storage configuration. They do not prove live
+  deployment state.
 
-| Pattern | Published By | Consumed By | Description |
-|---|---|---|---|
-| `hi.agents.{host}.{name}.created` | Hermes | Argus, Telemachy | Agent registered |
-| `hi.agents.{host}.{name}.updated` | Hermes | Argus | Agent state changed |
-| `hi.agents.{host}.{name}.deleted` | Hermes | Argus, Telemachy | Agent removed |
-| `hi.tasks.{team_id}.{task_id}.updated` | Hermes | Keystone, Argus | Task status changed |
-| `hi.tasks.{team_id}.{task_id}.completed` | Hermes | Keystone, Argus | Task completed |
-| `hi.tasks.{team_id}.{task_id}.failed` | Hermes | Keystone, Argus | Task failed |
+Always bind the exact component gitlink before relying on an interface. If a
+root summary and the component source disagree, the component interface wins
+and this page must be corrected.
 
-## Message Payload Schema
+## Exact-pin routing summary
 
-All NATS messages follow a standard envelope structure:
+At the component pins recorded by this Odysseus revision, Agamemnon documents:
 
-```json
-{
-  "event": "task.completed",
-  "data": { /* event-specific fields */ },
-  "timestamp": "2026-04-23T15:30:00Z"
-}
-```
+| Operation | Subject |
+|---|---|
+| Create task | `hi.tasks.created` |
+| Dispatch created task | `hi.myrmidon.{type}.{task_id}` |
+| Update task through PUT or PATCH | `hi.tasks.{team_id}.{task_id}.updated` |
+| Record completed-task log | `hi.logs.agamemnon.task_completed` |
 
-The `timestamp` field is ISO-8601 formatted UTC. The `data` object contains event-specific fields; **note that `status` is nested inside `data`, not at the top level**.
+Agamemnon's ordinary task status enum is exactly `pending`, `running`,
+`completed`, `failed`, and `blocked`. Its HMAS state machine is a separate
+interface and must not be collapsed into that enum. Both PUT and PATCH task
+updates use merge semantics at this pin.
 
-Pipeline dispatch packets (`hi.myrmidon.pipeline.*`) are governed by the
-checked-in versioned JSON Schema
-[`configs/schemas/dispatch-envelope.hi-v1.schema.json`](../configs/schemas/dispatch-envelope.hi-v1.schema.json).
-Proposed ADR-013 §3 and Proposed ADR-020 §6 provide design context for that
-`hi/v1` artifact.
+Hermes accepts only these routed webhook event names:
 
-### Event-Specific Data Fields
+| Event | Subject shape |
+|---|---|
+| `agent.created` | `hi.agents.{host}.{name}.created` |
+| `agent.updated` | `hi.agents.{host}.{name}.updated` |
+| `agent.deleted` | `hi.agents.{host}.{name}.deleted` |
+| `task.updated` | `hi.tasks.{team_id}.{task_id}.updated` |
+| `task.completed` | `hi.tasks.{team_id}.{task_id}.completed` |
+| `task.failed` | `hi.tasks.{team_id}.{task_id}.failed` |
 
-**task.created**
-```json
-{
-  "event": "task.created",
-  "data": {
-    "task_id": "task-uuid",
-    "team_id": "team-id",
-    "title": "Task title",
-    "description": "Task description",
-    "status": "backlog",
-    "assigned_to": null
-  },
-  "timestamp": "2026-04-23T15:30:00Z"
-}
-```
+`task.created` is not a Hermes accepted event at this pin; Agamemnon owns its
+creation subject. Unknown Hermes event types follow Hermes's configured
+dead-letter behavior rather than being silently treated as one of the events
+above.
 
-**task.updated**
-```json
-{
-  "event": "task.updated",
-  "data": {
-    "task_id": "task-uuid",
-    "team_id": "team-id",
-    "status": "in_progress",
-    "assigned_to": "agent-id",
-    "changes": ["status", "assigned_to"]
-  },
-  "timestamp": "2026-04-23T15:30:00Z"
-}
-```
+The Hermes-published JSON envelope contains `schema_version`, `event`, `data`,
+`timestamp`, and `request_id`. Event-specific fields remain inside `data`.
+Consult the pinned Hermes models and OpenAPI document for exact validation and
+response shapes instead of copying examples from this page.
 
-**task.completed**
-```json
-{
-  "event": "task.completed",
-  "data": {
-    "task_id": "task-uuid",
-    "team_id": "team-id",
-    "status": "completed",
-    "result": "Task completed successfully",
-    "completed_at": "2026-04-23T15:35:00Z"
-  },
-  "timestamp": "2026-04-23T15:35:00Z"
-}
-```
+## Streams and consumers
 
-**task.failed**
-```json
-{
-  "event": "task.failed",
-  "data": {
-    "task_id": "task-uuid",
-    "team_id": "team-id",
-    "status": "failed",
-    "error": "Task execution failed",
-    "error_code": "EXECUTION_ERROR",
-    "failed_at": "2026-04-23T15:35:00Z"
-  },
-  "timestamp": "2026-04-23T15:35:00Z"
-}
-```
+The pinned Hermes publisher ensures `homeric-agents` for `hi.agents.>`,
+`homeric-tasks` for `hi.tasks.>`, and its configured dead-letter stream when it
+connects successfully. A stream declaration in source is not proof that a
+stream exists or is healthy. Query the authorized live system identity for
+that evidence.
 
-**agent.created**
-```json
-{
-  "event": "agent.created",
-  "data": {
-    "host": "hostname",
-    "name": "agent-name",
-    "type": "agent-type",
-    "capabilities": ["cap1", "cap2"]
-  },
-  "timestamp": "2026-04-23T15:30:00Z"
-}
-```
+Consumer names, filters, acknowledgment policy, and replay behavior belong to
+the owning component and live server state. Do not infer a durable consumer or
+advance it from this routing page.
 
-**agent.removed**
-```json
-{
-  "event": "agent.removed",
-  "data": {
-    "host": "hostname",
-    "name": "agent-name",
-    "removed_at": "2026-04-23T15:35:00Z"
-  },
-  "timestamp": "2026-04-23T15:35:00Z"
-}
-```
+## Proposed pipeline subjects
 
-## JetStream Streams
-
-| Stream | Subjects | Created By |
-|---|---|---|
-| `homeric-agents` | `hi.agents.>` | Hermes (on startup) |
-| `homeric-tasks` | `hi.tasks.>` | Hermes (on startup) |
-
-## Durable Consumers
-
-| Consumer Name | Stream | Service | Purpose |
-|---|---|---|---|
-| `keystone-dag` | `homeric-tasks` | Keystone | DAG advancement on task completion |
-
-## Subscription Examples
-
-```python
-# Subscribe to all task events (wildcard)
-await js.subscribe("hi.tasks.>", durable="my-consumer", cb=handler)
-
-# Subscribe to events for a specific team
-await js.subscribe("hi.tasks.team-42.>", cb=handler)
-
-# Subscribe to only completions across all teams
-await js.subscribe("hi.tasks.*.*.completed", cb=handler)
-```
-
-## Task Status Lifecycle
-
-All tasks follow a canonical lifecycle with eight possible statuses:
-
-| Status | Category | Description | NATS Event |
-|---|---|---|---|
-| `backlog` | Initial | Task created but not yet scheduled | task.created |
-| `pending` | Active | Task scheduled and awaiting assignment | (task.updated) |
-| `in_progress` | Active | Task assigned and execution underway | (task.updated) |
-| `review` | Active | Task execution complete, awaiting human review | (task.updated) |
-| `completed` | Terminal (success) | Task completed successfully | **task.completed** |
-| `failed` | Terminal (failure) | Task execution failed | **task.failed** |
-| `error` | Terminal (system error) | Task encountered unrecoverable system error | (task.failed) |
-| `cancelled` | Terminal (manual) | Task manually cancelled before completion | (task.updated) |
-
-**Transition Rules:**
-- Initial state: `backlog`
-- Active states flow: `backlog` → `pending` → `in_progress` → (`review`) → terminal
-- Terminal states are final: no transitions out
-- Only `completed` and `failed` trigger dedicated NATS events; other transitions use `task.updated`
-
-**Canonical Source of Truth:**
-This lifecycle is the authoritative specification for the HomericIntelligence ecosystem. Keystone, Telemachy, Agamemnon, and Hermes must conform to these statuses and transition rules. Keystone advances DAGs when tasks reach terminal states (`completed`, `failed`, `error`, `cancelled`).
+Subjects under `hi.myrmidon.pipeline.*`, role-addressed queues, research
+interview relays, and the distributed automation loop are described by
+Proposed ADRs 013 and 020 and their checked-in workflow artifacts. Treat those
+descriptions as target architecture unless an exact runtime source and live
+readback prove a particular path is implemented.

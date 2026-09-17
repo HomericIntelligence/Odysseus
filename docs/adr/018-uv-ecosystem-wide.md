@@ -80,7 +80,8 @@ pixi is removed from every HomericIntelligence repository.**
 5. **Migration order (de-risked):** Odyssey (Mojo — the highest-risk toolchain)
    is proven through CI + the review gate first; the four C++ repos and Myrmidons
    follow the same pattern. Each is a single gated PR that must pass
-   `review-pr-strict`.
+   exact-head `$athena:pr-review` with terminal `GO` and every repository-owned
+   required CI/CD check.
 
 ## Consequences
 

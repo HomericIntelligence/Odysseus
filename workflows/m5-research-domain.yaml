@@ -26,19 +26,73 @@ teams:
         description: >-
           Capture: LLM work never runs inside C++ services (Nestor stays
           thin); interview fallback ladder live console then GitHub comment
-          marker polling then assumptions recorded; research dispatch adds
-          inline idea/context fields; completion closes the Nestor store
-          item; handoff produces a researched brief consumed by the epic
-          planner with athena:advise gate.
+          marker polling, then stated assumptions only when they cannot expand
+          scope or effects or materially change the outcome; otherwise record
+          a truthful block. Research dispatch adds inline idea/context fields;
+          completion closes the Nestor store item; handoff produces a
+          researched brief consumed by the epic planner, which selects advice
+          only when the skill trigger matches. Change only the versioned Nestor
+          requirements artifact; do not change runtime behavior. Complete when
+          focused validation proves each intake, interview, authority, closure,
+          and handoff rule is recorded.
         assign_to: loop-planner
-      - subject: Plan research-lane decomposition (advise-gated)
+      - subject: POST /v1/research dispatch payload conformance plus store-item closure
         description: >-
-          Run athena:advise planning mode first. Decompose into child issues:
-          Nestor dispatch payload conformance; research myrmidon manifest on
-          the achaean-mesh vessel; interview relay consumer in the console;
-          brief-to-Telemachy handoff workflow; E2E case from submitted idea
-          to registered epic entering M4-style dogfood.
+          Dispatch payload conformance for POST /v1/research with inline idea
+          and context fields, and closure of the Nestor store item on
+          completion, per the requirements captured in the requirements child
+          of this epic. Change only the endpoint, store transition, and tests;
+          preserve current HTTP and task-transport semantics. Complete when
+          controlled tests prove one valid dispatch, invalid-input rejection,
+          and store-item closure only after terminal success.
         assign_to: loop-planner
         blocked_by:
           - Requirements and invariants for the research lane
+      - subject: Research myrmidon manifest on achaean-mesh vessel
+        description: >-
+          Manifest for the research myrmidon role running on the achaean-mesh
+          vessel, subscribing to hi.myrmidon.research.chief-architect. Change
+          only the role manifest and its schema tests; preserve provider and
+          model defaults and do not embed credentials. Complete when the
+          manifest validates with the exact subscription and bounded resources.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for the research lane
+      - subject: Interview relay consumer in tools/odysseus-console.py
+        description: >-
+          Console-side consumer of the interview relay subjects so research
+          myrmidons can interview via live console with the GitHub comment
+          fallback target described by Proposed ADR-013. Change only the
+          console consumer, a dedicated least-privilege console identity,
+          configuration, and tests; never borrow another role's credentials.
+          Retain current subjects and remote-write boundaries. Complete when
+          tests prove authentication, live relay, fallback selection, and
+          truthful failure behavior.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for the research lane
+      - subject: Brief-to-Telemachy handoff workflow yaml in workflows/
+        description: >-
+          Workflow yaml that registers a researched brief as an epic with
+          child issues entering the loop (M4-style dogfood), consumed under
+          contextual skill selection. Change only the workflow resource and
+          its validation; keep authored brief content untrusted and transport
+          it unchanged. Complete when a controlled brief renders one valid
+          epic and its dependency-correct child tasks.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for the research lane
+      - subject: E2E from submitted idea to registered epic
+        description: >-
+          End-to-end case: submitted idea to researched brief to registered
+          epic to merged work without manual steps (M5 exit criterion). Add
+          only controlled e2e fixtures and harness changes; do not use live
+          production state. Complete when the test proves the full chain,
+          terminal receipts, and cleanup.
+        assign_to: loop-planner
+        blocked_by:
+          - POST /v1/research dispatch payload conformance plus store-item closure
+          - Research myrmidon manifest on achaean-mesh vessel
+          - Interview relay consumer in tools/odysseus-console.py
+          - Brief-to-Telemachy handoff workflow yaml in workflows/
 teardown: on_completion

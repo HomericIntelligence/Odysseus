@@ -16,8 +16,8 @@ choice, its context, decision rationale, and consequences.
 | [006](006-decouple-from-ai-maestro.md) | Decouple HomericIntelligence from ai-maestro | Accepted | — | — |
 | [007](007-symlinks-over-submodules.md) | Replace Symlinks with Real Git Submodules | Accepted | — | — |
 | [008](008-nats-tls-encryption.md) | Require TLS for All NATS Inter-Service Communication | Proposed | — | — |
-| [009](009-nats-authentication.md) | Require Authentication for All NATS Connections | Proposed | — | — |
-| [010](010-nats-mtls-subject-scoped-auth.md) | NATS Mutual-TLS Authentication and Subject-Scoped Authorization | Proposed | — | — |
+| [009](009-nats-authentication.md) | Require Authentication for All NATS Connections | Proposed | — | Decision 3 only, by Proposed [ADR-024](024-one-homeric-nats-application-account.md) if accepted |
+| [010](010-nats-mtls-subject-scoped-auth.md) | NATS Mutual-TLS Authentication and Subject-Scoped Authorization | Proposed | — | Decision 3 only, by Proposed [ADR-024](024-one-homeric-nats-application-account.md) if accepted |
 | [011](011-extract-python-orchestration-to-agamemnon.md) | Extract Python Orchestration Layer from Keystone to ProjectAgamemnon | Accepted | — | — |
 | [012](012-slo-sla-definitions.md) | Define SLO/SLA Targets for the Agent Mesh | Proposed | — | — |
 | [013](013-hmas-mesh-wire-contracts.md) | HMAS Mesh Wire Contracts — Role-Addressed Dispatch, State Events, and Task Sizing | Proposed | — | — |
@@ -30,6 +30,13 @@ choice, its context, decision rationale, and consequences.
 | [020](020-mesh-distributed-hephaestus-loop.md) | Distribute the Hephaestus Automation Loop Across the Mesh | Proposed | — | — |
 | [021](021-defer-multi-host-nomad-scheduling.md) | Defer Multi-Host Nomad Scheduling to a Future Phase | Proposed | — | — |
 | [022](022-layered-provider-neutral-agent-instructions.md) | Layered, Provider-Neutral Agent Instructions | Proposed | — | — |
+| [024](024-one-homeric-nats-application-account.md) | One Homeric NATS Application Account with Per-Role Authorization | Proposed | Conflicting Decision 3 portions of Proposed [ADR-009](009-nats-authentication.md) and [ADR-010](010-nats-mtls-subject-scoped-auth.md), only if accepted | — |
+
+ADR-023 is reserved for the Fleet execution and web-interface proposal carried
+by [PR #498](https://github.com/HomericIntelligence/Odysseus/pull/498). It is
+intentionally absent from this tree until that proposal completes its required
+rebase and renumber. A reservation is not an ADR or architectural authority,
+so there is no placeholder row or file.
 
 ## How to Create a New ADR
 
@@ -37,13 +44,14 @@ choice, its context, decision rationale, and consequences.
    `NNN-kebab-case-title.md`, where `NNN` is the next sequential number.
 2. Fill in all sections: Context, Decision, Consequences (Positive, Negative,
    Neutral), and References.
-3. Set **Status** to `Proposed` until the ADR is merged and accepted.
-4. If your ADR supersedes or is superseded by another, link them both ways
-   (e.g., `Supersedes: [ADR-004](004-...)` and update that ADR with
-   `Superseded By: [ADR-006](...)`).
+3. Keep **Status** as `Proposed` until a recorded human decision formally
+   accepts it. Merge alone does not imply acceptance.
+4. If the proposal supersedes another decision, declare that relationship in
+   the new ADR and update this decision log's `Superseded By` column. Never
+   edit an Accepted ADR body to add a reverse link.
 5. Create a pull request with your new ADR.
-6. Once merged, you may update the Status field if the decision is formally
-   accepted by the team.
+6. Record formal acceptance through a reviewed status-change PR. After that
+   change lands, the Accepted ADR body is frozen.
 
 ## ADR Process
 

@@ -112,8 +112,10 @@ proof that a gate exists or has run.
 
 - Reviewers and agents must learn that a committed `epoch1.log` is not
   evidence. This is a workflow shift, documented in AGENTS.md.
-- Long training runs move to a sanctioned detached-execution pattern already in
-  use ad hoc (`nohup` + poll from the main clone).
+- Long training runs move to a sanctioned detached-execution pattern bound to
+  an exact revision in an isolated worktree or runner. Preserve the runner's
+  actual receipts and collect them independently; never poll a mutable main
+  clone as evidence.
 
 ## References
 

@@ -8,7 +8,7 @@ Welcome to the HomericIntelligence documentation hub. This page serves as a tabl
 
 Start here to understand the HomericIntelligence system as a whole:
 
-- **[System Architecture](architecture.md)** — Complete overview of all components, their roles, and how they interact. Post-ADR-006 architecture with Agamemnon as the coordination hub.
+- **[System Architecture](architecture.md)** — Complete overview of the 16 canonical repositories (Odysseus plus 15 component gitlinks), their roles, and how current interfaces differ from Proposed ADR target state.
 
 ---
 
@@ -46,10 +46,17 @@ behavior.
 | [020](adr/020-mesh-distributed-hephaestus-loop.md) | Distribute the Hephaestus Automation Loop Across the Mesh | Proposed | — |
 | [021](adr/021-defer-multi-host-nomad-scheduling.md) | Defer Multi-Host Nomad Scheduling to a Future Phase | Proposed | — |
 | [022](adr/022-layered-provider-neutral-agent-instructions.md) | Layered, Provider-Neutral Agent Instructions | Proposed | — |
+| [024](adr/024-one-homeric-nats-application-account.md) | One Homeric NATS Application Account with Per-Role Authorization | Proposed | Conflicting Decision 3 portions of Proposed ADR-009 and ADR-010, only if accepted |
 
-The next governance proposal is
-[ADR-022](adr/022-layered-provider-neutral-agent-instructions.md), which is a
-dependency for the ecosystem-wide agent-instruction modernization.
+ADR-023 is reserved for the Fleet proposal in PR #498 and is intentionally
+absent until that proposal completes its required rebase and renumber. The
+reservation is not an ADR or architectural authority.
+
+[ADR-022](adr/022-layered-provider-neutral-agent-instructions.md) is the
+instruction-modernization governance proposal and remains a dependency for
+ecosystem-wide consumer changes. [ADR-024](adr/024-one-homeric-nats-application-account.md)
+separately proposes a compatible NATS account topology; neither proposal is
+deployed or binding until formally accepted and implemented.
 
 The associated
 [modernization disposition ledger](agent-instruction-modernization-ledger.md)
@@ -60,7 +67,10 @@ still required without claiming unfinished work as complete.
 
 ## Operational Runbooks
 
-Step-by-step guides for common operational tasks. Execute each runbook top-to-bottom without prior context.
+Contextual guides for common operational tasks. Select the guide that matches
+the exact operation, bind its prerequisites and authority, and execute ordered
+steps only after its gates are satisfied. Some guides intentionally stop at a
+live-state or operator-approval boundary.
 
 | Runbook | When to Use |
 |---------|------------|
@@ -80,8 +90,8 @@ Step-by-step guides for common operational tasks. Execute each runbook top-to-bo
 ## Additional Resources
 
 - **[Architecture Analysis: ai-maestro Migration](odysseus-ai-maestro-analysis.md)** — Historical analysis of the ai-maestro integration and subsequent decoupling.
-- **[Architecture Analysis: Ruflo Integration](odysseus-ruflo-analysis.md)** — Analysis of Ruflo system integration patterns.
-- **[E2E Walkthrough Report](e2e-walkthrough-report.md)** — End-to-end system test results and topology validation.
+- **[Historical Architecture Analysis: Ruflo Integration](odysseus-ruflo-analysis.md)** — Preserved 2026-03-27 analysis; not current operating authority.
+- **[Historical E2E Walkthrough Report](e2e-walkthrough-report.md)** — Frozen 2026-04-06 evidence; not a current runbook, topology source, or authorization for its retired commands.
 
 ---
 
@@ -97,4 +107,6 @@ Step-by-step guides for common operational tasks. Execute each runbook top-to-bo
 2. **ADRs are append-only.** Once accepted, never edited. Superseding decisions get a new ADR.
 3. **Configs are canonical.** The Nomad and NATS configs in `../configs/` are authoritative.
 4. **Submodule pins matter.** Submodule SHAs represent the last known-good cross-repo integration point.
-5. **ai-maestro has been fully removed per ADR-006.** Agamemnon replaces its task coordination role.
+5. **ai-maestro is not part of the current meta-repo or runtime coordination path.**
+   Agamemnon owns current task coordination; preserved historical references remain evidence,
+   not operating authority.

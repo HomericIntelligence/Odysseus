@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Native pre-push signature boundary.
+#
+# pre-commit captures pre-push stdin before it invokes a migrated
+# `pre-push.legacy` hook.  Installing this file as that legacy hook therefore
+# preserves the complete multi-ref transaction for the repository verifier;
+# a configured pre-commit hook does not receive that stream.
+set -euo pipefail
+
+if ! repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
+    echo "ERROR: cannot resolve the repository root for signature verification" >&2
+    exit 1
+fi
+
+verifier="$repo_root/scripts/check-push-signatures.sh"
+if [[ ! -f "$verifier" ]]; then
+    echo "ERROR: signed-commit verifier is unavailable at $verifier" >&2
+    exit 1
+fi
+
+exec bash "$verifier" "$@"

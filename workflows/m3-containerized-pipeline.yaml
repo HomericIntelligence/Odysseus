@@ -5,11 +5,12 @@ apiVersion: telemachy/v1
 metadata:
   name: m3-containerized-pipeline-domain
   description: >-
-    achaean-mesh vessel gains agent-CLI build ARG (opencode default lane,
-    claude variant retained); Myrmidons manifests for all six roles with
-    per-lane model fields; Odyssey 6-level hierarchy ported into Myrmidons;
-    dev-mesh fleet wiring; agamemnon-apply reconciliation; compose T4 E2E.
-    Exit: just mesh-e2e green; Argus panels live.
+    achaean-mesh vessel gains an explicit agent-CLI build ARG while an omitted
+    selection preserves the pinned Claude default; Myrmidons manifests for all
+    six roles with per-lane model fields; runtime mesh-role definitions
+    validated separately from Odyssey's retained instruction roles; dev-mesh
+    fleet wiring; agamemnon-apply reconciliation; compose T4 E2E. Exit: just
+    mesh-e2e green; Argus panels live.
   adr: "020"
   epic_home: Myrmidons
 agents:
@@ -24,22 +25,101 @@ teams:
       - subject: Requirements and invariants for containerized mesh pools
         description: >-
           Capture: vessel must install hephaestus[mesh] plus the selected
-          agent CLI via ARG with pinned HEPHAESTUS_REF; credentials mounted
-          read-only per CLI; one container per (domain, role) queue;
+          agent CLI via ARG with pinned HEPHAESTUS_REF; credentials delivered
+          through a runtime-only boundary unavailable to model tools, never a
+          host authentication-store mount; one container per (domain, role) queue;
           resources within hermes budget (2 cpu / 4g each, max three
           concurrent); merger runs least-scoped token (merge plus label
           write only). Invariant: manifests stay GitOps source of truth;
           hierarchy definitions in Myrmidons validate all per-repo copies.
+          Change only the versioned Myrmidons requirements artifact; do not
+          change runtime behavior. Complete when focused validation proves
+          that the resource, credential, authority, and ownership rules agree.
         assign_to: loop-planner
-      - subject: Plan provisioning decomposition (advise-gated)
+      - subject: Role manifests plan-reviewer pr-reviewer merger learner
         description: >-
-          Run athena:advise planning mode first. Decompose into child issues:
-          mesh-vessel ARG for agent CLI; opencode auth mounting; new role
-          manifests plan-reviewer, pr-reviewer, merger, learner with lane
-          models from M0; hierarchy import under agents/hierarchy/ with sync
-          gate; fleet dev-mesh update; Agamemnon payload-pointer verification
-          issue; compose T4 services and just mesh-e2e recipe.
+          New role manifests for plan-reviewer, pr-reviewer, merger, and
+          learner, with per-lane model fields pinned by M0 outcomes (#465).
+          Change only these manifests and their schema tests; do not change
+          the pinned model or lane defaults. Complete when all four manifests
+          validate and expose their intended roles and resource limits.
         assign_to: loop-planner
         blocked_by:
           - Requirements and invariants for containerized mesh pools
+      - subject: Runtime mesh-role definitions under agents/hierarchy/ with sync gate
+        description: >-
+          Define only Myrmidons roles required by current pipeline-stage
+          routing. Treat Odyssey's nine retained instruction roles and their
+          consumer mapping as repository-side guidance, not a runtime
+          hierarchy to import. Change only Myrmidons hierarchy resources,
+          focused documentation, and structural validation; preserve role,
+          model, and provider defaults. Complete when every runtime role has
+          an exact current stage consumer, all live copies agree, and a
+          removed or surplus Odyssey instruction-role fixture fails the sync
+          check.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for containerized mesh pools
+      - subject: dev-mesh fleet update for one container per domain-role queue
+        description: >-
+          Update the dev-mesh fleet so each (domain, role) queue gets its own
+          container within the hermes resource budget. Change only the
+          dev-mesh fleet and its validation; preserve current role and model
+          assignments. Complete when schema checks prove one bounded container
+          for every configured domain-role queue.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for containerized mesh pools
+          - Role manifests plan-reviewer pr-reviewer merger learner
+      - subject: Agent CLI authentication isolated from model tools
+        description: >-
+          Deliver credentials for the explicitly selected agent CLI through a
+          minimal runtime-only projection or broker that model-visible tools
+          cannot read or modify. Never mount a host authentication store into
+          an agent container. Change only authentication transport fields and
+          security tests; do not add credentials to source, process arguments,
+          candidate trees, or artifacts. Complete when hostile read and write
+          probes cannot reach credential bytes while the selected CLI can
+          authenticate through its least-scoped runtime boundary.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for containerized mesh pools
+      - subject: achaean-mesh vessel agent-CLI build ARG with pinned HEPHAESTUS_REF
+        description: >-
+          Vessel Containerfile/build gains an agent-CLI ARG and installs
+          hephaestus[mesh] at a pinned HEPHAESTUS_REF. An omitted selection
+          must preserve the pinned Claude-default vessel; every alternative
+          CLI requires an explicit per-build selection. Change only vessel
+          build sources and tests; preserve existing model and provider
+          assignments. Complete when the default and each explicitly selected
+          supported variant build from the exact Hephaestus pin and expose the
+          intended CLI.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for containerized mesh pools
+      - subject: Agamemnon payload-pointer verification
+        description: >-
+          Verify Agamemnon dispatch packets satisfy this task's pointer-only
+          requirement (repo, issue, epic_key, branch, attempt, budget
+          counters); Proposed ADR-013 section 6 records the design rationale;
+          workers read full task descriptions from GitHub at claim time.
+          Change only verification code, tests, and focused documentation;
+          transport task text unchanged and treat it as untrusted. Complete
+          when tests accept every required pointer and reject missing or extra
+          authority-bearing data.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for containerized mesh pools
+      - subject: Compose T4 services plus just mesh-e2e recipe
+        description: >-
+          Compose T4 services wiring the containerized mesh and a justfile
+          mesh-e2e recipe; exit criterion just mesh-e2e green with Argus
+          panels live (this registry's M3 exit; Proposed ADR-020 section 9 is
+          context). Change only Compose, the named recipe, and e2e fixtures;
+          do not mutate production state. Complete when `just mesh-e2e`
+          verifies the containerized path, bounded resources, terminal state,
+          and cleanup.
+        assign_to: loop-planner
+        blocked_by:
+          - achaean-mesh vessel agent-CLI build ARG with pinned HEPHAESTUS_REF
 teardown: on_completion

@@ -1,10 +1,11 @@
 # Contributing to Odysseus
 
-Thank you for your interest in contributing to Odysseus! This is the meta-repo and unified
-architecture hub for the HomericIntelligence distributed agent mesh. Odysseus itself contains
-no application code -- its value is coordination: Architecture Decision Records, operational
-runbooks, shared infrastructure configs, and submodule references for every component in the
-ecosystem.
+Thank you for your interest in contributing to Odysseus! This is the meta-repo
+and unified architecture hub for the HomericIntelligence distributed agent
+mesh. It owns integration and operator tooling, E2E harnesses, Architecture
+Decision Records, operational runbooks, shared infrastructure configs, and
+component gitlinks; component service implementations live in their owning
+repositories.
 
 ## Quick Links
 
@@ -59,11 +60,15 @@ Odysseus is a meta-repo. Contributions fall into these categories:
 
 - **Architecture Decision Records (ADRs)** -- Propose new architectural decisions in
   `docs/adr/`. Copy the format from an existing ADR, use the next sequential number,
-  and set Status to "Proposed" until merged. ADRs are append-only: once accepted, they
-  are never edited. Superseding decisions get a new ADR that references the old one.
+  and keep Status as "Proposed" until a recorded human decision formally accepts it.
+  ADRs are append-only once accepted. Superseding decisions get a new ADR that
+  references the old one.
 
-- **Runbooks** -- Add operational procedures in `docs/runbooks/`. Runbooks should be
-  written as numbered steps that can be executed top-to-bottom without prior context.
+- **Runbooks** -- Add contextual operational procedures in `docs/runbooks/`.
+  State the exact scope, prerequisites, authority, allowed effects, success,
+  failure, stopping, and cleanup conditions. Readers execute ordered steps
+  only after those gates are bound; a fail-closed routing checklist is not an
+  unconditional recipe.
 
 - **Architecture updates** -- Keep `docs/architecture.md` current as the system evolves.
   This is the canonical component map for the entire ecosystem.
@@ -71,10 +76,11 @@ Odysseus is a meta-repo. Contributions fall into these categories:
 ### Configuration Files
 
 - **NATS configs** -- Server and leaf node configurations in `configs/nats/`. These are
-  the authoritative source; individual hosts copy or symlink from here.
+  the authoritative source; obtain approval from the responsible operator before
+  editing them, and verify deployed state rather than assuming a host copy is current.
 
-- **Nomad configs** -- Client and server configurations in `configs/nomad/`. Same
-  canonical-source principle as NATS.
+- **Nomad configs** -- Client and server configurations in `configs/nomad/`. The same
+  approval and live-state rules apply.
 
 ### Justfile Recipes
 
@@ -82,6 +88,10 @@ Add new cross-repo commands to the `justfile`. Recipes should be self-documentin
 follow the existing naming conventions. Run `just --list` to see current recipes.
 
 ### Submodule Management
+
+Adding a submodule or moving a gitlink is a cross-repository integration event.
+Obtain explicit integration approval for the exact target commit before either
+operation.
 
 - **Adding a submodule**: `git submodule add <url> <path>`, update `.gitmodules`, and
   document the repo in `docs/architecture.md`.
@@ -112,19 +122,17 @@ Before starting work:
 
 ### 2. Branch Naming Convention
 
-Create a feature branch from `main`:
+Fetch and verify the current remote commit, then create the feature branch in a
+separate worktree bound to that immutable SHA:
 
 ```bash
-# Update your local main branch
-git checkout main
-git pull origin main
-
-# Create a feature branch
-git checkout -b <issue-number>-<short-description>
-
-# Examples:
-git checkout -b 42-add-nats-auth-config
-git checkout -b 15-update-disaster-recovery-runbook
+git fetch origin main
+git rev-parse --verify 'origin/main^{commit}'
+git worktree add \
+  -b <issue-number>-<short-description> \
+  /path/to/worktrees/Odysseus-<issue-number> \
+  <verified-origin-main-SHA>
+cd /path/to/worktrees/Odysseus-<issue-number>
 ```
 
 **Branch naming rules:**
@@ -167,10 +175,10 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/):
 **Example:**
 
 ```bash
-git commit -m "docs(adr): add ADR-007 for container registry migration
+git commit -m "docs(runbook): clarify deployment verification
 
-Proposes migrating container images from Docker Hub to GHCR for
-tighter GitHub Actions integration and free private image hosting.
+Distinguishes local capability checks from operator-approved cross-host
+topology verification and records truthful stopping conditions.
 
 Closes #55"
 ```
@@ -208,7 +216,8 @@ All documentation files must follow these standards:
 ### Before You Start
 
 1. Ensure an issue exists for your work (create one if needed)
-2. Create a branch from `main` using naming convention: `<issue-number>-<description>`
+2. Bind the verified current `origin/main` SHA in a separate worktree and create
+   a branch using the naming convention `<issue-number>-<description>`
 3. Implement your changes
 4. Verify locally: `just --list` to confirm justfile syntax, review docs for correctness
 
@@ -244,11 +253,10 @@ Reviews focus on:
 
 Address review comments promptly:
 
-- Keep responses short (1 line preferred)
-- Start with "Fixed -" to indicate resolution
-- Examples:
-  - `Fixed - Updated server.conf to bind monitoring to localhost`
-  - `Fixed - Added missing step 4 to runbook`
+- Explain the disposition of each actionable finding and identify the change or
+  evidence that resolves it.
+- If a finding is not addressed, state why and describe any remaining risk or
+  follow-up. No exact response prefix or length is required.
 
 ### After Review
 
@@ -270,21 +278,23 @@ activation.
 - **Checks-only merge gate** - The live repository ruleset requires 0 approvals; required checks and resolved review threads remain mandatory.
 - **Review threads must be resolved** - All PR review conversations must be resolved before merge (`required_review_thread_resolution`).
 - **Signed commits required** - Commits on `main` must be signed (`required_signatures`).
-- **CI status checks must pass** - The 11 live contexts are `lint`, `unit-tests`, `integration-tests`, `security/dependency-scan`, `security/secrets-scan`, `build`, `schema-validation`, `deps/version-sync`, `test`, `install`, and `release`.
-- **Current merge metadata** - GitHub currently reports `allow_merge_commit: true`, `allow_squash_merge: true`, and `allow_rebase_merge: false`. This rollout configures the merge queue itself to use `SQUASH`.
+- **CI status checks must pass** - Query the live ruleset for the exact
+  required context names when the pull request is ready. This document does
+  not freeze a count or static check catalog.
+- **Live merge policy is authoritative** - Query the repository when a pull
+  request is ready; checked-in documentation does not pin an enabled merge
+  method.
 - **Merge queue is staged** - Workflow readiness lands first. A human-reviewed, post-merge operator step dry-runs the live-derived payload, activates one pilot, and records a queued smoke result before any fleet rollout.
 
-### Merge Convention
+### Merge Readiness
 
-Always use the following command to merge your PR:
+Merge only after required CI passes for the current head and the current-head
+Athena review exchange reaches terminal `GO`. Resolve required review threads
+and any other live branch-protection conditions before merging.
 
-```bash
-gh pr merge --auto --squash
-```
-
-This enables auto-merge using squash. After queue activation, GitHub enqueues the
-PR once its entry conditions are met and retests the synthetic merge group
-against the current `main` tip.
+Read the repository's live merge policy when the pull request is ready, then
+select one of its enabled merge methods. Do not assume that a checked-in merge
+method, merge queue, or auto-merge setting still matches repository state.
 
 ### For Repo Admins
 
@@ -299,7 +309,8 @@ or skip independent human review of workflow changes.
 - **ADR format**: See existing ADRs in `docs/adr/` for the template
 - **Runbook format**: See existing runbooks in `docs/runbooks/` for the template
 - **Component map**: See `docs/architecture.md` for the full system overview
-- **Project overview**: See `AGENTS.md` for repository structure and principles
+- **Operating contract**: See `AGENTS.md` for scope, protected boundaries, and
+  completion conditions
 
 ## Reporting Issues
 
@@ -329,11 +340,11 @@ See [SECURITY.md](SECURITY.md) for the responsible disclosure process.
 
 ## Questions
 
-If you have questions:
-
-1. Check existing documentation in [AGENTS.md](AGENTS.md) and [docs/architecture.md](docs/architecture.md)
-2. Search existing GitHub issues
-3. Create a new discussion or issue with your question
+If you have questions, follow [AGENTS.md](AGENTS.md) for the repository contract,
+then load the relevant focused documentation (for example,
+[docs/architecture.md](docs/architecture.md) for system topology). Search
+existing GitHub issues for prior decisions; create a discussion or issue when
+the answer is still unresolved.
 
 ## Code of Conduct
 
