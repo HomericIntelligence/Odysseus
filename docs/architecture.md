@@ -225,9 +225,14 @@ worker socket carries worker commands and evidence, while its observability serv
 serves metrics and health; neither supplies the build-log protocol. Build offload
 must deliver and qualify the owning artifact service before enabling log reads.
 The private client transport must authenticate the intended service before sending
-its dedicated bearer credential. A versioned verified-TLS profile is being scoped;
-the current cleartext loopback profile is not qualified for this purpose. Keep log
-reads disabled until compatible client and backend contracts are delivered.
+its dedicated bearer credential. Agamemnon's candidate in
+[PR #505](https://github.com/HomericIntelligence/Agamemnon/pull/505), revision
+`580f1c3`, implements the `hi/fleet/build-artifacts/v2` profile with verified TLS
+to a literal loopback address and explicit operator-supplied certificate trust.
+Legacy v1/HTTP configuration fails startup, with no cleartext fallback. This source
+change remains subject to component CI and review; it does not qualify the missing
+backend or its deployment. Keep log reads disabled until compatible client and
+backend contracts are delivered and qualified together.
 
 Agamemnon's `fleetd` is an execution adapter. It carries durable controller
 commands to workers and journals acknowledgments without becoming another

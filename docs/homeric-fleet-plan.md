@@ -431,9 +431,12 @@ control socket and metrics server provide different contracts. Agamemnon's log
 client alone does not satisfy this implementation requirement. Keep log reads
 disabled until the backend and its deployment configuration are qualified.
 
-Version the private client configuration when replacing its current cleartext
-loopback transport. Require verified TLS to the intended literal-loopback service,
-dedicated operator-supplied trust, protected service keys and explicit rotation.
+Use the versioned `hi/fleet/build-artifacts/v2` client configuration with verified
+TLS to the intended literal-loopback service, dedicated operator-supplied trust,
+protected service keys and explicit rotation. The client is implemented in
+Agamemnon [PR #505](https://github.com/HomericIntelligence/Agamemnon/pull/505) at
+`580f1c3`; its component CI/review and the backend implementation remain release
+gates. Legacy v1/HTTP configuration must fail startup without downgrade.
 Preserve caller authentication, disabled proxies and redirects, finite request and
 response bounds, and build/attempt/snapshot/cursor binding. Configuration mismatch
 must fail closed without cleartext fallback. Verify the real backend independently
