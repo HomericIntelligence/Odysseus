@@ -67,6 +67,14 @@ const server = createDashboardServer({
           observe: (event) => view.observe(event),
         }
       : undefined,
+  issueImport:
+    process.env.ODYSSEUS_ENABLE_ISSUE_IMPORT === "1"
+      ? {
+          url: process.env.ODYSSEUS_AGAMEMNON_URL,
+          apiKey: process.env.AGAMEMNON_API_KEY,
+          observe: (event) => view.observe(event),
+        }
+      : undefined,
   staticDir: resolve(dirname(fileURLToPath(import.meta.url)), "../dist"),
 });
 const port = Number(process.env.ODYSSEUS_WEB_PORT ?? 8765);

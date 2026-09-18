@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { componentEndpoint, readComponentJson } from "./upstream.mjs";
+import { componentEndpoint } from "./upstream.mjs";
 
 const intakeIdPattern = /^[a-z0-9][a-z0-9_-]{7,63}$/;
 const digestPattern = /^[a-f0-9]{64}$/;
@@ -160,17 +160,25 @@ function validResolution(resolution, claim, state) {
   );
 }
 
-function taskProjection(document, taskId) {
+function taskProjection(document, taskId, neutral = false) {
   if (!exact(document, ["task_id", "state", "layer", "task"])) return null;
   const task = document.task;
-  const provenance = task?.delivery?.researchIntake;
+  const research = task?.delivery?.researchIntake;
+  const direct = task?.delivery?.issueIntake;
+  if (research !== undefined && direct !== undefined) return null;
+  const provenance = direct ?? research;
+  const validIdentity =
+    direct !== undefined
+      ? neutral &&
+        validIssueProvenance(direct) &&
+        issueTaskIdFor(direct) === taskId
+      : validProvenance(research) && taskIdFor(research) === taskId;
   if (
     !object(task) ||
     !object(task.delivery) ||
-    !validProvenance(provenance) ||
+    !validIdentity ||
     document.task_id !== taskId ||
     task.id !== taskId ||
-    taskIdFor(provenance) !== taskId ||
     task.layer !== "L3_TaskAgent" ||
     document.layer !== task.layer ||
     !states.has(task.state) ||
@@ -201,7 +209,9 @@ function taskProjection(document, taskId) {
   )
     return null;
   const body = {
-    schema: "hi/odysseus/research-task/v1",
+    schema: neutral
+      ? "hi/odysseus/imported-task/v1"
+      : "hi/odysseus/research-task/v1",
     taskId,
     state: task.state,
     layer: task.layer,
@@ -276,12 +286,76 @@ const failure = (code, error, outcome = "unknown") => ({
   body: { error, outcome },
 });
 
-export function createResearchImportService({
-  url,
-  apiKey,
-  observe = () => {},
-  fetchImpl = fetch,
-}) {
+function rejectDuplicateKeys(text) {
+  // JSON.parse already validated grammar. Track object keys in the lexical
+  // tokens so repeated or escaped-equivalent keys cannot vanish during parsing.
+  const stack = [];
+  for (const [token] of text.matchAll(/"(?:\\.|[^"\\])*"|[{}\[\]:,]/g)) {
+    if (token === "{") stack.push({ keys: new Set(), key: true });
+    else if (token === "[") stack.push(null);
+    else if (token === "}" || token === "]") stack.pop();
+    else if (token === "," && stack.at(-1)) stack.at(-1).key = true;
+    else if (token === ":" && stack.at(-1)) stack.at(-1).key = false;
+    else if (token.startsWith('"') && stack.at(-1)?.key) {
+      const key = JSON.parse(token);
+      const current = stack.at(-1);
+      if (current.keys.has(key)) throw new Error("Duplicate JSON key");
+      current.keys.add(key);
+      current.key = false;
+    }
+  }
+}
+
+export function parseIssueImportJson(text) {
+  const value = JSON.parse(text, (key, item) => {
+    if (
+      !key.isWellFormed() ||
+      (typeof item === "string" && !item.isWellFormed())
+    )
+      throw new Error("Invalid Unicode text");
+    return item;
+  });
+  rejectDuplicateKeys(text);
+  return value;
+}
+
+async function readImportJson(response, signal, parse = JSON.parse) {
+  if (!response.ok || !response.body) throw new Error("Upstream unavailable");
+  const reader = response.body.getReader();
+  // Abort must reach this owned reader even after fetch has returned headers.
+  const abort = () => {
+    void reader.cancel().catch(() => {});
+  };
+  signal.addEventListener("abort", abort, { once: true });
+  const chunks = [];
+  let bytes = 0;
+  try {
+    signal.throwIfAborted();
+    while (true) {
+      const { value, done } = await reader.read();
+      signal.throwIfAborted();
+      if (done) break;
+      bytes += value.length;
+      if (bytes > 2 * 1024 * 1024)
+        throw new Error("Import response exceeds limit");
+      chunks.push(value);
+    }
+    return parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)),
+    );
+  } finally {
+    signal.removeEventListener("abort", abort);
+    try {
+      await reader.cancel();
+    } finally {
+      reader.releaseLock();
+    }
+  }
+}
+const readIssueImportJson = (response, signal) =>
+  readImportJson(response, signal, parseIssueImportJson);
+
+function configuredEndpoint(url, apiKey) {
   const endpoint = componentEndpoint(url);
   if (
     typeof apiKey !== "string" ||
@@ -290,10 +364,145 @@ export function createResearchImportService({
     /[\r\n]/.test(apiKey)
   )
     throw new Error("Agamemnon credentials are required");
-  let pending = 0;
-  const sourceId = `odysseus:research-import:${randomUUID()}`;
+  return endpoint;
+}
+
+const registryKey = (value) => matches(value, /^[a-z0-9][a-z0-9_-]{0,63}$/);
+const nativeId = (value) =>
+  typeof value === "string" &&
+  value.length > 0 &&
+  value.isWellFormed() &&
+  Buffer.byteLength(value) <= 128;
+const repositoryName = (value) =>
+  matches(value, /^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+$/) &&
+  value.length <= 255 &&
+  ![".", ".."].includes(value.split("/")[1]);
+
+const issueNumber = (value) =>
+  Number.isSafeInteger(value) && value > 0 && value <= 2147483647;
+const directIssue = (value) =>
+  exact(value, ["repository", "number", "url"]) &&
+  repositoryName(value.repository) &&
+  issueNumber(value.number) &&
+  value.url === `https://github.com/${value.repository}/issues/${value.number}`;
+const issueRouting = (value) =>
+  exact(value, ["domain", "hmasRole", "stage"]) &&
+  value.domain === "pipeline" &&
+  value.hmasRole === "task-agent" &&
+  value.stage === "implementation";
+const validPlan = (value) =>
+  ((exact(value, ["kind", "digest"]) && value.kind === "issue_body") ||
+    (exact(value, ["kind", "nodeId", "digest"]) &&
+      value.kind === "issue_comment" &&
+      nativeId(value.nodeId))) &&
+  matches(value.digest, digestPattern);
+const validIssueInput = (value) =>
+  exact(value, [
+    "schema",
+    "repositoryKey",
+    "issueNumber",
+    "repositoryId",
+    "issueId",
+    "plan",
+  ]) &&
+  value.schema === "hi/agamemnon/issue-import/v1" &&
+  registryKey(value.repositoryKey) &&
+  issueNumber(value.issueNumber) &&
+  nativeId(value.repositoryId) &&
+  nativeId(value.issueId) &&
+  validPlan(value.plan);
+
+function issueTaskIdFor(value) {
+  const key = JSON.stringify({
+    forge: "github",
+    issueId: value.issueId,
+    repositoryId: value.repositoryId,
+    schema: "hi/agamemnon/issue-task-key/v1",
+  });
+  return "issue-" + createHash("sha256").update(key).digest("hex");
+}
+
+function validIssueProvenance(value) {
+  return (
+    exact(value, [
+      "schema",
+      "forge",
+      "repositoryId",
+      "issueId",
+      "issue",
+      "plan",
+      "routing",
+      "observedAt",
+    ]) &&
+    value.schema === "hi/agamemnon/issue-intake/v1" &&
+    value.forge === "github" &&
+    nativeId(value.repositoryId) &&
+    nativeId(value.issueId) &&
+    directIssue(value.issue) &&
+    validPlan(value.plan) &&
+    issueRouting(value.routing) &&
+    timestamp(value.observedAt)
+  );
+}
+
+function validIssueReceipt(value, input, status) {
+  return (
+    exact(value, [
+      "schema",
+      "taskId",
+      "state",
+      "provenance",
+      "issue",
+      "routing",
+    ]) &&
+    value.schema === "hi/agamemnon/issue-import-receipt/v1" &&
+    validIssueProvenance(value.provenance) &&
+    value.provenance.repositoryId === input.repositoryId &&
+    value.provenance.issueId === input.issueId &&
+    value.provenance.issue.number === input.issueNumber &&
+    isDeepStrictEqual(value.provenance.plan, input.plan) &&
+    value.taskId === issueTaskIdFor(value.provenance) &&
+    states.has(value.state) &&
+    (status !== 201 || value.state === "Pending") &&
+    isDeepStrictEqual(value.issue, value.provenance.issue) &&
+    isDeepStrictEqual(value.routing, value.provenance.routing)
+  );
+}
+
+function validInspection(value, key, number, comment) {
+  return (
+    exact(value, [
+      "schema",
+      "repositoryKey",
+      "repositoryId",
+      "issueId",
+      "issue",
+      "title",
+      "state",
+      "plan",
+      "observedAt",
+    ]) &&
+    value.schema === "hi/agamemnon/issue-inspection/v1" &&
+    value.repositoryKey === key &&
+    nativeId(value.repositoryId) &&
+    nativeId(value.issueId) &&
+    directIssue(value.issue) &&
+    value.issue.number === number &&
+    typeof value.title === "string" &&
+    Buffer.byteLength(value.title) <= 1024 &&
+    ["open", "closed"].includes(value.state) &&
+    validPlan(value.plan) &&
+    timestamp(value.observedAt) &&
+    (comment === undefined
+      ? value.plan.kind === "issue_body"
+      : value.plan.kind === "issue_comment" && value.plan.nodeId === comment)
+  );
+}
+
+function observationReporter(observe, kind) {
+  const sourceId = `odysseus:${kind}:${randomUUID()}`;
   let sourceSequence = 0;
-  function observation(operation, messageId, correlationId, details) {
+  return (operation, messageId, correlationId, details) =>
     observe({
       eventId: randomUUID(),
       sourceId,
@@ -305,14 +514,21 @@ export function createResearchImportService({
       observedAt: new Date().toISOString(),
       messageId,
       correlationId,
-      messageKind: "research-import",
+      messageKind: kind,
       ...details,
     });
-  }
-  async function read(path, taskId, signal) {
+}
+
+function controllerReader(
+  endpoint,
+  apiKey,
+  fetchImpl,
+  observation,
+  readJson = readImportJson,
+) {
+  return async (path, correlationId, signal, details = {}) => {
     const messageId = randomUUID();
-    const details = { taskId, messageKind: "research-task" };
-    observation("request", messageId, taskId, {
+    observation("request", messageId, correlationId, {
       ...details,
       result: "attempted",
     });
@@ -322,7 +538,7 @@ export function createResearchImportService({
       redirect: "error",
       signal,
     });
-    observation("response", messageId, taskId, {
+    observation("response", messageId, correlationId, {
       ...details,
       result: `http-${response.status}`,
     });
@@ -330,8 +546,254 @@ export function createResearchImportService({
       await response.body?.cancel();
       return { status: response.status };
     }
-    return { status: 200, document: await readComponentJson(response) };
+    return { status: 200, document: await readJson(response, signal) };
+  };
+}
+
+async function loadTask(read, taskId, signal, neutral = false) {
+  const path = `/v1/tasks/${taskId}/state`;
+  const response = await read(path, taskId, signal);
+  if (response.status !== 200)
+    return response.status === 404
+      ? failure(404, "task_not_found")
+      : failure(503, "task_unavailable");
+  const task = taskProjection(response.document, taskId, neutral);
+  if (!task) return failure(503, "task_unavailable");
+  if (!task.rawClaim) return { code: 200, body: task.body };
+  const claim = task.rawClaim;
+  const target = await read(
+    `/v1/fleet/${claim.targetKind}/${claim.targetId}`,
+    taskId,
+    signal,
+  );
+  if (target.status !== 200 || !validOwnerRecord(target.document))
+    return failure(503, "task_unavailable");
+  if (!matchesClaim(target.document, taskId, claim))
+    return failure(409, "task_conflict");
+  if (
+    task.rawResolution &&
+    (target.document.status !== task.rawResolution.outcome ||
+      target.document.claimStatus !== "released" ||
+      !isDeepStrictEqual(target.document.resolution, task.rawResolution))
+  )
+    return failure(409, "task_conflict");
+  const recheck = await read(path, taskId, signal);
+  if (recheck.status !== 200) return failure(503, "task_unavailable");
+  const current = taskProjection(recheck.document, taskId, neutral);
+  if (!current) return failure(503, "task_unavailable");
+  if (!isDeepStrictEqual(task, current)) return failure(409, "task_conflict");
+  task.body.owner = {
+    ...task.body.claim,
+    status: target.document.status,
+    claimStatus: target.document.claimStatus,
+  };
+  for (const key of ["sessionId", "executionId"])
+    if (Object.hasOwn(target.document, key))
+      task.body.owner[key] = target.document[key];
+  return { code: 200, body: task.body };
+}
+
+function validRegistry(value) {
+  if (
+    !exact(value, ["schema", "repositories"]) ||
+    value.schema !== "hi/agamemnon/issue-repositories/v1" ||
+    !Array.isArray(value.repositories) ||
+    value.repositories.length < 1 ||
+    value.repositories.length > 64
+  )
+    return false;
+  const keys = new Set();
+  const ids = new Set();
+  const names = new Set();
+  for (const entry of value.repositories) {
+    if (
+      !exact(entry, ["key", "repository", "repositoryId"]) ||
+      !registryKey(entry.key) ||
+      !repositoryName(entry.repository) ||
+      !nativeId(entry.repositoryId) ||
+      keys.has(entry.key) ||
+      ids.has(entry.repositoryId) ||
+      names.has(entry.repository.toLowerCase())
+    )
+      return false;
+    keys.add(entry.key);
+    ids.add(entry.repositoryId);
+    names.add(entry.repository.toLowerCase());
   }
+  return true;
+}
+
+// Keep the operation timer alive until headers AND body have been consumed.
+// Every caller releases it in finally, including failed or cancelled reads.
+function operationDeadline(milliseconds) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), milliseconds);
+  return { signal: controller.signal, finish: () => clearTimeout(timer) };
+}
+
+export function createIssueImportService({
+  url,
+  apiKey,
+  observe = () => {},
+  fetchImpl = fetch,
+}) {
+  const endpoint = configuredEndpoint(url, apiKey);
+  const observation = observationReporter(observe, "issue-import");
+  const read = controllerReader(
+    endpoint,
+    apiKey,
+    fetchImpl,
+    observation,
+    readIssueImportJson,
+  );
+  let pending = 0;
+  return {
+    async repositories() {
+      if (pending >= 4) return failure(429, "busy", "not_submitted");
+      pending++;
+      const deadline = operationDeadline(5000);
+      try {
+        const response = await read(
+          "/v1/fleet/issue-intakes/repositories",
+          "issue-repositories",
+          deadline.signal,
+        );
+        const registry = response.document;
+        return validRegistry(registry)
+          ? { code: 200, body: registry }
+          : failure(503, "registry_unavailable", "not_submitted");
+      } catch {
+        return failure(503, "registry_unavailable", "not_submitted");
+      } finally {
+        deadline.finish();
+        pending--;
+      }
+    },
+    async inspect(key, number, comment) {
+      if (
+        !registryKey(key) ||
+        !issueNumber(number) ||
+        (comment !== undefined && !nativeId(comment))
+      )
+        return failure(400, "invalid_request", "not_submitted");
+      if (pending >= 4) return failure(429, "busy", "not_submitted");
+      pending++;
+      const deadline = operationDeadline(40000);
+      try {
+        const query =
+          comment === undefined
+            ? ""
+            : `?${new URLSearchParams({ planCommentId: comment })}`;
+        const response = await read(
+          `/v1/fleet/issue-intakes/${key}/${number}${query}`,
+          `${key}:${number}`,
+          deadline.signal,
+        );
+        if (response.status !== 200)
+          return failure(
+            [400, 404, 409].includes(response.status) ? response.status : 503,
+            "issue_unavailable",
+            "not_submitted",
+          );
+        return validInspection(response.document, key, number, comment)
+          ? { code: 200, body: response.document }
+          : failure(503, "issue_unavailable", "not_submitted");
+      } catch {
+        return failure(503, "issue_unavailable", "not_submitted");
+      } finally {
+        deadline.finish();
+        pending--;
+      }
+    },
+    async submit(input) {
+      if (
+        !validIssueInput(input) ||
+        Buffer.byteLength(JSON.stringify(input)) > 4096
+      )
+        return failure(400, "invalid_request", "not_submitted");
+      if (pending >= 4) return failure(429, "busy", "not_submitted");
+      pending++;
+      const deadline = operationDeadline(40000);
+      try {
+        const body = JSON.stringify(input);
+        const messageId = randomUUID();
+        observation("request", messageId, input.issueId, {
+          bytes: Buffer.byteLength(body),
+          result: "attempted",
+        });
+        const response = await fetchImpl(
+          new URL("/v1/fleet/issue-intakes", endpoint),
+          {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${apiKey}`,
+              "content-type": "application/json",
+            },
+            body,
+            redirect: "error",
+            signal: deadline.signal,
+          },
+        );
+        observation("response", messageId, input.issueId, {
+          result: `http-${response.status}`,
+        });
+        if (![200, 201].includes(response.status)) {
+          await response.body?.cancel();
+          return failure(
+            [400, 404, 409].includes(response.status) ? response.status : 503,
+            response.status === 409 ? "import_conflict" : "import_unconfirmed",
+          );
+        }
+        const receipt = await readIssueImportJson(response, deadline.signal);
+        return validIssueReceipt(receipt, input, response.status)
+          ? { code: response.status, body: receipt }
+          : failure(503, "import_unconfirmed");
+      } catch {
+        return failure(503, "import_unconfirmed");
+      } finally {
+        deadline.finish();
+        pending--;
+      }
+    },
+    async readTask(taskId) {
+      if (!matches(taskId, /^(issue|research)-[a-f0-9]{64}$/))
+        return failure(400, "invalid_request", "not_submitted");
+      if (pending >= 4) return failure(429, "busy", "not_submitted");
+      pending++;
+      const deadline = operationDeadline(5000);
+      try {
+        return await loadTask(
+          (path, id, signal) =>
+            read(path, id, signal, {
+              taskId: id,
+              messageKind: "imported-task",
+            }),
+          taskId,
+          deadline.signal,
+          true,
+        );
+      } catch {
+        return failure(503, "task_unavailable");
+      } finally {
+        deadline.finish();
+        pending--;
+      }
+    },
+  };
+}
+
+export function createResearchImportService({
+  url,
+  apiKey,
+  observe = () => {},
+  fetchImpl = fetch,
+}) {
+  const endpoint = configuredEndpoint(url, apiKey);
+  let pending = 0;
+  const observation = observationReporter(observe, "research-import");
+  const request = controllerReader(endpoint, apiKey, fetchImpl, observation);
+  const read = (path, taskId, signal) =>
+    request(path, taskId, signal, { taskId, messageKind: "research-task" });
   return {
     async submit(input) {
       if (
@@ -344,6 +806,7 @@ export function createResearchImportService({
         return failure(400, "invalid_request", "not_submitted");
       if (pending >= 4) return failure(429, "busy", "not_submitted");
       pending++;
+      const deadline = operationDeadline(40000);
       try {
         const body = JSON.stringify(input);
         const messageId = randomUUID();
@@ -361,7 +824,7 @@ export function createResearchImportService({
             },
             body,
             redirect: "error",
-            signal: AbortSignal.timeout(5000),
+            signal: deadline.signal,
           },
         );
         // Headers are an observed response, not proof of a valid import receipt.
@@ -379,7 +842,7 @@ export function createResearchImportService({
             ? failure(response.status, error)
             : failure(503, "import_unconfirmed");
         }
-        const receipt = await readComponentJson(response);
+        const receipt = await readImportJson(response, deadline.signal);
         if (!validReceipt(receipt, input, response.status))
           return failure(503, "import_unconfirmed");
         return { code: response.status, body: receipt };
@@ -387,6 +850,7 @@ export function createResearchImportService({
         // A request may have reached the controller; retain uncertainty, never retry.
         return failure(503, "import_unconfirmed");
       } finally {
+        deadline.finish();
         pending--;
       }
     },
@@ -395,52 +859,13 @@ export function createResearchImportService({
         return failure(400, "invalid_request", "not_submitted");
       if (pending >= 4) return failure(429, "busy", "not_submitted");
       pending++;
+      const deadline = operationDeadline(5000);
       try {
-        const signal = AbortSignal.timeout(5000);
-        const path = `/v1/tasks/${taskId}/state`;
-        const response = await read(path, taskId, signal);
-        if (response.status !== 200)
-          return response.status === 404
-            ? failure(404, "task_not_found")
-            : failure(503, "task_unavailable");
-        const task = taskProjection(response.document, taskId);
-        if (!task) return failure(503, "task_unavailable");
-        if (!task.rawClaim) return { code: 200, body: task.body };
-        const claim = task.rawClaim;
-        const target = await read(
-          `/v1/fleet/${claim.targetKind}/${claim.targetId}`,
-          taskId,
-          signal,
-        );
-        if (target.status !== 200 || !validOwnerRecord(target.document))
-          return failure(503, "task_unavailable");
-        if (!matchesClaim(target.document, taskId, claim))
-          return failure(409, "task_conflict");
-        if (
-          task.rawResolution &&
-          (target.document.status !== task.rawResolution.outcome ||
-            target.document.claimStatus !== "released" ||
-            !isDeepStrictEqual(target.document.resolution, task.rawResolution))
-        )
-          return failure(409, "task_conflict");
-        const recheck = await read(path, taskId, signal);
-        if (recheck.status !== 200) return failure(503, "task_unavailable");
-        const current = taskProjection(recheck.document, taskId);
-        if (!current) return failure(503, "task_unavailable");
-        if (!isDeepStrictEqual(task, current))
-          return failure(409, "task_conflict");
-        task.body.owner = {
-          ...task.body.claim,
-          status: target.document.status,
-          claimStatus: target.document.claimStatus,
-        };
-        for (const key of ["sessionId", "executionId"])
-          if (Object.hasOwn(target.document, key))
-            task.body.owner[key] = target.document[key];
-        return { code: 200, body: task.body };
+        return await loadTask(read, taskId, deadline.signal);
       } catch {
         return failure(503, "task_unavailable");
       } finally {
+        deadline.finish();
         pending--;
       }
     },
