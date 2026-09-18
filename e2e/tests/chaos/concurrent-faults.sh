@@ -62,6 +62,7 @@ info "E09: Fault injection during task completion phase"
 # Create task and inject fault simultaneously
 TASK_RESP=$(agamemnon_create_task "$TEAM_ID" "Race test" "hello" "$AGENT_ID")
 RACE_TID=$(echo "$TASK_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('id',''))")
+info "E09: Created race task $RACE_TID"
 
 # Inject fault at same moment
 RACE_FAULT=$(agamemnon_inject_fault "network-partition")

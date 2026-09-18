@@ -14,7 +14,7 @@ rolls forward in an ordered sequence (soft cutover).
 > **Read first**: [ADR-015](../adr/015-drop-project-prefix.md) and
 > [ADR-016](../adr/016-split-hephaestus.md) — this runbook is the
 > mechanical execution of those decisions.
-
+>
 > **Current Execution Status (updated 2026-08-21):**
 >
 > - ✅ **Step 1 + 1b:** `Hephaestus` split → `shared/Hephaestus` +
@@ -36,7 +36,7 @@ rolls forward in an ordered sequence (soft cutover).
 >   `.env.example`, and an `e2e-reliability.yml` comment. Historical
 >   records (ADRs, CHANGELOG, propagation reports, migration scripts,
 >   this runbook's procedure text) intentionally retain old names.
-
+>
 > **Submodule pin audit (commit `07fd153`, 2026-07-12):**
 >
 > - The `chore(submodules): bump all 15 pins to latest upstream main` commit on
@@ -124,9 +124,10 @@ repo's `main` branch that updates internal references to drop the prefix.
 **The PR is reviewed and merged in the renamed repo, not in Odysseus** —
 per AGENTS.md, submodule working trees do not get edited from the meta-repo.
 
+Use the PR title `chore: drop the 'Project' prefix internally (@ADR-015)`
+with this body:
+
 ```text
-title: chore: drop the 'Project' prefix internally (@ADR-015)
-body:
   Closes #<tracking-issue>
 
   This repo was renamed from Project<X> to <X>. This PR updates internal

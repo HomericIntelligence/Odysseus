@@ -52,8 +52,6 @@ mapfile -t SUBS < <(
 )
 REPOS=("$ORG/Odysseus" "${SUBS[@]}")
 
-CATEGORIES=(build test lint package install release security custom)
-
 # Map an emitted check-run name to a canonical category (echoes the category, or
 # empty if it belongs to "custom"/unmatched). Order matters: most specific first.
 classify() {

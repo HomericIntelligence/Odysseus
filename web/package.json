@@ -1,0 +1,30 @@
+{
+  "name": "odysseus-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "build": "tsc --noEmit && vite build",
+    "start": "node server/main.mjs",
+    "test:browser": "playwright test",
+    "format": "prettier --write src server tests browser-tests playwright.config.mjs package.json tsconfig.json index.html",
+    "format:check": "prettier --check src server tests browser-tests playwright.config.mjs package.json tsconfig.json index.html"
+  },
+  "dependencies": {
+    "@nats-io/transport-node": "3.4.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "prettier": "3.9.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.0"
+  }
+}

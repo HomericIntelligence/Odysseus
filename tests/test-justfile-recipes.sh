@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
 # shellcheck source=../e2e/lib/common.sh
 source "$ROOT/e2e/lib/common.sh"
-cd "$ROOT"
+cd "$ROOT" || exit 1
 
 info "justfile parse round-trip"
 if just --summary >/dev/null 2>&1; then pass "just --summary parses"; else fail "just --summary failed"; fi

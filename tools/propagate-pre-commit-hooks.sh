@@ -121,7 +121,6 @@ skipped=0
 stale=0
 
 # Report buffer: report lines + JSONL sidecar
-report=""
 report_lines=()
 
 # Extract submodule paths from .gitmodules (only `path = ...` lines that

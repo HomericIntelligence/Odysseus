@@ -9,6 +9,11 @@
 
 Odysseus is the meta-repo and unified architecture hub for the HomericIntelligence distributed agent mesh. It contains documentation, Architecture Decision Records (ADRs), shared configurations, runbooks, and all other HomericIntelligence repositories as git submodules.
 
+The [Fleet web application](web/README.md) adds work ownership, live message flow,
+and session controls. Run `just web-install`, `just web-build`, then `just web-start`
+for the local interface. The [implementation plan](docs/homeric-fleet-plan.md)
+tracks the remaining integrations and the 108-agent acceptance gates.
+
 <!-- ECOSYSTEM-CI-TABLE:START -->
 ## Ecosystem CI Status
 
