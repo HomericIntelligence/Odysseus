@@ -1,6 +1,6 @@
 # Homeric Fleet implementation plan
 
-Updated: 2026-09-17. Status: implementation plan; real-worker acceptance has not run.
+Updated: 2026-09-18. Status: implementation plan; real-worker acceptance has not run.
 
 This plan integrates the laptop/SSH/Slurm operational requirements with the
 [Odysseus architecture](architecture.md) and the subsequently approved Fleet
@@ -424,6 +424,21 @@ toolchain, allocation, outcome, and artifact digests. Verify them on collection.
 If the local source changes after submission, mark the result stale. Linux results
 do not establish macOS-specific behavior. Build workers do not need ChatGPT
 credentials, and heavy jobs consume the separate tool allocations above.
+
+Deliver the private artifact service as part of the Hephaestus build execution
+path. The inspected worker revision has no matching build-log listener; its worker
+control socket and metrics server provide different contracts. Agamemnon's log
+client alone does not satisfy this implementation requirement. Keep log reads
+disabled until the backend and its deployment configuration are qualified.
+
+Version the private client configuration when replacing its current cleartext
+loopback transport. Require verified TLS to the intended literal-loopback service,
+dedicated operator-supplied trust, protected service keys and explicit rotation.
+Preserve caller authentication, disabled proxies and redirects, finite request and
+response bounds, and build/attempt/snapshot/cursor binding. Configuration mismatch
+must fail closed without cleartext fallback. Verify the real backend independently
+of client fixtures, including identity failure and reconnect behavior; do not count
+a digest reference as verified artifact collection.
 
 ## 7. Lifecycle and recovery
 

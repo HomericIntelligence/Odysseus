@@ -209,6 +209,7 @@ branch or a local test does not establish a deployed service.
 | Pipeline board and implementation labels | Derived GitHub Project; Hephaestus owns issue-stage labels | Display each source and its freshness separately |
 | Desired pools and execution policy | Myrmidons Git manifests | Display configured and observed state separately |
 | Conversations, pending requests, answers and execution evidence | Hephaestus private runtime storage | Read scoped private evidence through the authenticated backend |
+| Build log bytes and artifact contents | Private build artifact service; implementation and transport qualification remain required | Read bounded pages through Agamemnon; display receipt verification separately |
 | Recovery command receipts | Private worker/adapter journals | Display outcomes; never authorize replacement work from a journal |
 | Live message observations | Keystone observations; retained metrics/logs belong to Argus | Render bounded metadata and expose gaps; never consume work for visualization |
 
@@ -217,6 +218,16 @@ GitHub Contents on an explicitly configured state branch. Build issues remain th
 canonical lifecycle records. The attempt metadata retains uncertain admission; it
 grants no execution permission and creates no second task queue. The component
 repair and deployment gates must establish this behavior before operational use.
+
+The build-log client contract does not establish that an artifact service exists.
+The inspected Hephaestus revision does not implement that listener. Its private
+worker socket carries worker commands and evidence, while its observability server
+serves metrics and health; neither supplies the build-log protocol. Build offload
+must deliver and qualify the owning artifact service before enabling log reads.
+The private client transport must authenticate the intended service before sending
+its dedicated bearer credential. A versioned verified-TLS profile is being scoped;
+the current cleartext loopback profile is not qualified for this purpose. Keep log
+reads disabled until compatible client and backend contracts are delivered.
 
 Agamemnon's `fleetd` is an execution adapter. It carries durable controller
 commands to workers and journals acknowledgments without becoming another
