@@ -15,8 +15,15 @@ import { resolve } from "node:path";
 import { hostname } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createCommandService } from "../server/commands.mjs";
+import { FleetView } from "../server/view.mjs";
 
 const fixtureCredential = randomBytes(24).toString("base64url");
+const buildContract = JSON.parse(
+  await readFile(
+    new URL("./fixtures/agamemnon-build-contract.json", import.meta.url),
+    "utf8",
+  ),
+);
 
 const request = {
   commandId: "ui-" + "a".repeat(32),
@@ -127,6 +134,98 @@ test("private text is durably spooled before only scoped references reach Agamem
       text: request.text,
     },
   );
+});
+
+test("unresolved subordinate build placement explains refusal before every private boundary", async (t) => {
+  for (const point of [
+    "admission",
+    "persistedGrantDocument",
+    "cancelResponse",
+    "terminalResponse",
+  ]) {
+    let reads = 0;
+    const requestReader = {
+      workerIds: ["w1"],
+      read: async () => {
+        reads++;
+        return [];
+      },
+    };
+    const { service, calls, spool } = await fixture(t, {
+      requestReader,
+      peers: { "build-jobs": [buildContract[point].record] },
+    });
+    const response = {
+      ...request,
+      operation: "respond",
+      requestId: 19,
+      requestFingerprint: "f".repeat(64),
+      response: { decision: "accept" },
+    };
+    delete response.text;
+    for (const input of [request, response]) {
+      const result = await service.submit(input);
+      assert.equal(result.code, 503);
+      assert.deepEqual(result.body, {
+        commandId: request.commandId,
+        error: "unavailable",
+        outcome: "not_submitted",
+        reason: "build_workspace_unresolved",
+      });
+    }
+    const result = await service.requests({
+      sessionId: "s1",
+      workerId: "w1",
+      generation: 3,
+    });
+    assert.equal(result.code, 503);
+    assert.deepEqual(result.body, {
+      error: "unavailable",
+      reason: "build_workspace_unresolved",
+    });
+    assert.equal(reads, 0);
+    assert.equal(
+      calls.some((call) => call.method === "POST"),
+      false,
+    );
+    assert.deepEqual(await readdir(spool), []);
+  }
+});
+
+test("added top-level placement cannot bypass subordinate build isolation", async (t) => {
+  const raw = {
+    ...buildContract.admission.record,
+    workerId: "w2",
+    host: "remote-host",
+    workspace: "/remote/work",
+  };
+  const { service, calls, spool } = await fixture(t, {
+    peers: { "build-jobs": [raw] },
+  });
+  const result = await service.submit(request);
+  assert.equal(result.code, 503);
+  assert.equal(result.body.reason, "build_workspace_unresolved");
+  assert.equal(
+    calls.some((call) => call.method === "POST"),
+    false,
+  );
+  assert.deepEqual(await readdir(spool), []);
+});
+
+test("a malformed build display key cannot become a controller command scope", async (t) => {
+  const raw = structuredClone(buildContract.admission.record);
+  raw.id = "/private/sentinel";
+  raw.build.snapshotWorkspace = `${raw.id}-attempt-1`;
+  const view = new FleetView();
+  view.setResources("build-jobs", [raw]);
+  const { service, calls, spool } = await fixture(t);
+  const result = await service.submit({
+    ...request,
+    sessionId: view.snapshot().items[0].id,
+  });
+  assert.equal(result.code, 400);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(await readdir(spool), []);
 });
 
 test("approval responses retain typed IDs privately and send only references to the controller", async (t) => {
