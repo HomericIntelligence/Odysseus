@@ -148,6 +148,7 @@ metadata and links, not Git object internals or terminal transcripts.
 | Requirements, implementation plans, developer discussion | Work-repository issues |
 | Research intake identity, creation intent, request digest and work-issue reference | Proposed Nestor GitHub intake metadata namespace; explicit configured repository/branch, distinct from Agamemnon task state |
 | Orchestration graph, assignments, claims, generations, admission decisions, and task state | Agamemnon's GitHub-backed records, linked to work issues |
+| Build lifecycle and uncertain creation | Canonical Agamemnon build issues, plus a bounded conditional creation-attempt record on an explicit GitHub state branch |
 | Implementation and review state labels | Hephaestus-managed GitHub labels |
 | Pipeline board | GitHub Project projected from issue-backed state |
 | Desired pools, templates, deployment configuration | Myrmidons Git |
@@ -403,6 +404,13 @@ Route laptop Hephaestus build/test stages through the same service. A submission
 identifies `workspaceId`, registered `recipeId`, validated parameters, and an
 idempotency key. Build jobs are Agamemnon-admitted work executed through Keystone;
 the MCP server is not another queue owner.
+
+Before one build issue POST, require one confirmed conditional creation record.
+An unresolved attempt reserves its selected capacity and blocks new build
+admissions. Reconciliation may adopt the original canonical issue only when its
+immutable admission fields match. Keep the state branch configured when the build
+catalog is disabled. Removing both settings before reconciliation is unsupported.
+Deliver and verify this repair through Agamemnon's component gates.
 
 Recipes use registered `just` or `pixi run` commands with declared resources,
 timeouts, toolchain/image requirements, and artifact policy. Transfer an immutable

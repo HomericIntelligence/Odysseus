@@ -212,6 +212,12 @@ branch or a local test does not establish a deployed service.
 | Recovery command receipts | Private worker/adapter journals | Display outcomes; never authorize replacement work from a journal |
 | Live message observations | Keystone observations; retained metrics/logs belong to Argus | Render bounded metadata and expose gaps; never consume work for visualization |
 
+Fleet requires Agamemnon to store bounded build-creation attempt metadata through
+GitHub Contents on an explicitly configured state branch. Build issues remain the
+canonical lifecycle records. The attempt metadata retains uncertain admission; it
+grants no execution permission and creates no second task queue. The component
+repair and deployment gates must establish this behavior before operational use.
+
 Agamemnon's `fleetd` is an execution adapter. It carries durable controller
 commands to workers and journals acknowledgments without becoming another
 scheduler. Sessions sharing one provider process retain independent logical
