@@ -1,11 +1,11 @@
 # Milestone 6 — idea watcher agent + web interview interface.
-# Epic home: Odysseus (user-facing hub). See ADR-020 stage map, M6.
+# Epic home: Odysseus (user-facing hub). See Proposed ADR-020 stage map, M6.
 
 apiVersion: telemachy/v1
 metadata:
   name: m6-idea-watcher-web-interview
   description: >-
-    A watcher agent subscribes for new idea packets (web form or webhook
+    Target state: a watcher agent subscribes for new idea packets (web form or webhook
     ingested by Hermes) and conducts the intake interview through a web
     interface that supersedes the CLI console. Exit: submit an idea in the
     browser, complete the interview, receive a registered epic with zero CLI
@@ -24,19 +24,76 @@ teams:
       - subject: Requirements and invariants for watcher and web UI
         description: >-
           Capture: idea submission is untrusted input and must be fenced in
-          prompts; interview rides hi.pipeline.interview question/answer
-          subjects with the GitHub-comment fallback ladder; the web interface
-          evolves tools/odysseus-console.py into a browser app; authn via
-          Tailscale identity; every interview transcript lands on the intake
-          issue; handoff to M5 research lane unchanged.
+          prompts; the interview subjects and GitHub-comment fallback in
+          Proposed ADR-013 are candidates, not current activation authority;
+          and the web interface may evolve tools/odysseus-console.py into a
+          browser app. Before implementation, bind the exact current Hermes
+          README/OpenAPI, NATS schemas and configuration, and live identity
+          state, then obtain operator approval for the exact authentication,
+          subjects, fallback, transcript destination, and rollback. No
+          network-identity provider is the default. Keep handoff to the M5
+          research lane unchanged. Change only the versioned Odysseus
+          requirements artifact; do not change runtime behavior. Complete
+          when focused validation distinguishes current interfaces from
+          proposed targets and records every trust, authority, transcript,
+          handoff, and activation gate.
         assign_to: loop-planner
-      - subject: Plan watcher and web decomposition (advise-gated)
+      - subject: Web interview UI over an approved interview transport
         description: >-
-          Run athena:advise planning mode first. Decompose into child issues:
-          Hermes idea-submission ingestion endpoint publishing idea packets;
-          watcher agent manifest and claim loop role; web interview UI with
-          live NATS relay; transcript persistence to intake issues; E2E from
-          browser form to registered epic.
+          After the requirements task binds and receives approval for an exact
+          authentication, subject, and fallback contract, implement the
+          browser app and its relay adapter. Change only the browser app,
+          relay adapter, and tests; preserve current accepted authentication,
+          HMAC, and subject boundaries. If no interface is approved, report
+          the gap and stop without activating a proposed contract. Complete
+          when controlled browser tests exchange a question and answer over
+          the approved transport and prove its fallback and failure paths.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for watcher and web UI
+      - subject: Interview transcript persistence to intake issues
+        description: >-
+          Every interview transcript lands on the intake issue for audit from
+          the web interview channel, as targeted by Proposed ADR-013. Change
+          only transcript persistence code and tests; limit remote writes to
+          the bound intake issue. Complete when tests prove ordered transcript
+          persistence, retry safety, and rejection of an unbound destination.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for watcher and web UI
+      - subject: E2E browser-form to registered epic with zero CLI usage
+        description: >-
+          End-to-end case: submit an idea in the browser, complete the
+          interview, receive a registered epic with zero CLI usage (M6 exit
+          criterion). Add only controlled browser and service fixtures; do not
+          use live production state. Complete when the test proves submission,
+          interview, transcript, epic registration, terminal evidence, and
+          cleanup without a CLI action.
+        assign_to: loop-planner
+        blocked_by:
+          - Web interview UI over an approved interview transport
+          - Interview transcript persistence to intake issues
+          - Idea-submission ingestion endpoint publishing idea packets
+          - Watcher agent claim-loop manifest
+      - subject: Idea-submission ingestion endpoint publishing idea packets
+        description: >-
+          Hermes endpoint ingesting web form/webhook idea submissions and
+          publishing idea packets for the watcher agent; submissions are
+          untrusted input downstream. Change only the endpoint, packet adapter,
+          and tests; preserve current authentication, HMAC, and subject
+          boundaries. Complete when tests accept valid input, reject invalid
+          input, and publish one fenced packet without extra authority.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for watcher and web UI
+      - subject: Watcher agent claim-loop manifest
+        description: >-
+          Manifest and claim-loop role for the watcher agent subscribing to
+          new idea packets and conducting intake interviews. Change only the
+          manifest, claim-loop configuration, and tests; preserve model and
+          provider defaults and do not embed credentials. Complete when the
+          manifest validates and controlled tests prove one bounded claim,
+          interview dispatch, retry, and cleanup.
         assign_to: loop-planner
         blocked_by:
           - Requirements and invariants for watcher and web UI

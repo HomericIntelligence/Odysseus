@@ -1,4 +1,9 @@
-# Runbook: Lane Model Pinning (ADR-020 §4)
+# Runbook: Lane Model Pinning
+
+The checked-in `configs/lane-models.yaml` records current operator-confirmed
+configuration. [ADR-020](../adr/020-mesh-distributed-hephaestus-loop.md) §4 is
+still Proposed and supplies target-state context; it is not the authority for
+the current pins or proof that the distributed loop is deployed.
 
 Pins the four automation-lane model IDs as configuration so loop launches and
 Myrmidons manifests never rely on opencode's ambient default. The canonical
@@ -17,6 +22,13 @@ other contributors.
 
 ## Steps
 
+Changing a model pin is not ordinary instruction-maintenance work. Perform
+Step 3 only when the current request explicitly scopes the exact lane change
+and the responsible operator has approved the provider/model delta. Otherwise,
+stop after verification and report the proposed change without editing the
+configuration. Propagating an approved pin into another repository remains a
+separately reviewed component change and integration event.
+
 1. Verify the current pin parses and print the table:
 
    ```bash
@@ -33,7 +45,8 @@ other contributors.
    # then start the loop with --agent opencode from the Hephaestus env
    ```
 
-3. Change a lane model (one line, config only — never code):
+3. After the scope and operator gates above are satisfied, change the approved
+   lane model (one line, config only — never code):
 
    ```bash
    $EDITOR configs/lane-models.yaml   # edit the one lane line
@@ -55,6 +68,7 @@ other contributors.
 
 ## Scope notes
 
-- `e2e/claude-myrmidon.py` is untouched (deprecated at M4, ADR-020 §9).
+- `e2e/claude-myrmidon.py` remains live. Proposed ADR-020 §9 describes a
+  possible M4 transition, but the harness is not retired by proposal text.
 - The workflow registry points at the canonical file via
   `workflows/m0-contracts.yaml` (`lane_models: configs/lane-models.yaml`).

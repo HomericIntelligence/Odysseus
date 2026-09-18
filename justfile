@@ -20,13 +20,9 @@ default:
 # Submodule Management
 # ===========================================================================
 
-# Initialize and update all git submodules
+# Initialize all git submodules at the recorded gitlink commits
 bootstrap:
     git submodule update --init --recursive
-
-# Pull latest commits for all submodules from their upstream remotes
-update-submodules:
-    git submodule update --remote
 
 # ===========================================================================
 # Cross-Repo Status
@@ -68,8 +64,9 @@ ecosystem-table:
 # Build
 # ===========================================================================
 
-# Build all compilable submodules into build/<name>/ (C++/CMake + Mojo)
-build: _build-agamemnon _build-nestor _build-charybdis _build-keystone _build-odyssey _build-myrmidon
+# Build root-supported CMake targets into build/<name>/.
+# Component-specific recipes remain owned and executed by component CI.
+build: _build-agamemnon _build-nestor _build-charybdis _build-keystone _build-myrmidon
     @echo "=== Build complete. Artifacts in {{BUILD_ROOT}}/ ==="
 
 # One-command setup for a fresh clone (after pixi is installed at root)
@@ -153,22 +150,6 @@ _build-keystone:
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
     pixi run cmake --build "{{BUILD_ROOT}}/Keystone"
 
-# Build Odyssey (Mojo — outputs to submodule build/ directory)
-# Skipped when SKIP_ODYSSEY_BUILD=true or when podman is not available (e.g. CI).
-_build-odyssey:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ "${SKIP_ODYSSEY_BUILD:-}" = "true" ]; then
-        echo "  SKIP: SKIP_ODYSSEY_BUILD=true"
-        exit 0
-    fi
-    if ! podman info >/dev/null 2>&1; then
-        echo "  SKIP: podman not available in this environment"
-        exit 0
-    fi
-    cd research/Odyssey
-    BUILD_ROOT="{{BUILD_ROOT}}/Odyssey" just build
-
 _build-myrmidon:
     @echo "--- Building provisioning/Myrmidons/hello-world (hello_myrmidon) ---"
     # Produces {{BUILD_ROOT}}/Myrmidons/hello-world/hello_myrmidon — the first
@@ -225,19 +206,34 @@ lint:
         echo "--- root: running shellcheck on tracked shell scripts ---"
         # Limit scope to first-party shell scripts; ignore submodules.
         # Use awk to filter so empty result yields exit 0 (no need for `|| true`).
-        mapfile -t shell_targets < <(
-            git ls-files -- '*.sh' \
+        shell_targets=()
+        shell_inventory=""
+        filtered_shell_inventory=""
+        if ! shell_inventory="$(git ls-files -- '*.sh')"; then
+            echo "ERROR: could not enumerate tracked shell scripts" >&2
+            failed+=("root:shell-inventory-unavailable")
+        elif ! filtered_shell_inventory="$(
+            printf '%s\n' "$shell_inventory" \
                 | awk '!/^(infrastructure|control|provisioning|ci-cd|research|shared|testing)\//'
-        )
-        if (( ${#shell_targets[@]} > 0 )); then
+        )"; then
+            echo "ERROR: could not filter the tracked shell-script inventory" >&2
+            failed+=("root:shell-inventory-invalid")
+        else
+            while IFS= read -r shell_target; do
+                [[ -z "$shell_target" ]] && continue
+                shell_targets+=("$shell_target")
+            done <<< "$filtered_shell_inventory"
+        fi
+        if [ "${shell_targets[0]+present}" = "present" ]; then
             if ! shellcheck --severity=warning "${shell_targets[@]}"; then
                 failed+=("root:shellcheck")
             fi
-        else
+        elif [[ -n "$shell_inventory" && -z "$filtered_shell_inventory" ]]; then
             echo "--- root: no tracked shell scripts to check ---"
         fi
     else
-        echo "--- root: shellcheck not on PATH, skipping (declared in pixi.toml) ---"
+        echo "ERROR: root lint requires shellcheck from the declared pixi environment" >&2
+        failed+=("root:shellcheck-unavailable")
     fi
 
     # e2e test coverage matrix drift check (issue #199). The matrix in
@@ -250,29 +246,103 @@ lint:
         failed+=("root:e2e-matrix-drift")
     fi
 
-    while IFS= read -r submodule_path; do
-        [[ -z "$submodule_path" ]] && continue
-        if [[ ! -f "$submodule_path/justfile" && ! -f "$submodule_path/Justfile" ]]; then
-            echo "--- $submodule_path: no justfile, skipping ---"
-            continue
+    expected_inventory_output=""
+    expected_paths=""
+    status_paths=""
+    inventory_matches=1
+    if ! expected_inventory_output="$(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' 2>&1)"; then
+        echo "ERROR: could not read the configured submodule inventory" >&2
+        echo "$expected_inventory_output" >&2
+        failed+=("submodule-config")
+        inventory_matches=0
+    else
+        while read -r _ expected_path; do
+            [[ -z "${expected_path:-}" ]] && continue
+            expected_paths+="$expected_path"$'\n'
+        done <<< "$expected_inventory_output"
+        if [[ -z "$expected_paths" ]]; then
+            echo "ERROR: configured submodule inventory is empty" >&2
+            failed+=("submodule-config")
+            inventory_matches=0
         fi
-        if ! ( cd "$submodule_path" && just --justfile justfile --summary 2>/dev/null | tr ' ' '\n' | grep -qx lint ); then
-            echo "--- $submodule_path: no 'lint' recipe, skipping ---"
-            continue
+    fi
+
+    submodule_status_output=""
+    if ! submodule_status_output="$(git submodule status --recursive 2>&1)"; then
+        echo "ERROR: could not read the pinned submodule inventory" >&2
+        echo "$submodule_status_output" >&2
+        failed+=("submodule-inventory")
+        inventory_matches=0
+    else
+        while IFS= read -r status_line; do
+            [[ -z "$status_line" ]] && continue
+            status_prefix="${status_line:0:1}"
+            status_record="${status_line:1}"
+            status_path="${status_record#* }"
+            status_path="${status_path%% (*}"
+            if [[ -z "$status_path" || "$status_path" = "$status_record" ]]; then
+                echo "ERROR: invalid submodule status record: $status_line" >&2
+                failed+=("submodule-inventory")
+                inventory_matches=0
+                continue
+            fi
+            status_paths+="$status_path"$'\n'
+            case "$status_prefix" in
+                " ") ;;
+                -)
+                    echo "ERROR: pinned submodule is not initialized: $status_path" >&2
+                    failed+=("$status_path:unavailable")
+                    inventory_matches=0
+                    ;;
+                +)
+                    echo "ERROR: submodule does not match its pinned commit: $status_path" >&2
+                    failed+=("$status_path:pin-drift")
+                    inventory_matches=0
+                    ;;
+                U)
+                    echo "ERROR: submodule has a merge conflict: $status_path" >&2
+                    failed+=("$status_path:conflict")
+                    inventory_matches=0
+                    ;;
+                *)
+                    echo "ERROR: unknown submodule status for $status_path" >&2
+                    failed+=("$status_path:invalid-status")
+                    inventory_matches=0
+                    ;;
+            esac
+        done <<< "$submodule_status_output"
+    fi
+
+    while IFS= read -r expected_path; do
+        [[ -z "$expected_path" ]] && continue
+        if ! grep -Fxq "$expected_path" <<< "$status_paths"; then
+            echo "ERROR: configured submodule is absent from the pinned inventory: $expected_path" >&2
+            failed+=("$expected_path:pin-missing")
+            inventory_matches=0
         fi
-        echo "--- $submodule_path: running lint ---"
-        if ! ( cd "$submodule_path" && just lint ); then
-            failed+=("$submodule_path")
+    done <<< "$expected_paths"
+
+    while IFS= read -r status_path; do
+        [[ -z "$status_path" ]] && continue
+        if ! grep -Fxq "$status_path" <<< "$expected_paths"; then
+            echo "ERROR: pinned submodule is absent from the configured inventory: $status_path" >&2
+            failed+=("$status_path:config-missing")
+            inventory_matches=0
         fi
-    done < <(git submodule --quiet foreach --recursive 'echo "$displaypath"')
+    done <<< "$status_paths"
+
+    if (( inventory_matches == 1 )); then
+        echo "--- component lint is owned by each component repository CI ---"
+    fi
     # Grafana credential hygiene + self-test (#179)
-    python3 scripts/check_grafana_credentials.py --self-test || failed+=("grafana-gate-selftest")
-    python3 scripts/check_grafana_credentials.py || failed+=("grafana-credential-hygiene")
-    if (( ${#failed[@]} > 0 )); then
+    pixi run python -I scripts/check_grafana_credentials.py --self-test || failed+=("grafana-gate-selftest")
+    pixi run python -I scripts/check_grafana_credentials.py || failed+=("grafana-credential-hygiene")
+    if [ "${failed[0]+present}" = "present" ]; then
         echo ""
         echo "ERROR: lint failed in: ${failed[*]}" >&2
         exit 1
     fi
+    echo "--- lint complete ---"
 
 # ===========================================================================
 # Clean
@@ -286,31 +356,30 @@ clean:
 # Quality
 # ===========================================================================
 
-# Validate HCL (Nomad), YAML (configs/), NATS config structure, and
-# docker-compose structure. NATS/compose use binary-free Python validators so
-# they run even where nats-server/podman are absent (CI). HCL still needs nomad
-# locally; absence skips only the HCL leg, not the whole recipe.
-validate-configs:
+# Validate YAML, NATS and Compose configs, and canonical Nomad HCL syntax and
+# placeholder invariants. The locked pixi environment supplies the maintained
+# HCL2 parser. NATS validation also requires a maintained nats-server parser;
+# a missing parser fails closed.
+validate-configs: test-milestone-registry
     #!/usr/bin/env bash
     set -euo pipefail
     grep -q '${NOMAD_SERVER_IP}' configs/nomad/client.hcl || { echo "client.hcl lost its placeholder"; exit 1; }
-    if command -v nomad >/dev/null 2>&1; then
-        nomad fmt -check configs/nomad/client.hcl configs/nomad/server.hcl
-    else
-        echo "Note: install nomad to validate HCL syntax (skipping HCL check)"
-    fi
     # Anti-re-hardcoding guard (issue #320, regression from #181): server.hcl must
     # keep its ${NOMAD_ADVERTISE_ADDR} placeholder, never a literal Tailscale IP.
     grep -qF '${NOMAD_ADVERTISE_ADDR}' configs/nomad/server.hcl || {
         echo "configs/nomad/server.hcl lost its \${NOMAD_ADVERTISE_ADDR} placeholder (hardcoded IP re-introduced — see #181)"; exit 1;
     }
     pixi run yamllint -c .yamllint.yml .github/workflows/ configs/
+    pixi run python scripts/validate_nomad_config.py
+    pixi run bash tests/test-config-validators.sh
+    pixi run bash tests/test-dispatch-envelope-schema.sh
+    pixi run bash tests/test-lane-models.sh
+    pixi run bash tests/test-push-signatures.sh
     bash tools/validate-nats-auth.sh
     bash tools/tests/test-validate-nats-auth.sh
-    python3 scripts/validate_nats_config.py
-    python3 scripts/validate_compose.py
+    pixi run python scripts/validate_compose.py
 
-# Validate NATS server config structure (binary-free Python)
+# Validate all NATS configs with the required nats-server parser
 validate-nats:
     python3 scripts/validate_nats_config.py
 
@@ -324,7 +393,15 @@ test-justfile-recipes:
     bash tests/test-config-validators.sh
     bash tests/test-lane-models.sh
 
-# Print the pinned ADR-020 lane model IDs (issue #465) as a markdown table.
+# Exercise installer resource bounds without invoking a live compiler toolchain.
+test-resource-bounds:
+    bash tests/test-resource-bounds.sh
+
+# Compare repository hierarchy copies with the pinned Myrmidons source.
+check-hierarchy-sync:
+    bash scripts/check-hierarchy-sync.sh
+
+# Print the current lane-model pins (issue #465; Proposed ADR-020 is design context).
 # Validates the canonical pin file configs/lane-models.yaml first.
 lane-models:
     pixi run python tools/lane_models.py
@@ -348,30 +425,26 @@ test-merge-queue-readiness:
 test-repo-ruleset-apply:
     bash tests/github/apply-repo-rulesets.test.sh
 
-# Validate M1-M6 epic registration payloads against ADR-020 conventions (#468)
+# Validate the current M1-M6 epic registration contract (#468; Proposed ADR-020 context)
 test-milestone-registry:
-    python3 tests/github/test_register_milestone_epics.py
-    python3 tools/github/register-milestone-epics.py --plan >/dev/null
+    pixi run python tests/github/test_register_milestone_epics.py
+    pixi run python tools/github/register-milestone-epics.py --check >/dev/null
 
-# Render Nomad config placeholders to a deploy-local dir (default /etc/nomad.d).
+# Render Nomad config placeholders to one explicit, approved directory.
 # Nomad agent HCL does NOT expand OS env vars, so render before `nomad agent -config`.
-# Requires NOMAD_SERVER_IP and NOMAD_ADVERTISE_ADDR (e.g. export NOMAD_SERVER_IP=$(tailscale ip -4)).
-render-nomad-configs OUT_DIR="/etc/nomad.d":
+# Pre-create an empty, owner-bound mode-0700 OUT_DIR. Set its exact path in
+# NOMAD_RENDER_APPROVED_DIR and its device:inode in NOMAD_RENDER_APPROVED_ID.
+# A Nomad or hclfmt parser must be available.
+render-nomad-configs OUT_DIR:
     #!/usr/bin/env bash
     set -euo pipefail
-    : "${NOMAD_SERVER_IP:?set NOMAD_SERVER_IP (e.g. export NOMAD_SERVER_IP=$(tailscale ip -4))}"
-    : "${NOMAD_ADVERTISE_ADDR:?set NOMAD_ADVERTISE_ADDR (e.g. export NOMAD_ADVERTISE_ADDR=$(tailscale ip -4))}"
-    mkdir -p "{{ OUT_DIR }}"
-    for f in client server; do
-      envsubst '${NOMAD_SERVER_IP} ${NOMAD_ADVERTISE_ADDR}' \
-        < "configs/nomad/${f}.hcl" > "{{ OUT_DIR }}/${f}.hcl"
-      echo "rendered {{ OUT_DIR }}/${f}.hcl"
-    done
-    if command -v nomad >/dev/null 2>&1; then nomad fmt -check "{{ OUT_DIR }}"/*.hcl; fi
+    requested_dir={{ quote(OUT_DIR) }}
+    python3 scripts/render_nomad_configs.py \
+      --source-dir configs/nomad --output-dir "$requested_dir"
 
 # Run all CI checks locally
 ci: lint validate-configs check-doc-field-drift test-merge-queue-readiness test-milestone-registry
-    @echo "All checks passed"
+    @echo "All selected local checks passed; CI/CD remains authoritative"
 
 # Cut a release: validate tag↔pixi.toml↔CHANGELOG, create tag, push (triggers release.yml)
 # Prerequisites: bump version in pixi.toml, add dated CHANGELOG section, rewrite footer
@@ -391,52 +464,17 @@ release VERSION:
 	@echo "Pushed v{{VERSION}} — release.yml will validate and publish."
 
 # ===========================================================================
-# Provisioning
-# ===========================================================================
-
-# Apply Myrmidons declarative YAML state via the Agamemnon API
-apply-all:
-    cd provisioning/Myrmidons && just apply
-
-# ===========================================================================
 # Infrastructure Services
 # ===========================================================================
 
-# Start Hermes NATS event bridge
-hermes-start:
-    cd infrastructure/Hermes && just start
-
-# Start Argus observability stack
+# Explain why Argus activation is unavailable at the current gitlink pin
 argus-start:
-    cd infrastructure/Argus && just start
-
-# ===========================================================================
-# Provisioning Services
-# ===========================================================================
-
-# Start Keystone DAG executor daemon
-keystone-start:
-    cd provisioning/Keystone && just start
-
-# Print Keystone DAG status across all teams
-keystone-status:
-    cd provisioning/Keystone && just status
-
-# ===========================================================================
-# Workflows
-# ===========================================================================
-
-# Run a named workflow via Telemachy
-telemachy-run WORKFLOW:
-    cd provisioning/Telemachy && just run WORKFLOW={{ WORKFLOW }}
-
-# ===========================================================================
-# Research / Testing
-# ===========================================================================
-
-# Run Scylla ablation benchmarks
-scylla-test:
-    cd research/Scylla && just test
+    #!/usr/bin/env bash
+    printf '%s\n' \
+      'Argus activation is unavailable at the current pin.' \
+      'Its start recipe creates a different credential path than its Compose stack mounts.' \
+      'Integrate the reviewed Argus fix before activation.' >&2
+    exit 2
 
 # ===========================================================================
 # One-Command Install (per host role)
@@ -446,168 +484,14 @@ scylla-test:
 install-worker:
     bash e2e/doctor.sh --role worker --install
     git submodule update --init --recursive
-    @echo "=== Worker host ready. Run: just start-nats, just start-hermes, etc. ==="
+    @echo "Installation completed. Select and verify an authorized deployment path in docs/deployment.md before starting services."
 
 # Install all prerequisites + build C++ binaries for a control host
 install-control:
     bash e2e/doctor.sh --role control --install
     git submodule update --init --recursive
     just _build-agamemnon _build-nestor
-    @echo "=== Control host ready. Run: just start-agamemnon, just start-nestor, etc. ==="
-
-# ===========================================================================
-# Per-Component Launchers (cross-host capable)
-# ===========================================================================
-# Each component can run independently on any Tailscale host.
-# Point NATS_URL at the NATS server (default: nats://localhost:4222).
-
-# Start NATS JetStream server (standalone container)
-start-nats:
-    podman run -d --replace --name hi-nats \
-      -p 4222:4222 -p 8222:8222 \
-      nats:alpine -js -m 8222
-    @echo "NATS running at nats://$(hostname -I | awk '{print $1}'):4222"
-
-# Start Agamemnon (C++ binary, connects to NATS)
-start-agamemnon NATS_URL="nats://localhost:4222":
-    NATS_URL={{ NATS_URL }} "{{BUILD_ROOT}}/Agamemnon/Agamemnon_server"
-
-# Start Nestor (C++ binary, connects to NATS)
-start-nestor NATS_URL="nats://localhost:4222":
-    NATS_URL={{ NATS_URL }} "{{BUILD_ROOT}}/Nestor/Nestor_server"
-
-# Start Agamemnon using submodule-local pixi build (control/Agamemnon/build/debug/)
-start-agamemnon-native NATS_URL="nats://localhost:4222":
-    NATS_URL={{ NATS_URL }} control/Agamemnon/build/debug/Agamemnon_server
-
-# Start Nestor using submodule-local pixi build (control/Nestor/build/debug/)
-start-nestor-native NATS_URL="nats://localhost:4222":
-    NATS_URL={{ NATS_URL }} control/Nestor/build/debug/Nestor_server
-
-# Start Hermes webhook-to-NATS bridge (Python/FastAPI)
-start-hermes NATS_URL="nats://localhost:4222":
-    cd infrastructure/Hermes && NATS_URL={{ NATS_URL }} just start
-
-# Start hello-myrmidon worker (Python, pulls from hi.myrmidon.hello.>)
-start-myrmidon NATS_URL="nats://localhost:4222" AGAMEMNON_URL="http://localhost:8080":
-    NATS_URL={{ NATS_URL }} AGAMEMNON_URL={{ AGAMEMNON_URL }} \
-      python3 provisioning/Myrmidons/hello-world/main.py
-
-# Start Argus observability stack (Prometheus + Loki + Grafana)
-start-argus:
-    cd infrastructure/Argus && just start
-
-# Start Odysseus console — real-time NATS event viewer
-start-console NATS_URL="nats://localhost:4222":
-    NATS_URL={{ NATS_URL }} python3 tools/odysseus-console.py
-
-# ===========================================================================
-# Fleet Management (AchaeanFleet)
-# ===========================================================================
-
-# Build a single vessel image (e.g. just fleet-build-vessel odysseus-console)
-fleet-build-vessel NAME:
-    cd infrastructure/AchaeanFleet && just build-vessel {{ NAME }}
-
-# Build all base + vessel images
-fleet-build-all:
-    cd infrastructure/AchaeanFleet && just build-all
-
-# Verify built images (Trivy scan, smoke test)
-fleet-verify:
-    cd infrastructure/AchaeanFleet && just verify
-
-# Run fleet integration tests
-fleet-test:
-    cd infrastructure/AchaeanFleet && just test
-
-# Push images to registry
-fleet-push:
-    cd infrastructure/AchaeanFleet && just push
-
-# Clean all built images
-fleet-clean:
-    cd infrastructure/AchaeanFleet && just clean
-
-# ===========================================================================
-# CI/CD Pipelines (Proteus)
-# ===========================================================================
-
-# Build an OCI image via Dagger pipeline (e.g. just proteus-build myapp)
-proteus-build NAME:
-    cd ci-cd/Proteus && just build {{ NAME }}
-
-# Run tests for a repo via Dagger
-proteus-test NAME:
-    cd ci-cd/Proteus && just test {{ NAME }}
-
-# Full pipeline: build → test → promote → dispatch
-proteus-pipeline NAME:
-    cd ci-cd/Proteus && just pipeline {{ NAME }}
-
-# Lint via Dagger
-proteus-lint:
-    cd ci-cd/Proteus && just lint
-
-# Validate all pipeline configs
-proteus-validate:
-    cd ci-cd/Proteus && just validate
-
-# Dispatch a pipeline to a host via Dagger
-proteus-dispatch HOST:
-    cd ci-cd/Proteus && just dispatch-apply {{ HOST }}
-
-# Run lint + validate quality check
-proteus-check:
-    cd ci-cd/Proteus && just check
-
-# ===========================================================================
-# Skills Marketplace (Mnemosyne)
-# ===========================================================================
-
-# Validate all skill files in Mnemosyne
-mnemosyne-validate:
-    cd shared/Mnemosyne && just validate
-
-# Regenerate marketplace.json index from skill files
-mnemosyne-generate-marketplace:
-    cd shared/Mnemosyne && just generate-marketplace
-
-# Run Mnemosyne tests
-mnemosyne-test:
-    cd shared/Mnemosyne && just test
-
-# Run validate + test quality check
-mnemosyne-check:
-    cd shared/Mnemosyne && just check
-
-# ===========================================================================
-# Shared Utilities (Hephaestus)
-# ===========================================================================
-
-# Run Hephaestus unit + integration tests
-hephaestus-test:
-    cd shared/Hephaestus && just test
-
-# Run Hephaestus linter
-hephaestus-lint:
-    cd shared/Hephaestus && just lint
-
-# Run Hephaestus formatter
-hephaestus-format:
-    cd shared/Hephaestus && just format
-
-# Run Hephaestus type checker
-hephaestus-typecheck:
-    cd shared/Hephaestus && just typecheck
-
-# Run lint + format-check + typecheck quality gate
-hephaestus-check:
-    cd shared/Hephaestus && just check
-
-# Run pip-audit dependency vulnerability scan
-hephaestus-audit:
-    cd shared/Hephaestus && just audit
+    @echo "Installation and builds completed. Select and verify an authorized deployment path in docs/deployment.md before starting services."
 
 # ===========================================================================
 # E2E Pipeline Testing
@@ -615,19 +499,19 @@ hephaestus-audit:
 
 # Start Claude Code myrmidon — multi-stage pipeline worker (plan → test → implement → review → ship)
 start-claude-myrmidon NATS_URL="nats://localhost:4222":
-    NATS_URL={{ NATS_URL }} python3 e2e/claude-myrmidon.py
+    HOMERIC_LEGACY_SERVICE_UID="${HOMERIC_LEGACY_SERVICE_UID:?set HOMERIC_LEGACY_SERVICE_UID to the effective decimal service UID}" NATS_URL={{ quote(NATS_URL) }} python3 e2e/claude-myrmidon.py
 
 # Run Claude myrmidon in dry-run mode (no Claude CLI, validates NATS pipeline only)
 e2e-dry-run NATS_URL="nats://localhost:4222":
-    DRY_RUN=1 NO_GITHUB=1 NATS_URL={{ NATS_URL }} python3 e2e/claude-myrmidon.py
+    DRY_RUN=1 NO_GITHUB=1 NATS_URL={{ quote(NATS_URL) }} python3 e2e/claude-myrmidon.py
 
 # Start Claude multi-repo myrmidon — parallel pipeline for multi-repo justfile tasks
 start-claude-myrmidon-multi NATS_URL="nats://localhost:4222":
-    NATS_URL={{ NATS_URL }} python3 e2e/claude-myrmidon-multi.py
+    HOMERIC_LEGACY_SERVICE_UID="${HOMERIC_LEGACY_SERVICE_UID:?set HOMERIC_LEGACY_SERVICE_UID to the effective decimal service UID}" NATS_URL={{ quote(NATS_URL) }} python3 e2e/claude-myrmidon-multi.py
 
 # Run multi-repo myrmidon in dry-run mode (validates NATS fan-out/fan-in, no Claude API)
 e2e-multi-dry-run NATS_URL="nats://localhost:4222":
-    DRY_RUN=1 NO_GITHUB=1 NATS_URL={{ NATS_URL }} python3 e2e/claude-myrmidon-multi.py
+    DRY_RUN=1 NO_GITHUB=1 NATS_URL={{ quote(NATS_URL) }} python3 e2e/claude-myrmidon-multi.py
 
 # Run the issue-number resolver regression test (issue #187, no stack needed)
 e2e-test-myrmidon-issue-number:
@@ -670,44 +554,21 @@ e2e-conan-validate:
 e2e-pip-validate:
     bash e2e/validate-pip-install.sh
 
-# Phase 6 justfile delegation tests were removed as corrupted artifacts (#374).
-# The referenced e2e/test-justfile-*.sh scripts were failed-agent-output garbage
-# (each contained only "ERROR: Claude returned empty output"), never real tests.
-# For actual justfile-recipe integrity coverage, see `just test-justfile-recipes`
-# (tests/test-justfile-recipes.sh), which IS a valid, CI-enforced test.
+# Compatibility alias for the CI-enforced justfile integrity entry point.
 e2e-test-justfiles:
-    @echo "Phase 6 justfile delegation tests were removed as corrupted artifacts (ref #374)."
-    @echo "Run 'just test-justfile-recipes' for valid justfile-recipe integrity checks."
+    just test-justfile-recipes
 
 # Full validation suite (Docker E2E + Conan + pip)
 e2e-full: e2e-test e2e-conan-validate e2e-pip-validate
     @echo "=== Full E2E validation complete ==="
 
 # ===========================================================================
-# Cross-Host Deployment (two Tailscale-connected hosts)
-# ===========================================================================
-
-# Start cross-host stack on worker host (requires CONTROL_HOST_IP)
-crosshost-up CONTROL_HOST_IP:
-    CONTROL_HOST_IP={{ CONTROL_HOST_IP }} bash e2e/start-crosshost.sh
-
-# Run cross-host E2E validation from control host (requires WORKER_HOST_IP)
-crosshost-test WORKER_HOST_IP:
-    WORKER_HOST_IP={{ WORKER_HOST_IP }} bash e2e/run-crosshost-e2e.sh
-
-# Start the Odysseus console (NATS event viewer)
-odysseus-console NATS_URL="nats://localhost:4222":
-    NATS_URL={{ NATS_URL }} python3 tools/odysseus-console.py
-
-# ===========================================================================
 # AlexNet Mesh Fleet Deployment
 # ===========================================================================
-# Run Odyssey's AlexNet training independently across the Tailscale mesh —
-# one training job per host, results collected centrally. The fleet ships
-# the same odyssey:dev image (built once on the hub, distributed via rsync
-# over Tailscale) and runs training in rootless Podman containers on each
-# target. Use --network=host to avoid the rootlessport binary issue
-# (e2e-walkthrough-report.md), and --userns=keep-id for UID mapping.
+# Run Odyssey's AlexNet training independently on an explicitly approved fleet,
+# one training job per host, with results collected centrally. Live fleet
+# operations require current target readback and exact effect authorization;
+# use CI's hermetic suites when this checkout has no approved mesh access.
 #
 # Per-host CPU-specific Mojo flags are auto-applied via alexnet-train.sh:
 #   aeolus (Sandy Bridge-E) gets --target-features -avx2 because the
@@ -715,8 +576,9 @@ odysseus-console NATS_URL="nats://localhost:4222":
 #   confirmed the Intel fleet runs Mojo cleanly without AVX-512, so no
 #   AVX-512 stripping is needed for Skylake/Whiskey Lake/Lunar Lake hosts.
 #
-# Hosts: epimetheus (build/distribution hub), apollo, aeolus, hephaestus, hermes.
-# hermes is intentionally excluded by the task.
+# Default hosts: epimetheus (build/distribution hub), apollo, aeolus, and
+# hephaestus. This mirrors the protected manual workflow. Hermes remains an
+# explicit opt-in only after exact live prerequisites and operator approval.
 # See docs/runbooks/alexnet-mesh-fleet.md for the full deployment plan.
 
 # Launch AlexNet training on the current host (per-host script).
@@ -731,14 +593,20 @@ alexnet-train:
 alexnet-fleet-deploy:
     bash e2e/alexnet-deploy-fleet.sh
 
+# Wait for every selected training container, then verify completion evidence.
+# Extra flags are forwarded to the gate (for example, --smoke or
+# --timeout-minutes 90).
+alexnet-fleet-wait *ARGS:
+    bash e2e/alexnet-fleet-wait.sh {{ARGS}}
+
 # Centrally collect training results from all fleet hosts (rsync over Tailscale).
 # Pass CENTRAL_DIR=~/custom-path just alexnet-fleet-collect to override the dir.
 alexnet-fleet-collect:
     bash e2e/alexnet-collect-results.sh
 
-# Tear down alexnet-training containers on every fleet host and (optionally with
-# CLEAN_SCRIPTS=1) remove the rsync'd helper scripts. Prompts for confirmation
-# unless FORCE=1 is set.
+# Remove only the exact alexnet-training container on every approved fleet host.
+# Interactive runs require an exact typed target; non-interactive runs require
+# ALEXNET_TEARDOWN_APPROVED_FLEET to match FLEET. Results and scripts are kept.
 alexnet-fleet-teardown:
     bash e2e/alexnet-fleet-teardown.sh
 
@@ -747,19 +615,16 @@ alexnet-fleet-teardown:
 alexnet-smoke:
     MAX_BATCHES=3 bash e2e/alexnet-train.sh
 
-# Crash-test the mesh fleet scripts (self-contained chaos suite): asserts the
-# scripts fail FAST and cleanly — offline-host teardown/deploy must not hang,
-# missing image gives a clear diagnostic, smoke-gate semantics hold, teardown
-# is idempotent. Fast (a minute or two, no training) — safe on any fleet host.
-# CHAOS_TIMEOUT=<s> overrides the per-case kill guard (default 45).
+# Run the hermetic mesh-script failure-oracle suite. It does not query Tailscale
+# unless CHAOS_NETWORK=1 is separately authorized, but it can change the local
+# training container and therefore requires ALEXNET_CHAOS_APPROVED_HOST to equal
+# the current hostname. CHAOS_TIMEOUT=<s> overrides the case guard (default 45).
 alexnet-mesh-chaos:
     bash e2e/alexnet-mesh-chaos.sh
 
-# Same suite PLUS the live cases: C4 clobber guard (train must REFUSE to
-# overwrite a running container) and C5 kill-mid-run (launch a REAL training
-# container, SIGKILL it, gate must detect it). Takes minutes and needs the
-# odyssey:dev image loaded on this host. Do not run while a fleet training or
-# smoke is in progress — both use the shared alexnet-training container name.
+# Same suite plus explicitly authorized live cases: C4 verifies the clobber
+# guard and C5 kills a real local training container. It requires the image,
+# exact local-host approval, and an idle alexnet-training container namespace.
 alexnet-mesh-chaos-live:
     CHAOS_LIVE=1 bash e2e/alexnet-mesh-chaos.sh
 
@@ -813,30 +678,6 @@ e2e-test-tmux-run:
 
 e2e-test-tmux-teardown:
     bash e2e/topologies/t2-tmux.sh teardown
-
-# ===========================================================================
-# Hermes-Hub Topology (hermes = full stack, epimetheus = remote myrmidon)
-# ===========================================================================
-# Validates cross-host myrmidon dispatch: Agamemnon (hermes) → NATS → Tailscale
-# → hello-myrmidon (epimetheus) → NATS → Agamemnon → task=completed.
-# Requires ssh aliases: "hermes" → 100.73.61.56, "epimetheus" → 100.92.173.32
-
-# Build stack on hermes + launch myrmidon on epimetheus
-hermes-hub-up:
-    bash e2e/start-hermes-hub.sh
-
-# Run 8-phase E2E validation for the hermes-hub topology
-hermes-hub-test:
-    bash e2e/run-hermes-hub-e2e.sh
-
-# Tear down: stop compose stack on hermes + kill myrmidon on epimetheus
-hermes-hub-down:
-    ssh hermes "cd Odysseus && podman compose -f docker-compose.e2e.yml -f e2e/docker-compose.hermes-hub.yml down -v 2>&1 | tail -10"
-    ssh epimetheus "pkill -f 'provisioning/Myrmidons/hello-world/main.py' && echo 'Myrmidon stopped' || echo 'Myrmidon was not running'"
-
-# Stream logs from hermes compose stack (optional: pass service name, e.g. just hermes-hub-logs agamemnon)
-hermes-hub-logs SERVICE="":
-    ssh hermes "cd Odysseus && podman compose -f docker-compose.e2e.yml -f e2e/docker-compose.hermes-hub.yml logs --tail=100 {{ SERVICE }}"
 
 # ===========================================================================
 # GitHub Org Ruleset Management
@@ -903,43 +744,40 @@ ruleset-enforcement-check:
     echo "PASSED: all ruleset configs hold their intended enforcement"
 
 # ===========================================================================
-# Code Quality audit (GitHub Code Quality preview → paid after GA 2026-07-20)
+# Repository security-setting discovery
 # ===========================================================================
-# Read-only audit. The actual disable path is per-repo UI; see
-# docs/runbooks/disable-code-quality.md. No `code-quality-disable` recipe is
-# exposed because the free GitHub plan does not provide a REST endpoint for
-# /repos/{r}/code-quality PATCH (verified 2026-07). When the API lands, add a
-# disable recipe here and update the runbook.
+# These recipes make no remote changes. Interpret readbacks with current
+# official documentation and docs/runbooks/disable-code-quality.md.
 
-# Audit the 16 .gitmodules-derived HomericIntelligence repos (+ Odysseus)
+# Discover the canonical gitlink inventory plus Odysseus
 code-quality-audit:
     @bash tools/probe-code-quality.sh
 
-# Audit all 17 repos in the org (incl. modular-community)
+# Discover a separately scoped live organization inventory
 code-quality-audit-all:
     @bash tools/probe-code-quality.sh --all
 
-# Audit and write to docs/ecosystem-code-quality-status.md (CI-friendly artifact)
+# Write current discovery readbacks to a CI-friendly artifact
 code-quality-update:
     @bash tools/probe-code-quality.sh --output docs/ecosystem-code-quality-status.md
 
-# Print the runbook path
+# Print the contextual runbook path
 code-quality-runbook:
-    @echo "Open docs/runbooks/disable-code-quality.md for the per-repo UI disable procedure."
+    @echo "Open docs/runbooks/disable-code-quality.md for current documentation and readback requirements."
 
 # ===========================================================================
-# Atlas review wave
+# Atlas review wave (compatibility surface pending the Wave-4 Argus migration)
 # ===========================================================================
 
-# Dispatch 6-dimension review wave for an Atlas milestone PR via Agamemnon
+# Dispatch the pinned Atlas milestone review wave via Agamemnon
 atlas-review-dispatch MILESTONE PR AGAMEMNON_URL="http://localhost:8080":
     infrastructure/Argus/dashboard/scripts/atlas-review-dispatch.sh {{MILESTONE}} {{PR}} {{AGAMEMNON_URL}}
 
-# Aggregate review wave results — exits 0 when 6/6 dimensions approved
+# Aggregate the pinned Atlas review wave results
 atlas-review-aggregate MILESTONE TEAM AGAMEMNON_URL="http://localhost:8080":
     infrastructure/Argus/dashboard/scripts/atlas-review-aggregate.sh {{MILESTONE}} {{TEAM}} {{AGAMEMNON_URL}}
 
-# Post GitHub commit status for the review wave outcome
+# Post GitHub commit status for the pinned review wave outcome
 atlas-review-status MILESTONE TEAM SHA AGAMEMNON_URL="http://localhost:8080":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -974,23 +812,6 @@ ecosystem-install-check role="all":
 # Run container-based install tests
 test-install os="all" role="worker":
     bash tests/install/run_install_tests.sh {{os}} {{role}}
-
-# ─── Athena (agent-host plugins/skills surface) ────────────────
-# Carved out of Hephaestus per ADR-016. Library half stays in
-# shared/Hephaestus; plugin/skill half lives here.
-
-athena-start:
-    cd agentic/Athena && just start
-
-athena-lint:
-    cd agentic/Athena && just lint
-
-athena-test:
-    cd agentic/Athena && just test
-
-athena-bootstrap:
-    @echo "Athena plugin manifest: agentic/Athena/.claude-plugin/plugin.json"
-    @echo "Enable in Claude Code: 'athena@Athena: true' in ~/.claude/settings.json"
 
 # ===========================================================================
 # Claude Code Tooling (settings.json reconciliation)

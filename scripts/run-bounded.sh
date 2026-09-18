@@ -5,7 +5,7 @@
 # fails as a recoverable error of ITS OWN, instead of letting the kernel
 # OOM-killer thrash swap and hang the whole WSL VM. This is the defense that
 # would have contained the `hermes` host overload (see Odysseus AGENTS.md
-# "Resource limits & concurrency"): `ulimit -v` turns the uncatchable SIGKILL
+# "Safe autonomy"): `ulimit -v` turns the uncatchable SIGKILL
 # into a normal non-zero exit / MemoryError that unwinds cleanly.
 #
 # Usage:
@@ -27,6 +27,21 @@ if [[ $# -eq 0 ]]; then
 fi
 
 VMEM_KB="${RUN_BOUNDED_VMEM_KB:-5242880}"
+MAX_VMEM_KB=67108864
+
+is_canonical_vmem_limit() {
+    local value=$1
+    [[ "$value" == "0" ]] && return 0
+    [[ "$value" =~ ^[1-9][0-9]*$ ]] || return 1
+    [[ ${#value} -lt ${#MAX_VMEM_KB} ]] && return 0
+    [[ ${#value} -eq ${#MAX_VMEM_KB} ]] || return 1
+    (( 10#$value <= MAX_VMEM_KB ))
+}
+
+if ! is_canonical_vmem_limit "$VMEM_KB"; then
+    echo "ERROR: RUN_BOUNDED_VMEM_KB must be literal 0 or a canonical decimal from 1 through $MAX_VMEM_KB" >&2
+    exit 2
+fi
 
 if [[ "$VMEM_KB" != "0" ]]; then
     # Root cause of the old `ulimit -v ... || true`: `ulimit -v` fails ONLY when

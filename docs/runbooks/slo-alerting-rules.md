@@ -1,309 +1,82 @@
 # Runbook: SLO Alerting Rules
 
-Deploy and maintain the SLO alert rules for the HomericIntelligence agent mesh
-in Argus. This runbook covers the Tier 1 (measurable today) alert rules
-only — Tier 2 rules are blocked until instrumentation lands per ADR-012.
+Argus owns alert-rule implementation, metric emission, Prometheus validation,
+and deployment. This Odysseus runbook defines the cross-repository boundary;
+it does not carry a duplicate rule file or authorize a live Prometheus reload.
 
-See [ADR-012](../adr/012-slo-sla-definitions.md) for the full SLO definitions,
-the measurable-vs-instrumentation-required split, and the review cadence.
+[Proposed ADR-012](../adr/012-slo-sla-definitions.md) records candidate SLO
+targets. It is not an accepted service commitment, and a checked-in rule is not
+proof that its metric is emitted or that the rule is deployed.
 
----
+## 1. Bind the Argus source
 
-## Alert rule file
+Read the exact Argus gitlink from the approved Odysseus revision. For a rule
+change, fetch the current Argus remote head, record its immutable SHA, and
+create an isolated Argus worktree from that SHA. Do not edit
+`infrastructure/Argus` inside the Odysseus integration checkout.
 
-**File:** `infrastructure/Argus/rules/slo_alerts.yml`
+The pinned Argus README, exporter source, metrics tests, Prometheus config, and
+rule-validation entry point are the current authorities. If a command or path
+named here is absent at that pin, stop and use the component-owned route rather
+than inventing it.
 
-**Auto-load:** Prometheus loads all files matching `/etc/prometheus/rules/*.yml`
-at startup (configured via `docker-compose.yml` volume mount and
-`configs/prometheus.yml` rule-file glob). No Prometheus config change is
-required — creating `slo_alerts.yml` in the `rules/` directory is sufficient.
+## 2. Prove the metric exists independently of the rule
 
-**Style reference:** `infrastructure/Argus/rules/agent-alerts.yml`
+For every active alert expression, identify the exact exporter definition and
+an observed/tested emission path. Search exporter and instrumentation source
+only; never include `rules/` in the emitter search, because the rule text can
+self-match and create false-green evidence.
 
----
+Confirm the metric's type, labels, units, initialization behavior, and stale or
+absent-series semantics. A name found in source is insufficient when the code
+path never emits it. Keep a rule disabled until a focused test or controlled
+scrape proves the series and label set used by its expression.
 
-## Step 1 — Reconcile metric names against the Argus exporter
+## 3. Author and validate in Argus
 
-Before deploying any alert rule, confirm that every metric used in an active
-(non-commented) rule is emitted by the exporter. Run this grep from the
-Odysseus repo root:
+Add or update the rule in the isolated Argus worktree. Keep rules whose metrics
+do not yet exist in a clearly non-active planning document, not as commented
+production configuration that appears deployed.
 
-```bash
-grep -rhoE "hi_[a-z_]+|homeric_[a-z_]+" \
-  infrastructure/Argus/rules/ \
-  infrastructure/Argus/exporter/ \
-  | sort -u
-```
+Use the exact Argus-owned validation command. It must at minimum parse the
+Prometheus rule file, reject unknown or incompatible metric/label assumptions,
+and exercise representative firing and non-firing cases. A command that prints
+`FAIL` but exits zero is not validation.
 
-Every metric name used in an uncommented `expr:` in `slo_alerts.yml` must
-appear in the output. If a metric name is absent, the alert expression will
-match nothing and never fire — move the rule to the BLOCKED section.
+Run `$athena:pr-review` to terminal exact-head `GO` and pass every live required
+Argus CI/CD check before merging the component PR.
 
----
+## 4. Integrate deliberately
 
-## Step 2 — Create `slo_alerts.yml`
+If Odysseus must move the Argus gitlink, obtain explicit integration approval
+for the exact merged Argus commit and use a separate Odysseus integration PR.
+Do not update other component pins opportunistically.
 
-Create `infrastructure/Argus/rules/slo_alerts.yml` with the following
-content. **Do not uncomment the BLOCKED section** until the corresponding
-histogram metric is confirmed emitted by the Argus exporter.
+Rule deployment is a distinct production write. Bind the live Prometheus
+instance, deployed config/rule digests, lifecycle setting, tenant, rollback
+artifact, and operator-approved target before reloading or restarting it. Do
+not assume `localhost:9090`, invoke `POST /-/reload`, or restart the embedded
+Argus checkout as a generic procedure.
 
-```yaml
-groups:
-  - name: slo_alerts
-    rules:
-      # ---------------------------------------------------------------
-      # Tier 1: SLIs measurable today (real hi_* / up metrics)
-      # ---------------------------------------------------------------
+Use the deployment-owned service manager. After the change, query the exact
+Prometheus API through its authorized endpoint and prove that the expected rule
+group, expression, labels, and state match the reviewed artifact. Preserve the
+actual response and exit status.
 
-      # Availability SLO — 99.5%/month per core service.
-      # Alert when Agamemnon health gauge drops to 0 for 2+ minutes.
-      - alert: SLOAgamemnonAvailability
-        expr: hi_agamemnon_health == 0
-        for: 2m
-        labels:
-          severity: critical
-          slo: availability
-        annotations:
-          summary: "Agamemnon availability SLO at risk (service down)"
-          description: >
-            hi_agamemnon_health has been 0 for at least 2m.
-            Monthly error budget: 3 h 39 m. Open the disaster-recovery runbook.
+## 5. Completion and rollback
 
-      # Alert when Nestor health gauge drops to 0 for 2+ minutes.
-      - alert: SLONestorAvailability
-        expr: hi_nestor_health == 0
-        for: 2m
-        labels:
-          severity: critical
-          slo: availability
-        annotations:
-          summary: "Nestor availability SLO at risk (service down)"
-          description: >
-            hi_nestor_health has been 0 for at least 2m.
-            Monthly error budget: 3 h 39 m. Open the disaster-recovery runbook.
+Completion requires:
 
-      # Alert when the Argus exporter scrape target is unreachable.
-      # A down exporter makes all other SLI measurements unreliable.
-      - alert: SLOExporterAvailability
-        expr: up{job="homeric-exporter"} == 0
-        for: 2m
-        labels:
-          severity: critical
-          slo: availability
-        annotations:
-          summary: "Argus exporter down — availability SLO unmeasurable"
-          description: >
-            Prometheus cannot scrape the homeric-exporter target.
-            All hi_* SLI metrics are stale until the exporter recovers.
+- an exact source and deployment binding;
+- independent evidence that each active metric is emitted with the required
+  type and labels;
+- parser and behavior tests for the rule;
+- exact-head Athena review and Argus CI/CD success;
+- an approved integration receipt when a gitlink moves;
+- a live rule readback when deployment was authorized; and
+- cleanup of any canary series or a truthful incomplete result.
 
-      # Task success SLO — failure ratio < 5% sustained over 15 minutes.
-      - alert: SLOTaskFailureRatio
-        expr: >
-          (hi_tasks_by_status{status="failed"} / (hi_tasks_total + 1e-9))
-          > 0.05
-        for: 15m
-        labels:
-          severity: warning
-          slo: task_success
-        annotations:
-          summary: >
-            Task failure ratio above 5% SLO
-            ({{ $value | humanizePercentage }})
-          description: >
-            The ratio hi_tasks_by_status{status="failed"} /
-            hi_tasks_total has exceeded 5% for 15 minutes.
-            The existing AgentFailureRate alert fires at 20%; this rule
-            provides earlier warning at the SLO threshold.
-
-      # Metrics freshness SLO — exporter scrape data must be < 5 minutes old.
-      # Stale data causes all SLI measurements to lag or miss incidents.
-      - alert: SLOScrapeFreshness
-        expr: (time() - homeric_exporter_scrape_timestamp) > 300
-        for: 5m
-        labels:
-          severity: warning
-          slo: freshness
-        annotations:
-          summary: "Metrics stale >5 min — SLO measurements unreliable"
-          description: >
-            homeric_exporter_scrape_timestamp is more than 300 s behind
-            wall clock. All SLI alert expressions are operating on stale
-            data. Check the Argus exporter logs.
-
-      # ---------------------------------------------------------------
-      # Tier 2: BLOCKED — requires instrumentation that does not yet
-      # exist in Argus. DO NOT uncomment until the named metric
-      # is confirmed emitted by the exporter (see ADR-012, Tier 2 table).
-      # ---------------------------------------------------------------
-
-      # BLOCKED: requires hi_nats_event_duration_seconds histogram
-      # (Hermes or Keystone must emit it; ADR-012).
-      # Target: P95 < 25 ms, P99 < 50 ms.
-      #
-      # - alert: SLONatsEventLatencyP95
-      #   expr: >
-      #     histogram_quantile(
-      #       0.95,
-      #       sum(rate(hi_nats_event_duration_seconds_bucket[5m])) by (le)
-      #     ) > 0.025
-      #   for: 10m
-      #   labels: { severity: warning, slo: nats_event_latency }
-      #   annotations:
-      #     summary: "NATS event latency P95 above 25 ms SLO"
-      #
-      # - alert: SLONatsEventLatencyP99
-      #   expr: >
-      #     histogram_quantile(
-      #       0.99,
-      #       sum(rate(hi_nats_event_duration_seconds_bucket[5m])) by (le)
-      #     ) > 0.05
-      #   for: 10m
-      #   labels: { severity: warning, slo: nats_event_latency }
-      #   annotations:
-      #     summary: "NATS event latency P99 above 50 ms SLO"
-
-      # BLOCKED: requires hi_nats_reconnect_duration_seconds histogram
-      # (same emitter requirement as above; ADR-012).
-      # Target: P99 < 5 s.
-      #
-      # - alert: SLONatsReconnectP99
-      #   expr: >
-      #     histogram_quantile(
-      #       0.99,
-      #       sum(rate(hi_nats_reconnect_duration_seconds_bucket[5m])) by (le)
-      #     ) > 5
-      #   for: 5m
-      #   labels: { severity: warning, slo: nats_reconnect_time }
-      #   annotations:
-      #     summary: "NATS reconnect time P99 above 5 s SLO"
-
-      # BLOCKED: requires hi_tasks_completed_total monotonic counter
-      # (hi_tasks_total is a gauge; rate() on a gauge is unsafe; ADR-012).
-      # Target: >= 100 tasks/min sustained; warn at < 80%.
-      #
-      # - alert: SLOAgamemnonThroughput
-      #   expr: sum(rate(hi_tasks_completed_total[5m])) * 60 < 80
-      #   for: 10m
-      #   labels: { severity: warning, slo: throughput }
-      #   annotations:
-      #     summary: >
-      #       Agamemnon throughput below 80% of 100 tasks/min SLO
-      #       ({{ $value | humanize }} tasks/min)
-```
-
----
-
-## Step 3 — Validate the rule file
-
-Before reloading Prometheus, check the rule file syntax with `promtool`:
-
-```bash
-cd infrastructure/Argus
-promtool check rules rules/slo_alerts.yml
-```
-
-Expected output:
-
-```
-Checking rules/slo_alerts.yml
-  SUCCESS: 5 rules found
-```
-
-(5 active rules: SLOAgamemnonAvailability, SLONestorAvailability,
-SLOExporterAvailability, SLOTaskFailureRatio, SLOScrapeFreshness.)
-
----
-
-## Step 4 — Reload Prometheus
-
-If the Argus stack is already running, reload Prometheus without restarting:
-
-```bash
-curl -X POST http://localhost:9090/-/reload
-```
-
-The `POST /-/reload` endpoint only works if Prometheus was started with the
-`--web.enable-lifecycle` flag (set in Argus's `docker-compose.yml`). If
-that flag is not enabled, the endpoint returns HTTP 405 — in that case, restart
-the Argus stack instead. Alternatively, restart the Argus stack:
-
-```bash
-podman compose -f infrastructure/Argus/docker-compose.yml restart prometheus
-```
-
-Verify the rules loaded:
-
-```bash
-curl -s http://localhost:9090/api/v1/rules \
-  | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-for g in data['data']['groups']:
-    if g['name'] == 'slo_alerts':
-        for r in g['rules']:
-            print(r['name'])
-"
-```
-
-Expected output (Tier 1 rules only):
-
-```
-SLOAgamemnonAvailability
-SLONestorAvailability
-SLOExporterAvailability
-SLOTaskFailureRatio
-SLOScrapeFreshness
-```
-
----
-
-## Step 5 — Unblocking a Tier 2 rule
-
-When a Tier 2 metric becomes available (e.g., `hi_nats_event_duration_seconds`
-is confirmed emitted by the exporter):
-
-1. Run the reconciliation grep from Step 1 and confirm the metric appears.
-2. Uncomment the corresponding alert rule block in `slo_alerts.yml`.
-3. Validate with `promtool check rules rules/slo_alerts.yml`.
-4. Reload Prometheus (Step 4).
-5. Update [ADR-012](../adr/012-slo-sla-definitions.md) with a note that the
-   SLI has moved from Tier 2 to Tier 1 (or create a superseding ADR if the
-   numeric target changes).
-
----
-
-## Troubleshooting
-
-**Alert never fires despite the condition being true.**
-Run the reconciliation grep (Step 1). If the metric is absent, the `expr:`
-evaluates to an empty result set and the alert will never transition to
-`firing`. Move the rule to the BLOCKED section until the metric is emitted.
-
-**`promtool check rules` fails with "unknown metric".**
-`promtool check rules` validates syntax, not metric existence. The "unknown
-metric" error indicates a PromQL parse failure (e.g., a mismatched `{}`).
-Check the YAML indentation — the `expr:` value with `>` block scalar must be
-dedented consistently.
-
-**Prometheus reports "no rule files found".**
-Confirm the `rules/` directory is mounted at `/etc/prometheus/rules/` in
-`docker-compose.yml` and that `configs/prometheus.yml` contains
-`rule_files: ['/etc/prometheus/rules/*.yml']`. Check with:
-```bash
-curl -s http://localhost:9090/api/v1/rules | python3 -c \
-  "import sys,json; print(json.load(sys.stdin)['data']['groups'])"
-```
-
----
-
-## See also
-
-- [ADR-012](../adr/012-slo-sla-definitions.md) — SLO/SLA definitions,
-  metric reconciliation, and review cadence
-- `infrastructure/Argus/rules/agent-alerts.yml` — existing alert style
-  reference
-- `infrastructure/Argus/rules/recording-rules.yml` — recording rules
-  including `hi:tasks_failure_rate:avg`
-- [runbooks/disaster-recovery.md](disaster-recovery.md) — incident response
-  when availability SLO alerts fire
-- [Prometheus alerting rules](https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/)
+Rollback restores the exact prior versioned rule/config artifact through the
+same deployment manager and verifies the resulting live digest and rule state.
+Never reconstruct rollback by editing the live file or assuming a previous Git
+commit equals the deployed artifact.

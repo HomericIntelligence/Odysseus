@@ -1,8 +1,8 @@
 # Milestone workflow registry — mesh-distributed Hephaestus loop (ADR-020).
 #
-# Each file defines one milestone as requirements/goals/invariants/research
-# plus a planner sub-agent step that performs the epic decomposition
-# (athena:advise-gated). Telemachy executes the workflow; it never plans.
+# Each file defines one milestone and its canonical authored task descriptions.
+# The milestone issue registrar reads those descriptions from the workflow.
+# Telemachy executes a workflow; it does not create a second task plan.
 #
 # Run (from provisioning/Telemachy so pixi resolves the telemachy env;
 # paths resolve against CWD, WORKFLOWS_DIR is not consulted for lookup):
@@ -18,9 +18,11 @@ apiVersion: telemachy/v1
 metadata:
   name: m0-mesh-loop-contracts
   description: >-
-    Milestone 0 — contracts: ADR-020 ratification, envelope/budget freeze,
-    lane-model pinning, Odyssey-hierarchy adoption, and authoring of the
-    M1-M6 milestone workflows.
+    Milestone 0 — contracts: verify the existing hi/v1 envelope and budget
+    fields against current schemas, verify lane-model pins, define the Odyssey
+    retained-role migration boundary, and author the M1-M6 milestone
+    workflows. Proposed ADR-020 supplies target-state context; it is not
+    activation authority for its broader hierarchy proposal.
   adr: "020"
   epic_home: Odysseus
   lane_models: configs/lane-models.yaml
@@ -34,42 +36,61 @@ teams:
     agents: [loop-planner]
     tasks:
       - subject: >-
-          Pin planning / implementation / review / mechanical lane model IDs
+          Verify planning / implementation / review / mechanical lane model IDs
         description: >-
-          Decide and record the four lane model IDs (planning, implementation,
-          review, mechanical) as config in Myrmidons manifest model fields.
-          Provider is opencode for the operator lane; Claude remains available
-          for other contributors. Output: a table in ADR-020 follow-up notes
-          plus updated manifests. Blocks everything downstream.
+          Verify the four operator-confirmed lane model IDs (planning,
+          implementation, review, mechanical) against configs/lane-models.yaml
+          and their current consumers. Do not select, replace, or propagate a
+          different model, and do not change role, lane, or provider defaults.
+          Report any mismatch truthfully and stop for separately scoped
+          authority. Complete when a read-only comparison and focused config
+          validation confirm all four exact IDs. Blocks everything downstream.
         assign_to: loop-planner
       - subject: Freeze dispatch envelope and budget-carriage fields
         description: >-
-          Ratify the ADR-013 pointer envelope additions for stage chaining:
-          stage, attempt, budget counters, verdict, remediation payload.
-          Publish as a versioned schema snippet referenced by all workers.
-          blocked_by: lane pinning is independent; envelope freeze blocks
-          M1 implementation issues.
+          Verify that the existing hi/v1 pointer envelope carries the current
+          stage-chaining fields: stage, attempt, budget counters, verdict, and
+          remediation payload. Treat the checked-in schema as the preserved
+          contract: do not edit hi/v1 fields or transport semantics. Any wire
+          change requires a separately scoped, newly versioned schema and
+          compatible consumer plan. Change only validation examples, tests, or
+          references needed to prove the current contract. Complete when valid
+          examples pass, malformed envelopes fail, every worker reference
+          resolves, and the hi/v1 schema remains byte-unchanged. Lane pinning
+          is independent; this verification blocks M1 implementation issues.
         assign_to: loop-planner
         blocked_by: []
-      - subject: Adopt Odyssey 6-level HMAS hierarchy as canonical structure
+      - subject: Define the retained Odyssey agent-role migration boundary
         description: >-
-          Import research/Odyssey/agents/hierarchy.md structure (L0-L5,
-          30 agents, delegates_to/receives_from graph) into
-          provisioning/Myrmidons/agents/hierarchy/ as canonical definitions;
-          define the lint/sync gate; file the Agamemnon mesh_role_name()
-          6-level extension issue. blocked_by: none.
+          Bind the live consumers of Odyssey's nine retained instruction
+          roles: chief-architect, implementation-engineer,
+          ci-failure-analyzer, code-review-orchestrator,
+          general-review-specialist, mojo-language-review-specialist,
+          numerical-stability-specialist, security-review-specialist, and
+          test-review-specialist. Map each consumer to one retained role or a
+          classified removal; do not import the former full hierarchy into
+          Myrmidons or create runtime roles from an instruction catalog.
+          Change only the role-consumer inventory, focused validation, and
+          tracking issue; preserve runtime role, model, and provider defaults.
+          Complete when all live consumers are classified and a fixture with
+          a removed or surplus role fails the check.
         assign_to: loop-planner
         blocked_by: []
-      - subject: Plan M1-M6 epics (advise-gated decomposition)
+      - subject: Plan M1-M6 epics with contextual skill selection
         description: >-
-          Run athena:advise (planning mode) before decomposing. Produce the
-          per-repo epic breakdowns for milestones 1 through 6 with child
-          issues sized to single dispatchable tasks. Requirements, goals,
-          invariants, and research come from this workflow's sibling tasks
-          and ADR-020; the planner decides nothing without the advise gate.
+          Select athena:advise only when its planning trigger matches the work;
+          any retrieved guidance yields to the approved scope and authority.
+          Treat the checked-in M1-M6 workflow tasks as the canonical authored
+          descriptions and render per-repo epics from them. This workflow's
+          sibling tasks and Proposed ADR-020 supply context. Change only
+          workflow task content, routing metadata, and explicitly authorized
+          issue registration; do not rewrite closed issue bodies or change task
+          wire fields. Complete when plan mode validates six epics, one-to-one
+          task routing, dependency parity, and single-dispatchable-task issue
+          output, with the contextual skill-selection decision recorded.
         assign_to: loop-planner
         blocked_by:
-          - Pin planning / implementation / review / mechanical lane model IDs
+          - Verify planning / implementation / review / mechanical lane model IDs
           - Freeze dispatch envelope and budget-carriage fields
-          - Adopt Odyssey 6-level HMAS hierarchy as canonical structure
+          - Define the retained Odyssey agent-role migration boundary
 teardown: on_completion
