@@ -12,9 +12,11 @@
 
 HomericIntelligence is a distributed agent mesh built from purpose-built,
 loosely-coupled components. There is no central platform dependency:
-coordination is owned by Agamemnon, transport is owned by
-Keystone (BlazingMQ + NATS JetStream), and every other component
-integrates through well-defined subjects rather than direct service calls.
+coordination is owned by Agamemnon and transport is owned by Keystone
+(BlazingMQ + NATS JetStream). Transport and event flows integrate through
+well-defined subjects. Supported management and control APIs also exist,
+including Agamemnon reconciliation and chaos endpoints; not every component
+interaction is a NATS message.
 
 Odysseus is the meta-repo and user-facing hub. It holds Architecture Decision
 Records, runbooks, canonical configs, and references every other repository as
@@ -38,19 +40,20 @@ HTTP management calls do not establish a second task queue.
 |-----------|----------|------|
 | **Odysseus** | meta | User interface, observability hub, and meta-repo. Bidirectional with user. Consumes Argus dashboards. |
 | **Agamemnon** | control | Planning, coordination, and HMAS orchestration (L0–L3). GitHub issues hold durable state; Projects is a derived view. Does not perform research or expose a user UI. |
-| **Nestor** | control | Thin C++ intake/status/dispatch service for research. Accepts ideas (`POST /v1/research`), dispatches them to the research myrmidon pool, tracks status. Research, interviewing, and ideation run in research-pool myrmidons — never inside Nestor itself (LLM work never runs inside C++ services; see [ADR-013](adr/013-hmas-mesh-wire-contracts.md)). |
+| **Nestor** | control | Thin C++ intake/status/dispatch service for research. Pinned source implements the in-memory `POST /v1/research` path plus `hi.research.{id}` and role-addressed research publication; LLM research/interviewing/ideation remains outside the C++ service. Source behavior is not proof of a deployed or restart-durable end-to-end flow. |
 | **Keystone** | transport | Invisible transport layer. BlazingMQ for intra-host (<500 ns, >2 M msg/sec); NATS JetStream (nats.c v3.12.0) for cross-host over Tailscale. Components talk *through* Keystone, never *to* it. |
 | **Hermes** | infrastructure | External message delivery bridge. Routes external-service events into NATS and delivers outbound messages to external services. |
 | **Argus** | infrastructure | Observability: Prometheus metrics, Loki log aggregation, Grafana dashboards, Promtail scraping. Feeds Odysseus dashboards. |
 | **AchaeanFleet** | infrastructure | Container image library. All agent and service images. Built by Proteus; run on the `homeric-mesh` Podman network. |
-| **Myrmidons repo** | provisioning | GitOps source of truth. YAML manifests describe desired agent state; Agamemnon API reconciliation applies them. Also holds all agent templates and container specs. Multi-host scheduling via Nomad is deferred to a future phase (see [ADR-009](adr/009-defer-multi-host-nomad-scheduling.md)); currently supports `local` and `docker` deployment types only. |
-| **Telemachy** | provisioning | Declarative workflow engine + work description and epic registration. Turns workflow YAML into GitHub epics with child issues and publishes `hi.pipeline.epic.*.registered` ([ADR-013](adr/013-hmas-mesh-wire-contracts.md)). Used programmatically by Agamemnon, Nestor, and research myrmidons. Not a user-facing service. |
+| **Myrmidons repo** | provisioning | GitOps source of truth. YAML manifests describe desired agent state; Agamemnon's API/reconciler applies the currently supported `local` and `docker` deployment paths. Also holds all agent templates and container specs. Multi-host scheduling via Nomad is deferred to a future phase (see [Proposed ADR-023](adr/023-defer-multi-host-nomad-scheduling.md)). |
+| **Telemachy** | provisioning | Declarative workflow engine and work-description source. Pinned source implements workflow-YAML registration as GitHub epics with child issues and publication of `hi.pipeline.epic.*.registered`. That component-local implementation is not proof of deployed writer exclusivity, durable delivery, or the complete ADR-013 integration target. |
 | **Proteus** | ci-cd | CI/CD. Dagger TypeScript pipelines. Builds AchaeanFleet images; dispatches `agamemnon-apply` on merge. |
-| **Myrmidons (workers)** | workers | The worker pool: all nodes that can run myrmidon agents. Pull-based from role-addressed queues `hi.myrmidon.{domain}.{role}.task.>` ([ADR-013](adr/013-hmas-mesh-wire-contracts.md)); myrmidon roles ARE the HMAS agentic roles at every level, crossed with domain (e.g. `research.chief-architect` vs `pipeline.chief-architect`). Multi-host clustering via Nomad is deferred to a future phase (see [ADR-009](adr/009-defer-multi-host-nomad-scheduling.md)). |
+| **Myrmidons (workers)** | workers | Nodes that can run myrmidon agents. **[Proposed ADR-013 target](adr/013-hmas-mesh-wire-contracts.md):** workers pull role-addressed `hi.myrmidon.{domain}.{role}.task.>` queues, with roles crossed by domain. This target is not a deployed-state claim. Multi-host scheduling remains deferred under [Proposed ADR-023](adr/023-defer-multi-host-nomad-scheduling.md). |
 | **Scylla** | testing | AI agent ablation benchmarking; evaluates agent architectures across tiered configurations (T0–T6). |
 | **Charybdis** | testing | Chaos and resilience testing. Injects faults via Agamemnon `/v1/chaos/*` endpoints. |
-| **Mnemosyne** | shared | Skills marketplace / team-knowledge memory store for the `advise` and `learn` plugins only. Not an agent-template registry. |
-| **Hephaestus** | shared | Shared automation and skills; Fleet Codex app-server adapter, private worker journal, execution supervision, workspace and issue-stage execution. |
+| **Mnemosyne** | shared | Team-knowledge memory store consumed by Athena's `advise` and `learn` skills. It owns neither plugin/skill distribution nor agent templates. |
+| **Hephaestus** | shared | Python library and automation runtime; Fleet Codex app-server adapter, private worker journal, execution supervision, workspace and issue-stage execution. It does not own plugin manifests or the skills registry. |
+| **Athena** | agentic | Agent-host plugin and skill distribution for Claude Code, Codex, and Pi. Owns the `athena@Athena` plugin manifests, skills, and supporting assets; depends on Hephaestus under Accepted ADR-016. |
 | **Odyssey** | research | Standalone Mojo ML training framework. Reproduces classic AI/ML research papers; provides reusable tensor ops, autograd, and training infrastructure. Not integrated with the agent mesh; implementations live entirely in-repo as Mojo libraries and executables. |
 | ~~ai-maestro~~ | removed | Removed per [ADR-006](adr/006-decouple-from-ai-maestro.md). No submodule entry and no `infrastructure/ai-maestro/` directory. Do not reintroduce. |
 
@@ -77,6 +80,10 @@ traverse the network.
 
 ## System Diagram
 
+This diagram combines established component ownership with integration edges
+from Proposed ADR-013. Every edge or subject marked `[ADR-013 target]` is a
+proposal target, not evidence of current deployment or live end-to-end behavior.
+
 ```
   ┌─────────────────────────────────────────────────────────────────────┐
   │                           USER                                      │
@@ -88,26 +95,28 @@ traverse the network.
   │        meta-repo · user interface · observability hub              │
   └────────────────┬───────────────────────────────┬────────────────────┘
                    │                               │
-                   │ research requests             │ dashboards / alerts
+                   │ implemented intake route;       │ dashboards / alerts
+                   │ deployment unproved
                    ▼                               ▼
   ┌────────────────────────────┐    ┌──────────────────────────────────┐
   │       Nestor        │    │          Argus            │
-  │  research · ideation       │    │  Prometheus · Loki · Grafana     │
-  │  Telemachy workflows       │    │  Promtail                        │
+  │  intake · status · dispatch│    │  Prometheus · Loki · Grafana     │
+  │  (research work is external)│   │  Promtail                        │
   └────────────────┬───────────┘    └──────────────────────────────────┘
-                   │ handoff
+                   │ [ADR-013 target] handoff
                    ▼
   ┌─────────────────────────────────────────────────────────────────────┐
   │                      Agamemnon                               │
   │   HMAS L0–L3 · issue-backed state · derived Projects view          │
   │   /v1/tasks  /v1/agents  /v1/chaos/*  /v1/workflows                │
   └─────────────────┬──────────────────────────────────────────────────┘
-                    │ dispatch (via Keystone NATS subjects)
+                    │ [ADR-013 target] dispatch via Keystone subjects
                     ▼
   ┌─────────────────────────────────────────────────────────────────────┐
   │                     Keystone                                 │
   │   BlazingMQ (intra-host) · NATS JetStream (cross-host/Tailscale)   │
   └──────┬──────────────────────┬──────────────────────────────────────┘
+         │ [ADR-013 target]                     │ [ADR-013 target]
          │ hi.myrmidon.pipeline.{role}.task.>   │ hi.myrmidon.research.{role}.task.>
          ▼                                      ▼
   ┌──────────────────────┐   ┌──────────────────────┐
@@ -127,68 +136,83 @@ traverse the network.
   │   Dagger TypeScript · builds images · dispatches agamemnon-apply │
   └──────────────────────────────────────────────────────────────────┘
 
-  External services ──► Hermes ──► NATS (hi.pipeline.>) ──► internal consumers
+  [ADR-013 target] Hermes ──► NATS (hi.pipeline.>) ──► internal consumers
 
   Myrmidons repo (GitOps YAML manifests) ──► Agamemnon API reconciliation
-  Telemachy  ◄── used by Agamemnon + Nestor programmatically
+  Telemachy registration source exists; deployed handoff remains unproved ──► Agamemnon
   Charybdis  ──► Agamemnon /v1/chaos/* (fault injection)
   Scylla     ──► ablation benchmarking (T0–T6 tiers)
-  Mnemosyne  ──► advise/learn plugins only
-  Hephaestus ──► shared utilities, skills registry (all repos)
+  Mnemosyne  ──► team-knowledge backend for Athena advise/learn
+  Athena     ──► agent-host plugin/skill distribution
+       └────────► depends on Hephaestus under Accepted ADR-016
+  Hephaestus ──► Python library + automation; no plugin/skills registry
   Odyssey    ──► standalone Mojo ML framework (paper reproductions, in-repo only)
 ```
 
 ---
 
-## Pipeline Flow
+## Proposed ADR-013 Pipeline Target
 
-The full HMAS pipeline, end to end (wire contracts in
-[ADR-013](adr/013-hmas-mesh-wire-contracts.md)):
+The following is the end-to-end target proposed by
+[ADR-013](adr/013-hmas-mesh-wire-contracts.md). ADR-013 is still Proposed, so
+this sequence is neither a deployed architecture claim nor current runtime
+evidence. Several component-local pieces already exist in pinned source:
+Nestor's in-memory intake/status and publications, Telemachy's epic/child
+creation and registration publish, and Agamemnon's task state machine,
+subscriptions, and unblocked-child delegation. Their existence does not prove
+that this complete sequence is configured, durable, or running together:
 
 ```
- 1. User submits a high-level task via the Odysseus console
+ 1. A user would submit a high-level task through Nestor's implemented intake
+    route from an authorized client such as the target Odysseus console
        │  POST /v1/research (Nestor)
        ▼
- 2. Nestor registers the intake and dispatches to the research pool
+ 2. Nestor's pinned source would register the in-memory intake and publish to
+    the research pool; restart-durable intake remains a separate gate
        │  hi.myrmidon.research.chief-architect.task.{id}
        ▼
- 3. A research myrmidon claims it: researches the idea, INTERVIEWS the
-    user (console live, GitHub issue comments as fallback), ideates
-    extensions, and produces a researched brief
+ 3. A research myrmidon would claim it, research the idea, interview the
+    user, ideate extensions, and produce a researched brief
        │  hi.pipeline.interview.{intake_id}.question/.answer.{q_id}
        ▼
- 4. The work is described via Telemachy and registered in GitHub
+ 4. Telemachy's pinned source would describe the work and register it in GitHub
     as an epic with child issues (task-list body, state:needs-plan)
        │  hi.pipeline.epic.{epic_key}.registered
        ▼
- 5. Agamemnon submits the HMAS root (Pending → Decomposing) and
-    dispatches a planning burst to the pipeline planner queue
+ 5. Agamemnon's pinned state machine would submit the HMAS root
+    (Pending → Decomposing) and dispatch a planning burst to the pipeline
+    planner queue once the proposed integration is admitted
        │  hi.myrmidon.pipeline.chief-architect.task.{id}
        ▼
- 6. A planner myrmidon extends the epic into tasks/features/bugs/
-    sub-tasks in GitHub; the resulting brief is ingested
+ 6. A planner myrmidon would extend the epic into tasks/features/bugs/
+    sub-tasks in GitHub, and Agamemnon would ingest the resulting brief
        │  POST /v1/briefs  →  L0–L3 HmasTask tree (Delegated)
        ▼
- 7. Leaf tasks are dispatched to the worker pool; myrmidons on mesh
-    nodes claim individual tasks and move the state machine
+ 7. Leaf tasks would be dispatched to the worker pool; myrmidons on mesh
+    nodes would claim individual tasks and move the proposed state machine
        │  hi.myrmidon.{domain}.{role}.task.{id}   (claim = assignment)
        │  hi.tasks.{team}.{task}.started/completed/failed  (facts)
        ▼
- 8. Each worker: advise (before) → implement → PR → review gate
-    (state:implementation-go) → merge → learn (after)
+ 8. Each worker would: request contextual advice (non-vetoing) → implement →
+    PR → review gate (state:implementation-go) → merge. A learning write would
+    run only as a separately authorized effect; otherwise the stage records a
+    no-write SKIP.
        │  child completion wakes blocked parents in Agamemnon
        ▼
- 9. delegate_unblocked_children dispatches the next burst until the
+ 9. delegate_unblocked_children would dispatch each next burst until the
     epic's tree reaches Completed
 ```
 
-Interviews, escalations, and dashboards flow back up the same subjects, so
-each hop is bidirectional. Role-addressed work and lifecycle messages flow
-**through** Keystone. Supported management interfaces provide resource inspection
-and commands, including Odysseus's authenticated backend adapters; they do not
-create an additional work queue. Keystone is a transport detail, not a pipeline stage. All workers
-run AchaeanFleet container images and integrate advise-before / learn-after
-around every task.
+Under this proposal, interviews, escalations, and dashboards would flow back up
+the same subjects, so each hop would be bidirectional. Role-addressed work and
+lifecycle messages would flow **through** Keystone. Supported management
+interfaces would provide resource inspection and commands, including
+Odysseus's authenticated backend adapters, without creating an additional work
+queue. Keystone would remain a transport detail rather than a pipeline stage.
+The target workers would run AchaeanFleet images and request contextual advice
+without turning missing/stale advice into a veto. Learning is not implicit task
+authority: a worker writes a lesson only when that cross-repository effect is
+separately authorized, and otherwise records a no-write SKIP.
 
 This sequence is the integration target. Fleet acceptance must still establish
 durable research intake, registration publication, claimed worker execution,
@@ -349,13 +373,13 @@ stream; worker-generation and activity predicates remain unchanged. Compatible
 service deployment, live GitHub persistence/restart and worker admission still
 require their separate acceptance evidence.
 
-Telemachy's initial Fleet registration path requires a marked, pre-existing
-epic and an externally exclusive writer. A local integration test has now passed
-the real producer's exact bytes through a private JetStream broker into the
-native Agamemnon consumer, including lost publication receipt, failed durable
-write, replay, restart and parent wakeup. Its GitHub service is a controlled
-fixture. This evidence does not establish live GitHub writer fencing or the
-complete research-to-implementation flow.
+The Proposed ADR-013 target for Telemachy's initial Fleet registration path
+requires a marked, pre-existing epic and an externally exclusive writer. A
+local integration test passed the real producer's exact bytes through a private
+JetStream broker into the native Agamemnon consumer, including lost publication
+receipt, failed durable write, replay, restart, and parent wakeup. Its GitHub
+service is a controlled fixture. This evidence does not establish deployment,
+live GitHub writer fencing, or the complete research-to-implementation flow.
 
 ### Execution and delivery gates
 
@@ -376,26 +400,31 @@ until acceptance completes.
 
 ---
 
-## Task State Machine
+## Proposed ADR-013 Task-State Target
 
-Two state systems cooperate, mapped one-to-one in
-[ADR-013](adr/013-hmas-mesh-wire-contracts.md) §10:
+[ADR-013](adr/013-hmas-mesh-wire-contracts.md) §10 proposes that two state
+systems cooperate through the following mapping. Pinned Agamemnon source
+already contains its component-local state machine, task-event subscriptions,
+and unblocked-child delegation; the cross-system mapping and deployed flow
+remain target contracts, not deployed-state claims:
 
-- **Agamemnon TaskStateMachine** (per HMAS node):
+- **Implemented component-local Agamemnon TaskStateMachine** (per HMAS node):
   `Pending → Decomposing → Delegated → InProgress → Completed`, with
-  `Escalated` (retry at parent layer) and `Failed` as exception paths.
-  Transitions are driven by NATS facts: worker `started` → InProgress,
-  `completed` → Completed (+ wake blocked children), `failed` → Failed.
-- **Hephaestus `state:*` labels** (per GitHub issue/PR):
+  `Escalated` (retry at parent layer) and `Failed` as exception paths. Pinned
+  handlers consume task facts including `started`, `completed`, and `failed` to
+  drive those local transitions and wake eligible children. This source fact
+  does not itself validate the subject contract or prove live delivery.
+- **Proposed Hephaestus `state:*` mapping** (per GitHub issue/PR):
   `state:needs-plan → state:plan-go/-no-go → state:implementation-go/-no-go`,
-  plus `state:skip` on retry exhaustion. Only Hephaestus automation writes
-  these labels; only Agamemnon writes its own store; workers publish events.
+  plus `state:skip` on retry exhaustion. In the proposed ownership split, only
+  Hephaestus automation would write these labels, only Agamemnon would write
+  its own store, and workers would publish events.
 
-Task sizing: leaves are planned to ≲1 h of active work. There is no hard
-limit — a worker that overruns ~1 h checkpoints (commit/push + progress
-comment), registers the remainder as sub-tasks via `POST /v1/tasks/:id/split`,
-and completes its task as the first slice. Leases (5-min heartbeats,
-15-min AckWait, MaxDeliver=3) detect worker death only, never task length.
+The proposal targets leaves of ≲1 h active work without making that a hard
+limit. A worker that overran ~1 h would checkpoint, register the remainder as
+sub-tasks via `POST /v1/tasks/:id/split`, and complete its task as the first
+slice. The proposed 5-minute heartbeats, 15-minute AckWait, and MaxDeliver=3
+would detect worker death, not impose task length.
 
 ---
 
@@ -413,25 +442,25 @@ to Keystone itself; the transport is resolved at startup via configuration.
 
 ---
 
-## NATS Subject Schema
+## Proposed ADR-013 Subject Target
 
-All subjects use the `hi.` namespace prefix.
+[ADR-013](adr/013-hmas-mesh-wire-contracts.md) proposes the following target
+overlay under the `hi.` namespace. The table includes older subject families
+for migration context, but it is not proof of deployed publishers, subscribers,
+consumer settings, or end-to-end behavior.
 
-See [ADR-013](adr/013-hmas-mesh-wire-contracts.md) for consumer settings,
-payload envelopes, and migration notes.
-
-| Subject pattern | Publishers | Subscribers | Notes |
+| Target subject pattern | Proposed publishers | Proposed subscribers | Target notes |
 |-----------------|-----------|-------------|-------|
-| `hi.myrmidon.{domain}.{role}.task.{task_id}` | Agamemnon, Nestor | Myrmidon pool (pull) | Role-addressed work queues; durable `myrmidon-{domain}-{role}`, AckWait 15 min, MaxDeliver 3 (ADR-013) |
-| `hi.myrmidon.{type}.{task_id}` | Agamemnon | — (legacy) | Two-token legacy form; dual-published for one release, then removed |
-| `hi.tasks.{team_id}.{task_id}.{verb}` | Workers, Agamemnon | Agamemnon, Odysseus, Argus | State facts; verbs `started`/`updated`/`completed`/`failed` (`started` added by ADR-013) |
-| `hi.pipeline.interview.{intake_id}.{question\|answer}.{q_id}` | Research myrmidons ↔ Odysseus console | Console, interviewing worker | Interview relay; GitHub issue comments as fallback |
-| `hi.pipeline.epic.{epic_key}.registered` | Telemachy | Agamemnon (durable `agamemnon-epics`) | Epic trigger; `epic_key = {repo_slug}-{issue_number}` |
-| `hi.pipeline.>` | Odysseus, Argus, Hermes, Telemachy | Multiple (pub/sub) | Fan-out; Hermes bridges external events here; stream `homeric-pipeline` |
-| `hi.research.{id}` | Nestor | Nestor, console | Research status/compat subject (dispatch rides `hi.myrmidon.research.*`) |
-| `hi.agents.>` | Agamemnon, Hermes | Argus (pub/sub) | Agent lifecycle events |
-| `hi.logs.myrmidon.{domain}.{role}.{agent_id}` | Workers | Argus/Loki, Odysseus | Structured worker logs; payloads carry `exec_host` |
-| `hi.logs.>` | All components | Argus/Loki, Odysseus (pub) | Structured log forwarding |
+| `hi.myrmidon.{domain}.{role}.task.{task_id}` | Agamemnon, Nestor | Myrmidon pool (pull) | Role-addressed target; durable `myrmidon-{domain}-{role}`, AckWait 15 min, MaxDeliver 3 |
+| `hi.myrmidon.{type}.{task_id}` | Agamemnon | — (legacy) | Proposed one-release dual-publish migration from the two-token legacy form |
+| `hi.tasks.{team_id}.{task_id}.{verb}` | Workers, Agamemnon | Agamemnon, Odysseus, Argus | Proposed state-fact mapping; verbs `started`/`updated`/`completed`/`failed` |
+| `hi.pipeline.interview.{intake_id}.{question\|answer}.{q_id}` | Research myrmidons ↔ Odysseus console | Console, interviewing worker | Proposed interview relay; GitHub issue comments as fallback |
+| `hi.pipeline.epic.{epic_key}.registered` | Telemachy | Agamemnon (durable `agamemnon-epics`) | Pinned Telemachy source implements this publication and key grammar; durable subscriber ownership and deployed end-to-end delivery remain proposed |
+| `hi.pipeline.>` | Odysseus, Argus, Hermes, Telemachy | Multiple (pub/sub) | Proposed fan-out and `homeric-pipeline` stream relationship |
+| `hi.research.{id}` | Nestor | Nestor, console | Pinned Nestor source implements this publication grammar; deployed durable delivery and the broader status/compat relationship remain proposed |
+| `hi.agents.>` | Agamemnon, Hermes | Argus (pub/sub) | Target agent-lifecycle relationship; accepted ADRs remain authoritative where applicable |
+| `hi.logs.myrmidon.{domain}.{role}.{agent_id}` | Workers | Argus/Loki, Odysseus | Proposed structured worker logs carrying `exec_host` |
+| `hi.logs.>` | All components | Argus/Loki, Odysseus (pub) | Proposed structured log forwarding relationship |
 
 ---
 
@@ -468,8 +497,8 @@ Mnemosyne).
 
 **Current state:** Myrmidons supports single-host deployments with `local` and
 `docker` deployment types. Multi-host agent scheduling via Nomad is deferred to
-a future phase and is tracked in
-[ADR-009](adr/009-defer-multi-host-nomad-scheduling.md).
+a future phase and is described in
+[Proposed ADR-023](adr/023-defer-multi-host-nomad-scheduling.md).
 
 ### AchaeanFleet
 All container images are defined and versioned in AchaeanFleet. Images run on
@@ -516,17 +545,28 @@ directly.
 
 ---
 
+## Agentic Infrastructure
+
+### Athena
+Agent-host plugin and skill distribution for Claude Code, Codex, and Pi.
+Athena owns the `athena@Athena` plugin manifests, skills, and supporting assets.
+It consumes Hephaestus as a library and automation dependency; Accepted
+[ADR-016](adr/016-split-hephaestus.md) prohibits restoring the inverse
+dependency or moving plugin ownership back into Hephaestus.
+
 ## Shared Infrastructure
 
 ### Mnemosyne
-Skills marketplace and team-knowledge memory store backing the `advise` and
-`learn` plugins only. Mnemosyne is not an agent-template registry and does not
-hold agent specs; those live in the Myrmidons repo.
+Team-knowledge memory store backing Athena's `advise` and `learn` skills.
+Mnemosyne owns neither plugin/skill distribution nor agent templates; agent
+specs live in the Myrmidons repo.
 
 ### Hephaestus
-Shared utilities, Claude Code plugins, and the skills registry. Consumed by all
-HomericIntelligence repos. Includes changelog tooling, system-info helpers, and
-markdown utilities.
+Python library and automation runtime consumed by HomericIntelligence
+repositories and Athena. It includes changelog tooling, system-info helpers,
+markdown utilities, the Fleet Codex app-server adapter, private worker journal,
+execution supervision, and workspace/issue-stage execution. It does not own
+agent-host plugin manifests or the skills registry.
 
 ### Odyssey
 Standalone Mojo ML training framework for reproducing classic AI/ML research

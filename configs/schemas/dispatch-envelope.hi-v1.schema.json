@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://homericintelligence.github.io/Odysseus/schemas/dispatch-envelope.hi-v1.schema.json",
   "title": "Hephaestus mesh dispatch envelope hi/v1",
-  "description": "Versioned dispatch packet for the Hephaestus automation loop on the HomericIntelligence mesh (ADR-013 §3 payload envelope + ADR-020 §6 pointer fields and M0 stage-chaining additions). Packets carry pointers only; workers read the full task from GitHub at claim time. New contract versions get a new schema file — never edit this one in place.",
+  "description": "Versioned structural compatibility schema for the hi/v1 dispatch-envelope shape derived from Proposed ADR-013 §3, Proposed ADR-020 §6, and the checked-in M0 stage-chaining fields. Validation proves packet shape only; it does not prove routing, worker, retry, exhaustion, or deployment behavior. An incompatible envelope shape requires a new schema version rather than an in-place reinterpretation of hi/v1.",
   "type": "object",
   "required": ["schema", "ts", "msg_id", "repo", "issue", "branch", "stage", "attempt", "budgets"],
   "properties": {
@@ -75,7 +75,7 @@
     },
     "stage": {
       "enum": ["planning", "plan_review", "implementation", "pr_review", "merge"],
-      "description": "Loop stage this dispatch targets (M0 ratification of ADR-020 §2 stage chain). The Learn stage is dispatched post-merge on an aux queue and has no first-class dispatch value."
+      "description": "Stage value carried by the current hi/v1 compatibility artifact. The enum mirrors the stage names in Proposed ADR-020 §2; the schema neither accepts that proposal nor proves runtime chaining. Learn has no first-class value in this schema."
     },
     "attempt": {
       "type": "integer",
@@ -112,7 +112,7 @@
           "type": "integer",
           "minimum": 0,
           "default": 2,
-          "description": "Full plan -> plan-review cycles before exhaustion (default 2)."
+          "description": "Counter field associated with proposed plan-to-plan-review cycles; default annotation 2."
         },
         "implement": {
           "type": "integer",
@@ -124,7 +124,7 @@
           "type": "integer",
           "minimum": 0,
           "default": 2,
-          "description": "Rebase-conflict retries before fail-back/exit (default 2)."
+          "description": "Counter field associated with proposed rebase-conflict handling; default annotation 2."
         },
         "test_fix": {
           "type": "integer",
@@ -142,20 +142,20 @@
           "type": "integer",
           "minimum": 0,
           "default": 6,
-          "description": "Hard ceiling across all PR-review retries for one item (default 6)."
+          "description": "Counter field associated with the proposed aggregate PR-review ceiling; default annotation 6."
         },
         "merge": {
           "type": "integer",
           "minimum": 0,
           "default": 5,
-          "description": "Merger-agent retry budget (ADR-020 §3, default 5)."
+          "description": "Counter field associated by Proposed ADR-020 §3 with merge retries; default annotation 5."
         }
       },
-      "description": "Per-stage retry budgets carried in the envelope (ADR-020 §6). Counters decrement only on same-stage retries; fail-back exits (leaving the stage) and terminal exits do not consume budget. Exhaustion drives state:skip (see ADR-020 follow-up notes)."
+      "description": "Nonnegative budget fields carried by the current hi/v1 compatibility artifact. Proposed ADR-020 describes possible decrement and exhaustion behavior, but JSON Schema does not enforce or prove those runtime transitions."
     },
     "verdict": {
       "enum": ["go", "no_go", null],
-      "description": "Stage outcome carried forward so downstream stages can chain on it (e.g. merger reacts to implementation-go/no-go). Null while no verdict exists yet."
+      "description": "Optional outcome value in the compatibility shape; the schema permits go, no_go, or null and does not prove downstream stage behavior."
     },
     "remediation": {
       "type": "object",
@@ -172,7 +172,7 @@
       },
       "required": ["reason", "evidence"],
       "additionalProperties": false,
-      "description": "Remediation payload attached by a reviewing/merging worker on a no-go outcome (ADR-020 §3): the merger publishes this back to the task-agent queue carrying the failing evidence. Present only on remediation packets; never on forward dispatches."
+      "description": "Optional remediation-object shape derived from Proposed ADR-020 §3. When present it requires reason and evidence and rejects unknown remediation fields; the schema does not prove who creates, publishes, or consumes it."
     }
   }
 }
