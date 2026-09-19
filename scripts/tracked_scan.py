@@ -271,7 +271,7 @@ def _self_test() -> int:
         swapped = False
         real_open = os.open
 
-        def swapping_open(path: object, flags: int, mode: int = 0o777, **kwargs: object) -> int:
+        def swapping_open(path: object, flags: int, mode: int = 0o600, **kwargs: object) -> int:
             nonlocal swapped
             if path == "swap.md" and kwargs.get("dir_fd") is not None and not swapped:
                 swapped = True
@@ -291,7 +291,7 @@ def _self_test() -> int:
         post_open_count = 0
 
         def replacing_open(
-            path: object, flags: int, mode: int = 0o777, **kwargs: object
+            path: object, flags: int, mode: int = 0o600, **kwargs: object
         ) -> int:
             nonlocal post_open_count
             if path == "post.md" and kwargs.get("dir_fd") is not None:
@@ -315,7 +315,7 @@ def _self_test() -> int:
         transient_root_opens = 0
 
         def transient_open(
-            path: object, flags: int, mode: int = 0o777, **kwargs: object
+            path: object, flags: int, mode: int = 0o600, **kwargs: object
         ) -> int:
             nonlocal transient_deleted, transient_root_opens
             if path == root:
@@ -343,7 +343,7 @@ def _self_test() -> int:
         parent_open_count = 0
 
         def replacing_parent_open(
-            path: object, flags: int, mode: int = 0o777, **kwargs: object
+            path: object, flags: int, mode: int = 0o600, **kwargs: object
         ) -> int:
             nonlocal parent_open_count
             if path == "parent" and kwargs.get("dir_fd") is not None:

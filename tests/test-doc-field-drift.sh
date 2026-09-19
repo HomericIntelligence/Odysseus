@@ -93,6 +93,24 @@ if (( status != 1 )); then
 fi
 
 git -C "$fixture" rm -q -f -- "$option_path"
+printf '%s\n' '```json' '{"schema":"hi/nestor/intake-request/v1",' \
+    '"intakeId":"example","workRepository":"HomericIntelligence/Odysseus",' \
+    '"title": "Valid API title", "body":"Example"}' '```' > "$fixture/intake.md"
+printf '%s\n' '```json' '{"event":"task.created","timestamp":"example","data":{' \
+    '"task_id":"example","team_id":"example",' \
+    '"title": "Valid event title",' \
+    '"description":"Example","status":"backlog","assigned_to":null}}' '```' > "$fixture/event.md"
+git -C "$fixture" add intake.md event.md
+set +e
+output="$(cd "$fixture" && "$checker" 2>&1)"
+status=$?
+set -e
+if (( status != 0 )); then
+    printf 'FAIL: valid non-workflow API title returned %d\n%s\n' "$status" "$output" >&2
+    exit 1
+fi
+git -C "$fixture" rm -q -f intake.md event.md
+
 printf '%s\n' '- "title" : deprecated' > "$fixture/quoted-title.md"
 printf '%s\n' "  'depends_on'  : deprecated" > "$fixture/quoted-dependency.md"
 git -C "$fixture" add quoted-title.md quoted-dependency.md

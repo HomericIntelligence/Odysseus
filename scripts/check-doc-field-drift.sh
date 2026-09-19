@@ -68,6 +68,7 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)" || exit 2
 python3 - "$tracked_inventory" "$REPO_ROOT" "$script_dir" <<'PY'
 import os
+import json
 import re
 import sys
 from pathlib import Path
@@ -84,6 +85,46 @@ pattern = re.compile(
     r"^[ \t]*-?[ \t]*(?:title|depends_on|['\"]title['\"]|"
     r"['\"]depends_on['\"])[ \t]*:"
 )
+
+def api_title_lines(lines):
+    """Recognize the two documented API contracts whose field is still title.
+
+    These are not Telemachy workflow tasks. Require complete JSON and the
+    known field sets; unknown examples still receive the normal drift check.
+    """
+    exempt = set()
+    start = None
+    for index, line in enumerate(lines):
+        if start is None:
+            if line.strip() == "```json":
+                start = index + 1
+            continue
+        if line.strip() != "```":
+            continue
+        try:
+            value = json.loads("\n".join(lines[start:index]))
+        except ValueError:
+            value = None
+        if isinstance(value, dict):
+            intake = (
+                value.get("schema") == "hi/nestor/intake-request/v1"
+                and set(value) == {"schema", "intakeId", "workRepository", "title", "body"}
+            )
+            data = value.get("data")
+            event = (
+                value.get("event") == "task.created"
+                and set(value) == {"event", "data", "timestamp"}
+                and isinstance(data, dict)
+                and set(data) == {"task_id", "team_id", "title", "description", "status", "assigned_to"}
+            )
+            if intake or event:
+                exempt.update(
+                    position + 1 for position in range(start, index)
+                    if re.match(r'^\s*"title"\s*:', lines[position])
+                )
+        start = None
+    return exempt
+
 found = False
 scanned = 0
 for encoded in Path(inventory_path).read_bytes().split(b"\0"):
@@ -100,8 +141,10 @@ for encoded in Path(inventory_path).read_bytes().split(b"\0"):
     if content is None:
         continue
     scanned += 1
-    for number, line in enumerate(content.decode("utf-8", errors="replace").splitlines(), 1):
-        if pattern.search(line):
+    lines = content.decode("utf-8", errors="replace").splitlines()
+    exempt = api_title_lines(lines)
+    for number, line in enumerate(lines, 1):
+        if number not in exempt and pattern.search(line):
             print(f"{relative}:{number}:{line}")
             found = True
 if not scanned:
