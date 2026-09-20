@@ -1235,6 +1235,8 @@ class RuntimeStoreTest(unittest.TestCase):
         store = self._store()
         journal = store.database.with_name(f"{store.database.name}-journal")
         journal.touch(mode=0o600)
+        # Retain the old inode until the replacement identity has been checked.
+        self.addCleanup(os.close, os.open(journal, os.O_RDONLY))
         original_identity = (journal.stat().st_dev, journal.stat().st_ino)
         real_connect = legacy_runtime.sqlite3.connect
         replaced = False

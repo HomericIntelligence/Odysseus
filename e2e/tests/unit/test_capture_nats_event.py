@@ -37,6 +37,8 @@ class _NatsFixture:
         self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.listener.bind(("127.0.0.1", 0))
         self.listener.listen(1)
+        self.listener.settimeout(0.1)
+        self.stopping = threading.Event()
         self.port = self.listener.getsockname()[1]
         self.thread = threading.Thread(target=self._serve, daemon=True)
 
@@ -45,6 +47,7 @@ class _NatsFixture:
         return self
 
     def __exit__(self, *_args: object) -> None:
+        self.stopping.set()
         self.listener.close()
         self.thread.join(timeout=2)
         if self.thread.is_alive():
@@ -55,7 +58,15 @@ class _NatsFixture:
     def _serve(self) -> None:
         try:
             try:
-                connection, _ = self.listener.accept()
+                while True:
+                    try:
+                        connection, _ = self.listener.accept()
+                        break
+                    except socket.timeout:
+                        if self.stopping.is_set():
+                            if self.allow_no_connection:
+                                return
+                            raise AssertionError("capture helper never connected")
             except OSError:
                 if self.allow_no_connection:
                     return
