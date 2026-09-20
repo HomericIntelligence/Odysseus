@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Security: Reusable API Key Stays Host-Only (#180)
-# Validates that containers receive only an expiring broker token, while the
-# reusable key stays out of argv, runtime environment, and container environment.
+# Validates that containers receive only expiring broker tokens, never reusable API keys.
+# The reusable key stays out of argv, runtime environment, and container environment.
 set -euo pipefail
 cd "$(dirname "$0")/../../.."   # repo root
 export PYTHONPATH="$PWD/e2e${PYTHONPATH:+:$PYTHONPATH}"
