@@ -13375,7 +13375,9 @@ print("caller-finished", flush=True)
 
     @unittest.skipUnless(sys.platform == "linux", "Linux descriptor execution proof")
     def test_read_only_chain_bounds_inner_gh_output_and_removes_descendants(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, open(
+            Path(sys.executable).resolve(), "rb"
+        ) as python_executable:
             root = Path(tmp).resolve()
             pid_file = root / "child.pid"
             executable = root / "gh"
@@ -13403,6 +13405,10 @@ print("caller-finished", flush=True)
                     os.environ,
                     {
                         "ODYSSEUS_GH_EXECUTABLE_FD": str(descriptor),
+                        "ODYSSEUS_PYTHON_EXECUTABLE_FD": str(python_executable.fileno()),
+                        "ODYSSEUS_PYTHON_EXECUTABLE_SHA256": hashlib.sha256(
+                            python_executable.read()
+                        ).hexdigest(),
                         "ODYSSEUS_GH_EXECUTABLE_SHA256": hashlib.sha256(
                             executable.read_bytes()
                         ).hexdigest(),
@@ -13462,7 +13468,9 @@ print("caller-finished", flush=True)
 
     @unittest.skipUnless(sys.platform == "linux", "Linux process-group proof")
     def test_chain_deadline_stops_hanging_inner_gh_and_descendant(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, open(
+            Path(sys.executable).resolve(), "rb"
+        ) as python_executable:
             root = Path(tmp).resolve()
             pid_file = root / "child.pid"
             executable = root / "gh"
@@ -13485,6 +13493,10 @@ print("caller-finished", flush=True)
                 with patch.dict(
                     os.environ,
                     {
+                        "ODYSSEUS_PYTHON_EXECUTABLE_FD": str(python_executable.fileno()),
+                        "ODYSSEUS_PYTHON_EXECUTABLE_SHA256": hashlib.sha256(
+                            python_executable.read()
+                        ).hexdigest(),
                         "ODYSSEUS_ATHENA_CHAIN_DEADLINE_MONOTONIC": str(
                             time.monotonic() + 0.25
                         ),
