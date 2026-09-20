@@ -12260,8 +12260,11 @@ class TestTerminalEvidenceContract(unittest.TestCase):
     def test_outer_process_acquisition_deadline_owns_late_process(self):
         owner = {"process": None, "streams": []}
         status_read, status_write = os.pipe()
+        supervisor_binding = None
         started = time.monotonic()
         try:
+            if sys.platform.startswith("linux"):
+                supervisor_binding = legacy_athena._trusted_python_executable()
             with patch.object(
                 legacy_athena,
                 "_PROCESS_SUPERVISOR",
@@ -12287,11 +12290,14 @@ class TestTerminalEvidenceContract(unittest.TestCase):
                     environment={"LANG": "C", "LC_ALL": "C"},
                     owner=owner,
                     pass_fds=(),
+                    supervisor_binding=supervisor_binding,
                     acquisition_deadline=time.monotonic() + 0.03,
                 )
         finally:
             os.close(status_read)
             os.close(status_write)
+            if supervisor_binding is not None:
+                supervisor_binding.close()
 
         self.assertIsNone(owner["process"])
         self.assertFalse(any(
