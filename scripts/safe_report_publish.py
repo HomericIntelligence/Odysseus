@@ -3,20 +3,33 @@
 
 import base64
 import binascii
+import configparser
 from contextlib import contextmanager
 import ctypes
 import errno
+import fcntl
 import hashlib
 import json
+import math
 import os
+import re
+import resource
+import select
+import selectors
 import signal
 import stat
+import struct
+import subprocess
 import sys
+import tempfile
+import time
 
 
-OPERATIONS = {"append", "inject", "replace"}
-START_MARKER = "<!-- ECOSYSTEM-CI-TABLE:START -->"
-END_MARKER = "<!-- ECOSYSTEM-CI-TABLE:END -->"
+OPERATIONS = {"append", "replace"}
+CANDIDATE_TARGETS = {
+    "ecosystem-health": ("odysseus-ecosystem-health-candidate.", "ecosystem-status.md"),
+    "ecosystem-table": ("odysseus-ecosystem-table-candidate.", "ecosystem-table.md"),
+}
 TOKEN_VERSION = 2
 MAX_REPORT_BYTES = 4 * 1024 * 1024
 READ_CHUNK_BYTES = 65536
@@ -29,10 +42,355 @@ CANDIDATE_PREFIX = ".odysseus-report-quarantine-"
 MAX_QUARANTINE_FILES = 16
 MAX_QUARANTINE_BYTES = 64 * 1024 * 1024
 MAX_PARENT_ENTRIES = 4096
+MAX_COMMAND_OUTPUT_BYTES = 16 * 1024 * 1024
+MAX_COMMAND_TIMEOUT_SECONDS = 300
+MAX_OPERATION_TIMEOUT_SECONDS = 900
+MAX_EXECUTABLE_BYTES = 128 * 1024 * 1024
+MAX_TEST_SCRIPT_BYTES = 64 * 1024
+EXECUTABLE_TOKEN_VERSION = 2
 LINUX_RENAME_NOREPLACE = 1
-LINUX_RENAME_EXCHANGE = 2
-DARWIN_RENAME_SWAP = 0x00000002
 DARWIN_RENAME_EXCL = 0x00000004
+PROCESS_STATUS_BYTES = 5
+PROCESS_ACQUISITION_BYTES = 5
+PROCESS_POLL_SECONDS = 0.01
+PROCESS_MAX_ADDRESS_SPACE_BYTES = 2 * 1024 * 1024 * 1024
+PROCESS_MAX_OPEN_FILES = 256
+PROCESS_MAX_PROCESSES = 128
+
+
+EXECUTABLE_CANDIDATES = {
+    "gh": (
+        "/usr/bin/gh",
+        "/usr/local/bin/gh",
+        "/opt/homebrew/bin/gh",
+    ),
+}
+# The first two variables authenticate github.com and are the only credentials
+# forwarded by that command profile. Any member blocks the credential-free
+# portable test seam.
+GITHUB_CREDENTIAL_VARIABLES = (
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
+)
+
+
+class ReportUpdateUnavailable(OSError):
+    """The runtime cannot atomically move the exact verified report object."""
+
+
+_PROCESS_SUPERVISOR = r"""
+import ctypes
+import os
+import resource
+import select
+import signal
+import struct
+import subprocess
+import sys
+import time
+import traceback
+
+status_descriptor = int(sys.argv[1])
+acquisition_descriptor = int(sys.argv[2])
+inherited_descriptors = tuple(
+    int(value) for value in sys.argv[3].split(",") if value
+)
+target_executable = sys.argv[4] or None
+target_cwd = sys.argv[5] or None
+expected_parent = int(sys.argv[6])
+target = None
+target_returncode = 125
+detached_descendant = False
+stop_requested = [False]
+owned = {}
+
+def request_stop(_signum, _frame):
+    stop_requested[0] = True
+
+for signal_number in (
+    signal.SIGTERM,
+    signal.SIGINT,
+    signal.SIGHUP,
+    signal.SIGQUIT,
+):
+    signal.signal(signal_number, request_stop)
+if hasattr(signal, "pthread_sigmask"):
+    signal.pthread_sigmask(signal.SIG_SETMASK, set())
+
+def bounded_limit(kind, ceiling):
+    soft, hard = resource.getrlimit(kind)
+    bounded_hard = ceiling if hard == resource.RLIM_INFINITY else min(hard, ceiling)
+    bounded_soft = bounded_hard if soft == resource.RLIM_INFINITY else min(soft, bounded_hard)
+    resource.setrlimit(kind, (bounded_soft, bounded_hard))
+
+def enable_linux_containment(parent_process_id):
+    if not sys.platform.startswith("linux"):
+        return False
+    if not callable(getattr(os, "pidfd_open", None)) or not callable(
+        getattr(signal, "pidfd_send_signal", None)
+    ):
+        raise RuntimeError("Linux pidfd containment is unavailable")
+    library = ctypes.CDLL(None, use_errno=True)
+    prctl = getattr(library, "prctl", None)
+    if prctl is None:
+        raise RuntimeError("Linux subreaper containment is unavailable")
+    prctl.argtypes = [
+        ctypes.c_int,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
+    ]
+    prctl.restype = ctypes.c_int
+    if parent_process_id <= 1:
+        raise RuntimeError("trusted supervisor parent identity is invalid")
+    ctypes.set_errno(0)
+    if prctl(1, signal.SIGTERM, 0, 0, 0) != 0:
+        raise OSError(ctypes.get_errno() or 1, "could not bind parent death")
+    if os.getppid() != parent_process_id:
+        raise RuntimeError("trusted supervisor parent exited during acquisition")
+    ctypes.set_errno(0)
+    if prctl(36, 1, 0, 0, 0) != 0:
+        raise OSError(ctypes.get_errno() or 1, "could not enable subreaper")
+    state = ctypes.c_int(0)
+    ctypes.set_errno(0)
+    if prctl(37, ctypes.addressof(state), 0, 0, 0) != 0 or state.value != 1:
+        raise OSError(ctypes.get_errno() or 1, "could not verify subreaper")
+    return True
+
+def proc_bytes(path, maximum):
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        content = bytearray()
+        while len(content) <= maximum:
+            block = os.read(descriptor, min(65536, maximum - len(content) + 1))
+            if not block:
+                return bytes(content)
+            content.extend(block)
+        raise RuntimeError("process inventory exceeded its byte ceiling")
+    finally:
+        os.close(descriptor)
+
+def identity(process_id):
+    try:
+        content = proc_bytes(f"/proc/{process_id}/stat", 65536)
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    closing = content.rfind(b")")
+    fields = content[closing + 2:].split() if closing >= 1 else ()
+    if len(fields) <= 19:
+        raise RuntimeError("process identity is malformed")
+    return process_id, int(fields[19])
+
+def process_group(process_id):
+    try:
+        content = proc_bytes(f"/proc/{process_id}/stat", 65536)
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    closing = content.rfind(b")")
+    fields = content[closing + 2:].split() if closing >= 1 else ()
+    if len(fields) <= 2:
+        raise RuntimeError("process identity is malformed")
+    return int(fields[2])
+
+def children(process_id):
+    root = f"/proc/{process_id}/task"
+    try:
+        tasks = tuple(entry.name for entry in os.scandir(root) if entry.name.isdecimal())
+    except (FileNotFoundError, ProcessLookupError):
+        return set()
+    result = set()
+    for task in tasks:
+        try:
+            content = proc_bytes(f"{root}/{task}/children", 1024 * 1024)
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        for value in content.split():
+            if not value.isdigit():
+                raise RuntimeError("child inventory is malformed")
+            child = int(value)
+            if child > 1:
+                result.add(child)
+    return result
+
+def track(process_id):
+    current = identity(process_id)
+    if current is None:
+        return False
+    previous = owned.get(process_id)
+    if previous is not None and previous[0] == current[1]:
+        return False
+    descriptor = os.pidfd_open(process_id, 0)
+    if identity(process_id) != current:
+        os.close(descriptor)
+        return False
+    if previous is not None:
+        os.close(previous[1])
+    owned[process_id] = (current[1], descriptor)
+    return True
+
+def discover():
+    changed_any = False
+    while True:
+        candidates = set(children(os.getpid()))
+        for process_id, (start_time, _descriptor) in tuple(owned.items()):
+            if identity(process_id) == (process_id, start_time):
+                candidates.update(children(process_id))
+        changed = False
+        for process_id in candidates:
+            try:
+                changed = track(process_id) or changed
+            except ProcessLookupError:
+                pass
+        changed_any = changed_any or changed
+        if not changed:
+            return changed_any
+
+def exited(descriptor):
+    readable, _writable, _exceptional = select.select([descriptor], [], [], 0)
+    return bool(readable)
+
+def live():
+    discover()
+    active = tuple(
+        (process_id, descriptor)
+        for process_id, (_start_time, descriptor) in owned.items()
+        if not exited(descriptor)
+    )
+    if active:
+        return active
+    unchanged = 0
+    while unchanged < 2:
+        changed = discover()
+        active = tuple(
+            (process_id, descriptor)
+            for process_id, (_start_time, descriptor) in owned.items()
+            if not exited(descriptor)
+        )
+        if active:
+            return active
+        unchanged = 0 if changed else unchanged + 1
+    return ()
+
+def mark_detached(supervisor_group):
+    global detached_descendant
+    for process_id, _descriptor in live():
+        if target is not None and process_id == target.pid:
+            continue
+        group = process_group(process_id)
+        if group is not None and group != supervisor_group:
+            detached_descendant = True
+
+def reap_owned():
+    pending = {
+        process_id for process_id in owned
+        if target is None or process_id != target.pid
+    }
+    deadline = time.monotonic() + 0.5
+    while pending:
+        changed = False
+        for process_id in tuple(pending):
+            try:
+                reaped, _status = os.waitpid(process_id, os.WNOHANG)
+            except ChildProcessError:
+                pending.remove(process_id)
+                changed = True
+                continue
+            if reaped == process_id:
+                pending.remove(process_id)
+                changed = True
+        if not pending:
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError("owned descendants could not be reaped")
+        if not changed:
+            time.sleep(0.005)
+
+def extinguish(supervisor_group):
+    mark_detached(supervisor_group)
+    for number, interval in ((signal.SIGTERM, 0.1), (signal.SIGKILL, 0.3)):
+        deadline = time.monotonic() + interval
+        while True:
+            mark_detached(supervisor_group)
+            active = live()
+            if not active:
+                break
+            for _process_id, descriptor in active:
+                try:
+                    signal.pidfd_send_signal(descriptor, number, None, 0)
+                except ProcessLookupError:
+                    pass
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.005)
+    if live():
+        raise RuntimeError("owned descendants survived containment cleanup")
+    if target is not None and target.returncode is None:
+        target.wait(timeout=0.5)
+    reap_owned()
+
+try:
+    address_space = int(sys.argv[7])
+    cpu_seconds = int(sys.argv[8])
+    open_files = int(sys.argv[9])
+    process_count = int(sys.argv[10])
+    bounded_limit(resource.RLIMIT_AS, address_space)
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    bounded_limit(resource.RLIMIT_CPU, cpu_seconds)
+    bounded_limit(resource.RLIMIT_NOFILE, open_files)
+    bounded_limit(resource.RLIMIT_NPROC, process_count)
+    linux_containment = enable_linux_containment(expected_parent)
+    if stop_requested[0]:
+        raise RuntimeError("trusted supervisor parent exited before target launch")
+    target = subprocess.Popen(
+        sys.argv[11:], executable=target_executable,
+        pass_fds=inherited_descriptors, cwd=target_cwd
+    )
+    os.write(acquisition_descriptor, struct.pack("!BI", 1, target.pid))
+    os.close(acquisition_descriptor)
+    acquisition_descriptor = -1
+    if linux_containment:
+        track(target.pid)
+        supervisor_group = os.getpgrp()
+        while target.poll() is None and not stop_requested[0]:
+            mark_detached(supervisor_group)
+            time.sleep(0.005)
+        observed_returncode = target.poll()
+        extinguish(supervisor_group)
+        if observed_returncode is None:
+            observed_returncode = target.returncode
+        if observed_returncode is None:
+            raise RuntimeError("target process status is unavailable")
+        target_returncode = observed_returncode
+    else:
+        target_returncode = target.wait()
+except BaseException:
+    if target is None:
+        try:
+            os.write(acquisition_descriptor, struct.pack("!BI", 0, 0))
+        except OSError:
+            pass
+    elif sys.platform.startswith("linux"):
+        try:
+            extinguish(os.getpgrp())
+        except BaseException:
+            traceback.print_exc()
+    traceback.print_exc()
+    target_returncode = 125
+if acquisition_descriptor >= 0:
+    os.close(acquisition_descriptor)
+for _start_time, descriptor in owned.values():
+    os.close(descriptor)
+os.write(
+    status_descriptor,
+    struct.pack("!iB", target_returncode, int(detached_descendant)),
+)
+os.close(status_descriptor)
+os.close(1)
+os.close(2)
+"""
 
 
 def required_flag(name):
@@ -65,7 +423,7 @@ WRITE_FLAGS = (
 
 @contextmanager
 def defer_termination_signals():
-    """Keep asynchronous termination outside descriptor mutation/rollback."""
+    """Keep asynchronous termination outside descriptor mutation/verification."""
     mask_signals = getattr(signal, "pthread_sigmask", None)
     block = getattr(signal, "SIG_BLOCK", None)
     restore = getattr(signal, "SIG_SETMASK", None)
@@ -163,7 +521,7 @@ def call_rename(function, parent_descriptor, source, destination, flags):
         raise OSError(error_number, os.strerror(error_number))
 
 
-def atomic_rename(parent_descriptor, source, destination, operation):
+def atomic_noreplace(parent_descriptor, source, destination):
     if sys.platform == "darwin":
         function = rename_function(
             "renameatx_np",
@@ -175,10 +533,7 @@ def atomic_rename(parent_descriptor, source, destination, operation):
                 ctypes.c_uint,
             ],
         )
-        flag = {
-            "exchange": DARWIN_RENAME_SWAP,
-            "noreplace": DARWIN_RENAME_EXCL,
-        }[operation]
+        flag = DARWIN_RENAME_EXCL
     elif sys.platform.startswith("linux"):
         function = rename_function(
             "renameat2",
@@ -190,31 +545,10 @@ def atomic_rename(parent_descriptor, source, destination, operation):
                 ctypes.c_uint,
             ],
         )
-        flag = {
-            "exchange": LINUX_RENAME_EXCHANGE,
-            "noreplace": LINUX_RENAME_NOREPLACE,
-        }[operation]
+        flag = LINUX_RENAME_NOREPLACE
     else:
         raise NotImplementedError("atomic report publication is unsupported")
     call_rename(function, parent_descriptor, source, destination, flag)
-
-
-def atomic_noreplace(parent_descriptor, candidate_name, target_name):
-    atomic_rename(
-        parent_descriptor,
-        candidate_name,
-        target_name,
-        "noreplace",
-    )
-
-
-def atomic_exchange(parent_descriptor, candidate_name, target_name):
-    atomic_rename(
-        parent_descriptor,
-        candidate_name,
-        target_name,
-        "exchange",
-    )
 
 
 def file_record(metadata, content):
@@ -286,6 +620,57 @@ def split_target(target):
     if len(os.fsencode(name)) > MAX_COMPONENT_BYTES:
         raise OSError("report destination name is too long")
     return absolute, parent, name
+
+
+def candidate_target(kind):
+    try:
+        prefix, filename = CANDIDATE_TARGETS[kind]
+    except KeyError as error:
+        raise ValueError("unsupported report candidate kind") from error
+
+    override = os.environ.get("ODYSSEUS_TEST_CANDIDATE_ROOT")
+    if override is not None:
+        if os.environ.get("ODYSSEUS_TEST_RUNTIME") != "1":
+            raise OSError("candidate root override is test-only")
+        root = os.path.abspath(override)
+    else:
+        root = os.path.realpath("/tmp")
+    if not os.path.isabs(root) or os.path.realpath(root) != root:
+        raise OSError("unsafe report candidate root")
+    root_state = os.lstat(root)
+    root_mode = stat.S_IMODE(root_state.st_mode)
+    private_root = (
+        root_state.st_uid == os.geteuid() and not root_mode & 0o022
+    )
+    shared_sticky_root = (
+        root_state.st_uid == 0
+        and bool(root_mode & stat.S_ISVTX)
+        and bool(root_mode & 0o002)
+    )
+    if not stat.S_ISDIR(root_state.st_mode) or not (
+        private_root or shared_sticky_root
+    ):
+        raise OSError("unsafe report candidate root")
+
+    previous_umask = os.umask(0o077)
+    try:
+        directory = tempfile.mkdtemp(prefix=prefix, dir=root)
+    finally:
+        os.umask(previous_umask)
+    directory_state = os.lstat(directory)
+    if (
+        os.path.dirname(directory) != root
+        or os.path.realpath(directory) != directory
+        or not stat.S_ISDIR(directory_state.st_mode)
+        or directory_state.st_uid != os.geteuid()
+        or stat.S_IMODE(directory_state.st_mode) != 0o700
+    ):
+        raise OSError("unsafe report candidate directory")
+    target = os.path.join(directory, filename)
+    absolute, _parent, _name = split_target(target)
+    if os.path.lexists(absolute):
+        raise OSError("report candidate target is not absent")
+    return absolute
 
 
 def parent_components(parent):
@@ -369,19 +754,6 @@ def open_bound_file(parent_descriptor, name, flags):
         raise
 
 
-def marker_parts(content):
-    try:
-        text = content.decode("utf-8")
-    except UnicodeDecodeError as error:
-        raise ValueError("injection target is not UTF-8") from error
-    lines = text.splitlines(keepends=True)
-    starts = [index for index, line in enumerate(lines) if line.strip() == START_MARKER]
-    ends = [index for index, line in enumerate(lines) if line.strip() == END_MARKER]
-    if len(starts) != 1 or len(ends) != 1 or starts[0] >= ends[0]:
-        raise ValueError("injection target needs one ordered marker pair")
-    return lines, starts[0], ends[0]
-
-
 def build_content(operation, existing, replacement):
     require_report_size(len(replacement))
     if existing is not None:
@@ -392,17 +764,7 @@ def build_content(operation, existing, replacement):
         existing = existing or b""
         require_report_size(len(existing) + len(replacement))
         return existing + replacement
-    if existing is None:
-        raise OSError("injection target disappeared")
-    lines, start, end = marker_parts(existing)
-    prefix = "".join(lines[: start + 1]).encode("utf-8")
-    suffix = "".join(lines[end:]).encode("utf-8")
-    if prefix and not prefix.endswith((b"\n", b"\r")):
-        prefix += b"\n"
-    if replacement and not replacement.endswith(b"\n"):
-        replacement += b"\n"
-    require_report_size(len(prefix) + len(replacement) + len(suffix))
-    return prefix + replacement + suffix
+    raise ValueError("unsupported report operation")
 
 
 def encode_token(token):
@@ -505,6 +867,957 @@ def decode_token(encoded):
     return token
 
 
+def executable_record(metadata):
+    return {
+        "ctime_ns": metadata.st_ctime_ns,
+        "dev": metadata.st_dev,
+        "gid": metadata.st_gid,
+        "ino": metadata.st_ino,
+        "mode": metadata.st_mode,
+        "mtime_ns": metadata.st_mtime_ns,
+        "nlink": metadata.st_nlink,
+        "size": metadata.st_size,
+        "uid": metadata.st_uid,
+    }
+
+
+def validate_executable_metadata(metadata):
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+        or metadata.st_uid not in {0, os.geteuid()}
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+        or stat.S_IMODE(metadata.st_mode) & 0o111 == 0
+    ):
+        raise OSError("unsafe command executable")
+
+
+def open_executable(path, expected=None):
+    if (
+        not isinstance(path, str)
+        or not os.path.isabs(path)
+        or len(os.fsencode(path)) > MAX_PATH_BYTES
+        or os.path.realpath(path) != path
+    ):
+        raise OSError("unsafe command executable path")
+    parent, name = os.path.dirname(path), os.path.basename(path)
+    descriptors, route = open_parent_for_execution(parent)
+    parent_descriptor = descriptors[-1]
+    executable_descriptor = -1
+    try:
+        named = os.lstat(name, dir_fd=parent_descriptor)
+        validate_executable_metadata(named)
+        executable_descriptor = os.open(name, READ_FLAGS, dir_fd=parent_descriptor)
+        opened = os.fstat(executable_descriptor)
+        validate_executable_metadata(opened)
+        current = executable_record(opened)
+        if current != executable_record(named):
+            raise OSError("command executable changed while opening")
+        if expected is not None and current != expected:
+            raise OSError("command executable changed after binding")
+        rebound = os.lstat(name, dir_fd=parent_descriptor)
+        if executable_record(rebound) != current:
+            raise OSError("command executable name changed while opening")
+        return executable_descriptor, descriptors, route, current
+    except BaseException:
+        if executable_descriptor >= 0:
+            os.close(executable_descriptor)
+        close_route(descriptors)
+        raise
+
+
+def require_execution_directory(metadata):
+    mode = stat.S_IMODE(metadata.st_mode)
+    sticky_root = metadata.st_uid == 0 and mode & stat.S_ISVTX
+    owner_group = metadata.st_uid == os.geteuid() and metadata.st_gid in {
+        os.getegid(),
+        *os.getgroups(),
+    }
+    writable_by_other = bool(mode & 0o002)
+    writable_by_group = bool(mode & 0o020)
+    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid not in {
+        0,
+        os.geteuid(),
+    }:
+        raise OSError("unsafe command executable route")
+    if writable_by_other and not sticky_root:
+        raise OSError("unsafe command executable route")
+    if writable_by_group and not owner_group and not sticky_root:
+        raise OSError("unsafe command executable route")
+
+
+def open_parent_for_execution(parent):
+    components = parent_components(parent)
+    descriptors = []
+    route = []
+    try:
+        descriptor = os.open(os.sep, DIRECTORY_FLAGS)
+        descriptors.append(descriptor)
+        require_execution_directory(os.fstat(descriptor))
+        route.append(route_entry("", os.fstat(descriptor)))
+        for component in components:
+            descriptor = os.open(component, DIRECTORY_FLAGS, dir_fd=descriptors[-1])
+            descriptors.append(descriptor)
+            require_execution_directory(os.fstat(descriptor))
+            route.append(route_entry(component, os.fstat(descriptor)))
+        return descriptors, route
+    except BaseException:
+        close_route(descriptors)
+        raise
+
+
+def read_executable_digest(descriptor):
+    digest = hashlib.sha256()
+    size = 0
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    while True:
+        chunk = os.read(descriptor, READ_CHUNK_BYTES)
+        if not chunk:
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            return size, digest.digest()
+        size += len(chunk)
+        if size > MAX_EXECUTABLE_BYTES:
+            raise OSError("command executable exceeds the size ceiling")
+        digest.update(chunk)
+
+
+def copy_executable(source, destination):
+    digest = hashlib.sha256()
+    size = 0
+    os.lseek(source, 0, os.SEEK_SET)
+    while True:
+        chunk = os.read(source, READ_CHUNK_BYTES)
+        if not chunk:
+            os.lseek(source, 0, os.SEEK_SET)
+            return size, digest.digest()
+        size += len(chunk)
+        if size > MAX_EXECUTABLE_BYTES:
+            raise OSError("command executable exceeds the size ceiling")
+        digest.update(chunk)
+        remaining = memoryview(chunk)
+        while remaining:
+            written = os.write(destination, remaining)
+            if written <= 0:
+                raise OSError("command executable snapshot made no progress")
+            remaining = remaining[written:]
+
+
+def required_seals():
+    names = (
+        "F_ADD_SEALS",
+        "F_GET_SEALS",
+        "F_SEAL_GROW",
+        "F_SEAL_SEAL",
+        "F_SEAL_SHRINK",
+        "F_SEAL_WRITE",
+    )
+    values = {name: getattr(fcntl, name, None) for name in names}
+    if any(not isinstance(value, int) for value in values.values()):
+        raise NotImplementedError("sealed command execution is unavailable")
+    seals = (
+        values["F_SEAL_GROW"]
+        | values["F_SEAL_SEAL"]
+        | values["F_SEAL_SHRINK"]
+        | values["F_SEAL_WRITE"]
+    )
+    return values["F_ADD_SEALS"], values["F_GET_SEALS"], seals
+
+
+def verify_sealed_executable(descriptor, size, digest):
+    _add_operation, get_operation, required = required_seals()
+    metadata = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_size != size
+        or stat.S_IMODE(metadata.st_mode) & 0o111 == 0
+        or fcntl.fcntl(descriptor, get_operation) & required != required
+    ):
+        raise OSError("unsafe sealed command executable")
+    current_size, current_digest = read_executable_digest(descriptor)
+    if current_size != size or current_digest != digest:
+        raise OSError("sealed command executable content changed")
+    if fcntl.fcntl(descriptor, get_operation) & required != required:
+        raise OSError("sealed command executable seals changed")
+
+
+def create_sealed_executable(source, expected):
+    if not sys.platform.startswith("linux"):
+        raise NotImplementedError("sealed command execution is unsupported")
+    creator = getattr(os, "memfd_create", None)
+    cloexec = getattr(os, "MFD_CLOEXEC", None)
+    allow_sealing = getattr(os, "MFD_ALLOW_SEALING", None)
+    if (
+        creator is None
+        or not isinstance(cloexec, int)
+        or not isinstance(allow_sealing, int)
+    ):
+        raise NotImplementedError("sealed command execution is unavailable")
+    add_operation, _get_operation, seals = required_seals()
+    if executable_record(os.fstat(source)) != expected:
+        raise OSError("command executable changed before sealing")
+    descriptor = creator("odysseus-gh", cloexec | allow_sealing)
+    try:
+        size, digest = copy_executable(source, descriptor)
+        if executable_record(os.fstat(source)) != expected:
+            raise OSError("command executable changed while sealing")
+        os.fchmod(descriptor, 0o500)
+        fcntl.fcntl(descriptor, add_operation, seals)
+        verify_sealed_executable(descriptor, size, digest)
+        return descriptor, size, digest
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+@contextmanager
+def executable_launch(descriptor, expected):
+    sealed_descriptor = -1
+    if not sys.platform.startswith("linux"):
+        raise NotImplementedError("sealed command execution is unsupported")
+    try:
+        sealed_descriptor, size, digest = create_sealed_executable(
+            descriptor,
+            expected,
+        )
+        launch_path = f"/proc/self/fd/{sealed_descriptor}"
+        try:
+            linked = os.stat(launch_path)
+        except OSError as error:
+            raise NotImplementedError(
+                "sealed descriptor execution is unavailable"
+            ) from error
+        held = os.fstat(sealed_descriptor)
+        if held.st_dev != linked.st_dev or held.st_ino != linked.st_ino:
+            raise OSError("sealed command descriptor route changed")
+        verify_sealed_executable(sealed_descriptor, size, digest)
+        yield launch_path, (sealed_descriptor,)
+    finally:
+        if sealed_descriptor >= 0:
+            os.close(sealed_descriptor)
+
+
+def resolve_executable(tool, override=""):
+    if tool not in EXECUTABLE_CANDIDATES or not isinstance(override, str):
+        raise ValueError("unsupported command executable")
+    if override:
+        candidates = (override,)
+    else:
+        candidates = EXECUTABLE_CANDIDATES[tool]
+    for candidate in candidates:
+        resolved = os.path.realpath(candidate)
+        try:
+            descriptor, descriptors, route, record = open_executable(resolved)
+        except (FileNotFoundError, NotADirectoryError, OSError):
+            continue
+        try:
+            return encode_token(
+                {
+                    "path": resolved,
+                    "record": record,
+                    "route": route,
+                    "test_only": bool(override),
+                    "tool": tool,
+                    "version": EXECUTABLE_TOKEN_VERSION,
+                }
+            )
+        finally:
+            os.close(descriptor)
+            close_route(descriptors)
+    raise OSError(f"trusted {tool} executable is unavailable")
+
+
+def decode_executable_token(encoded, tool):
+    if not isinstance(encoded, str) or len(encoded.encode("utf-8")) > (
+        (MAX_TOKEN_BYTES * 4 // 3) + 8
+    ):
+        raise ValueError("invalid command binding size")
+    raw = base64.b64decode(encoded.encode("ascii"), altchars=b"-_", validate=True)
+    if len(raw) > MAX_TOKEN_BYTES:
+        raise ValueError("invalid command binding size")
+    token = json.loads(raw.decode("utf-8"))
+    if not isinstance(token, dict) or set(token) != {
+        "path",
+        "record",
+        "route",
+        "test_only",
+        "tool",
+        "version",
+    }:
+        raise ValueError("invalid command binding")
+    if token["version"] != EXECUTABLE_TOKEN_VERSION or token["tool"] != tool:
+        raise ValueError("invalid command binding version or tool")
+    if not isinstance(token["test_only"], bool):
+        raise ValueError("invalid command binding test scope")
+    if not isinstance(token["path"], str):
+        raise ValueError("invalid command binding path")
+    validate_record(
+        token["record"],
+        {
+            "ctime_ns",
+            "dev",
+            "gid",
+            "ino",
+            "mode",
+            "mtime_ns",
+            "nlink",
+            "size",
+            "uid",
+        },
+        "command",
+    )
+    _absolute, parent, _name = split_target(token["path"])
+    validate_route(token["route"], parent)
+    return token
+
+
+def operation_deadline(seconds):
+    try:
+        value = int(seconds)
+    except (TypeError, ValueError) as error:
+        raise ValueError("invalid operation timeout") from error
+    if value < 1 or value > MAX_OPERATION_TIMEOUT_SECONDS:
+        raise ValueError("invalid operation timeout")
+    return time.monotonic_ns() + value * 1_000_000_000
+
+
+def command_environment(profile):
+    if profile != "gh":
+        raise ValueError("unsupported command profile")
+    environment = {
+        "GH_HOST": "github.com",
+        "GH_PROMPT_DISABLED": "1",
+        "HOME": "/dev/null",
+        "LC_ALL": "C",
+        "PATH": "/usr/bin:/bin",
+        "TZ": "UTC",
+        "XDG_CONFIG_HOME": "/dev/null",
+    }
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if token:
+        environment["GH_TOKEN"] = token
+    if os.environ.get("ODYSSEUS_TEST_RUNTIME") == "1":
+        for name, value in os.environ.items():
+            if name.startswith("ODYSSEUS_TEST_"):
+                environment[name] = value
+    return environment
+
+
+def read_exact_test_script(descriptor, expected):
+    """Read one bounded test script from its still-bound executable object."""
+    if executable_record(os.fstat(descriptor)) != expected:
+        raise OSError("test command executable changed before reading")
+    chunks = []
+    size = 0
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    while True:
+        chunk = os.read(
+            descriptor,
+            min(READ_CHUNK_BYTES, MAX_TEST_SCRIPT_BYTES - size + 1),
+        )
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > MAX_TEST_SCRIPT_BYTES:
+            raise OSError("test command script exceeds the size ceiling")
+        chunks.append(chunk)
+    content = b"".join(chunks)
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    if executable_record(os.fstat(descriptor)) != expected:
+        raise OSError("test command executable changed while reading")
+    if not content.startswith(b"#!/usr/bin/env bash\n") or b"\x00" in content:
+        raise OSError("test command is not a supported Bash script")
+    return content
+
+
+def verified_system_bash():
+    """Return the fixed root-owned Bash interpreter used by the Darwin test seam."""
+    path = "/bin/bash"
+    read_only = getattr(os, "ST_RDONLY", None)
+    if (
+        os.geteuid() == 0
+        or not isinstance(read_only, int)
+        or os.statvfs(path).f_flag & read_only != read_only
+    ):
+        raise OSError("system Bash filesystem is not immutable to this process")
+    descriptor, descriptors, route, record = open_executable(path)
+    try:
+        if record["uid"] != 0 or stat.S_IMODE(record["mode"]) & 0o022:
+            raise OSError("system Bash executable is not root-controlled")
+        for entry in route:
+            state = entry["state"]
+            if state["uid"] != 0 or stat.S_IMODE(state["mode"]) & 0o022:
+                raise OSError("system Bash route is not root-controlled")
+        return path
+    finally:
+        os.close(descriptor)
+        close_route(descriptors)
+
+
+def terminate_process_group(process, observer=None):
+    # Keep the leader unreaped until every signal has been sent. Its retained
+    # PID prevents this process group ID from being recycled underneath the
+    # supervisor while descendants are still being extinguished.
+    leader_exited = (
+        exit_observed(observer, process.pid)
+        if observer is not None
+        else False
+    )
+    if not leader_exited:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            if observer is None or not exit_observed(observer, process.pid):
+                raise
+        time.sleep(0.25)
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        if observer is None or not exit_observed(observer, process.pid):
+            raise
+    try:
+        process.wait(timeout=1.0)
+    except subprocess.TimeoutExpired as error:
+        raise OSError("trusted command process group did not terminate") from error
+
+
+def prepare_exit_observer(process_id):
+    required = ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT")
+    if all(hasattr(os, name) for name in required):
+        return {"kind": "waitid", "queue": None, "seen": False}
+    names = (
+        "kqueue",
+        "kevent",
+        "KQ_FILTER_PROC",
+        "KQ_EV_ADD",
+        "KQ_EV_ENABLE",
+        "KQ_NOTE_EXIT",
+    )
+    if sys.platform != "darwin" or any(not hasattr(select, name) for name in names):
+        raise OSError("safe command exit observation is unavailable")
+    queue = select.kqueue()
+    observer = {"kind": "kqueue", "queue": queue, "seen": False}
+    event = select.kevent(
+        process_id,
+        filter=select.KQ_FILTER_PROC,
+        flags=select.KQ_EV_ADD | select.KQ_EV_ENABLE,
+        fflags=select.KQ_NOTE_EXIT,
+    )
+    try:
+        queue.control([event], 0, 0)
+    except ProcessLookupError:
+        observer["seen"] = True
+    return observer
+
+
+def exit_observed(observer, process_id, timeout=0.0):
+    if observer["seen"]:
+        return True
+    if observer["kind"] == "waitid":
+        result = os.waitid(
+            os.P_PID,
+            process_id,
+            os.WEXITED | os.WNOHANG | os.WNOWAIT,
+        )
+        observer["seen"] = result is not None and result.si_pid == process_id
+    else:
+        observer["seen"] = bool(observer["queue"].control(None, 1, timeout))
+    return observer["seen"]
+
+
+def close_exit_observer(observer):
+    queue = observer.get("queue")
+    observer["queue"] = None
+    if queue is not None:
+        queue.close()
+
+
+class OwnedSupervisor:
+    """Expose the bounded wait surface needed for a posix-spawned supervisor."""
+
+    def __init__(self, process_id, stdout_descriptor, stderr_descriptor):
+        self.pid = process_id
+        self.stdout = os.fdopen(stdout_descriptor, "rb", buffering=0)
+        self.stderr = os.fdopen(stderr_descriptor, "rb", buffering=0)
+        self.returncode = None
+
+    def wait(self, timeout=None):
+        if self.returncode is not None:
+            return self.returncode
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            try:
+                process_id, status = os.waitpid(self.pid, os.WNOHANG)
+            except ChildProcessError:
+                if self.returncode is None:
+                    raise
+                return self.returncode
+            if process_id == self.pid:
+                self.returncode = os.waitstatus_to_exitcode(status)
+                return self.returncode
+            if deadline is not None and time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(["report-helper-supervisor"], timeout)
+            time.sleep(PROCESS_POLL_SECONDS)
+
+
+def spawn_trusted_supervisor(
+    command,
+    launch_path,
+    inherited_descriptors,
+    environment,
+    effective_deadline_ns,
+    status_descriptor,
+    input_descriptor,
+):
+    """Acquire an owned supervisor before it can launch the trusted target."""
+    required = ("posix_spawn", "POSIX_SPAWN_DUP2", "POSIX_SPAWN_OPEN")
+    if any(not hasattr(os, name) for name in required) or not hasattr(
+        signal, "pthread_sigmask"
+    ):
+        raise OSError("killable report-helper acquisition is unavailable")
+    now_ns = time.monotonic_ns()
+    if effective_deadline_ns <= now_ns:
+        raise TimeoutError("trusted command operation deadline expired")
+    remaining_seconds = (effective_deadline_ns - now_ns) / 1_000_000_000
+    cpu_seconds = max(1, math.ceil(remaining_seconds) + 1)
+    if sys.platform.startswith("linux"):
+        address_space_bytes = PROCESS_MAX_ADDRESS_SPACE_BYTES
+        process_count = PROCESS_MAX_PROCESSES
+    else:
+        # Darwin cannot lower RLIMIT_AS to 2 GiB after the interpreter has
+        # reserved its large virtual arena, and a per-user RLIMIT_NPROC below
+        # the current GUI session count prevents the owned target from starting.
+        address_space_bytes = sys.maxsize - 1
+        _soft_processes, hard_processes = resource.getrlimit(
+            resource.RLIMIT_NPROC
+        )
+        process_count = (
+            PROCESS_MAX_PROCESSES
+            if hard_processes == resource.RLIM_INFINITY
+            else hard_processes
+        )
+
+    acquisition_read, acquisition_write = os.pipe()
+    stdout_read, stdout_write = os.pipe()
+    stderr_read, stderr_write = os.pipe()
+    process = None
+    receipt = bytearray()
+    try:
+        sources = {
+            status_descriptor,
+            acquisition_write,
+            stdout_write,
+            stderr_write,
+            *inherited_descriptors,
+        }
+        file_actions = []
+        if input_descriptor is None:
+            file_actions.append(
+                (os.POSIX_SPAWN_OPEN, 0, "/dev/null", os.O_RDONLY, 0)
+            )
+        else:
+            sources.add(input_descriptor)
+            file_actions.append(
+                (os.POSIX_SPAWN_DUP2, input_descriptor, 0)
+            )
+        file_actions.extend((
+            (os.POSIX_SPAWN_DUP2, stdout_write, 1),
+            (os.POSIX_SPAWN_DUP2, stderr_write, 2),
+        ))
+
+        mapped_descriptors = {}
+        candidate = 64
+        for descriptor in (
+            status_descriptor,
+            acquisition_write,
+            *inherited_descriptors,
+        ):
+            while candidate in sources or candidate in {0, 1, 2}:
+                candidate += 1
+            if candidate >= PROCESS_MAX_OPEN_FILES:
+                raise OSError("trusted command descriptor budget is exhausted")
+            mapped_descriptors[descriptor] = candidate
+            file_actions.append((os.POSIX_SPAWN_DUP2, descriptor, candidate))
+            candidate += 1
+
+        def remap_reference(value):
+            for source, destination in mapped_descriptors.items():
+                if value == f"/proc/self/fd/{source}":
+                    return f"/proc/self/fd/{destination}"
+            return value
+
+        child_environment = dict(environment)
+        for name, value in tuple(child_environment.items()):
+            if not name.endswith("_FD"):
+                continue
+            for source, destination in mapped_descriptors.items():
+                if value == str(source):
+                    child_environment[name] = str(destination)
+                    break
+        child_pass_fds = tuple(
+            mapped_descriptors[descriptor]
+            for descriptor in inherited_descriptors
+        )
+        supervisor_command = [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            "-c",
+            _PROCESS_SUPERVISOR,
+            str(mapped_descriptors[status_descriptor]),
+            str(mapped_descriptors[acquisition_write]),
+            ",".join(str(descriptor) for descriptor in child_pass_fds),
+            remap_reference(launch_path or ""),
+            "/",
+            str(os.getpid()),
+            str(address_space_bytes),
+            str(cpu_seconds),
+            str(PROCESS_MAX_OPEN_FILES),
+            str(process_count),
+            *(remap_reference(argument) for argument in command),
+        ]
+        if time.monotonic_ns() >= effective_deadline_ns:
+            raise TimeoutError("trusted command operation deadline expired")
+        with defer_termination_signals():
+            spawn_options = (
+                {"setsid": True}
+                if sys.platform.startswith("linux")
+                else {"setpgroup": 0}
+            )
+            try:
+                process_id = os.posix_spawn(
+                    sys.executable,
+                    supervisor_command,
+                    child_environment,
+                    file_actions=file_actions,
+                    **spawn_options,
+                )
+            except (NotImplementedError, TypeError):
+                process_id = os.posix_spawn(
+                    sys.executable,
+                    supervisor_command,
+                    child_environment,
+                    file_actions=file_actions,
+                    setpgroup=0,
+                )
+            os.close(stdout_write)
+            stdout_write = -1
+            os.close(stderr_write)
+            stderr_write = -1
+            os.close(acquisition_write)
+            acquisition_write = -1
+            process = OwnedSupervisor(process_id, stdout_read, stderr_read)
+            stdout_read = -1
+            stderr_read = -1
+
+            while len(receipt) < PROCESS_ACQUISITION_BYTES:
+                remaining = (
+                    effective_deadline_ns - time.monotonic_ns()
+                ) / 1_000_000_000
+                if remaining <= 0:
+                    raise TimeoutError(
+                        "trusted command operation deadline expired"
+                    )
+                readable, _writable, _exceptional = select.select(
+                    [acquisition_read], [], [], remaining
+                )
+                if not readable:
+                    raise TimeoutError(
+                        "trusted command operation deadline expired"
+                    )
+                block = os.read(
+                    acquisition_read,
+                    PROCESS_ACQUISITION_BYTES - len(receipt),
+                )
+                if not block:
+                    raise OSError(
+                        "trusted command acquisition receipt is incomplete"
+                    )
+                receipt.extend(block)
+            acquired, target_process_id = struct.unpack("!BI", receipt)
+            if acquired != 1 or target_process_id <= 1:
+                raise OSError("trusted command process was not acquired")
+        return process
+    except BaseException:
+        if process is not None:
+            cleanup_complete = False
+            cleanup_observer = None
+            try:
+                cleanup_observer = prepare_exit_observer(process.pid)
+                terminate_process_group(process, cleanup_observer)
+                cleanup_complete = True
+            finally:
+                if cleanup_observer is not None:
+                    close_exit_observer(cleanup_observer)
+                if cleanup_complete:
+                    for stream in (process.stdout, process.stderr):
+                        try:
+                            stream.close()
+                        except OSError:
+                            pass
+        raise
+    finally:
+        for descriptor in (
+            acquisition_read,
+            acquisition_write,
+            stdout_read,
+            stdout_write,
+            stderr_read,
+            stderr_write,
+        ):
+            if descriptor < 0:
+                continue
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def supervise_trusted_command(
+    command,
+    launch_path,
+    inherited_descriptors,
+    environment,
+    effective_deadline_ns,
+    output_limit,
+    input_content=None,
+):
+    """Run a target behind an acquisition-bounded, resource-limited supervisor."""
+    credential_bearing = any(
+        environment.get(name) for name in GITHUB_CREDENTIAL_VARIABLES
+    )
+    if credential_bearing and not sys.platform.startswith("linux"):
+        raise NotImplementedError(
+            "Linux credential-bearing descendant containment is required"
+        )
+    if effective_deadline_ns <= time.monotonic_ns():
+        raise TimeoutError("trusted command operation deadline expired")
+
+    process = None
+    observer = None
+    input_stream = None
+    status_read = -1
+    status_write = -1
+    selector = selectors.DefaultSelector()
+    output = {"stdout": bytearray(), "stderr": bytearray()}
+    status_payload = bytearray()
+    total = 0
+    failure = None
+    try:
+        try:
+            status_read, status_write = os.pipe()
+            if input_content is not None:
+                input_stream = tempfile.TemporaryFile()
+                input_stream.write(input_content)
+                input_stream.seek(0)
+            process = spawn_trusted_supervisor(
+                command,
+                launch_path,
+                inherited_descriptors,
+                environment,
+                effective_deadline_ns,
+                status_write,
+                input_stream.fileno() if input_stream is not None else None,
+            )
+            os.close(status_write)
+            status_write = -1
+            observer = prepare_exit_observer(process.pid)
+            selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+            selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+            while selector.get_map():
+                remaining = (
+                    effective_deadline_ns - time.monotonic_ns()
+                ) / 1_000_000_000
+                if remaining <= 0:
+                    failure = "trusted command timed out"
+                    break
+                events = selector.select(remaining)
+                if not events:
+                    failure = "trusted command timed out"
+                    break
+                for key, _mask in events:
+                    chunk = os.read(key.fileobj.fileno(), READ_CHUNK_BYTES)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        key.fileobj.close()
+                        continue
+                    total += len(chunk)
+                    if total > output_limit:
+                        failure = (
+                            "trusted command exceeded the "
+                            f"{output_limit}-byte output limit"
+                        )
+                        break
+                    output[key.data].extend(chunk)
+                if failure is not None:
+                    break
+            if failure is None:
+                while True:
+                    remaining = (
+                        effective_deadline_ns - time.monotonic_ns()
+                    ) / 1_000_000_000
+                    if remaining <= 0:
+                        failure = "trusted command timed out"
+                        break
+                    if exit_observed(
+                        observer,
+                        process.pid,
+                        min(PROCESS_POLL_SECONDS, remaining),
+                    ):
+                        break
+                    time.sleep(min(PROCESS_POLL_SECONDS, remaining))
+        finally:
+            selector.close()
+            try:
+                if process is not None:
+                    terminate_process_group(process, observer)
+            finally:
+                if observer is not None:
+                    close_exit_observer(observer)
+
+        if failure is not None:
+            return 124, output, failure
+        while len(status_payload) < PROCESS_STATUS_BYTES:
+            remaining = (
+                effective_deadline_ns - time.monotonic_ns()
+            ) / 1_000_000_000
+            if remaining <= 0:
+                return 124, output, "trusted command timed out"
+            readable, _writable, _exceptional = select.select(
+                [status_read], [], [], remaining
+            )
+            if not readable:
+                return 124, output, "trusted command timed out"
+            block = os.read(
+                status_read,
+                PROCESS_STATUS_BYTES - len(status_payload),
+            )
+            if not block:
+                raise OSError("trusted command status is incomplete")
+            status_payload.extend(block)
+        returncode, detached_descendant = struct.unpack(
+            "!iB", status_payload
+        )
+        if detached_descendant not in {0, 1}:
+            raise OSError("trusted command status is malformed")
+        if detached_descendant:
+            failure = "trusted command left a detached descendant"
+        return returncode, output, failure
+    finally:
+        if input_stream is not None:
+            input_stream.close()
+        for descriptor in (status_read, status_write):
+            if descriptor < 0:
+                continue
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def run_trusted_command(
+    profile,
+    deadline_text,
+    timeout_text,
+    output_limit_text,
+    executable_binding,
+    arguments,
+):
+    if profile != "gh" or not arguments:
+        raise ValueError("invalid trusted command invocation")
+    try:
+        deadline_ns = int(deadline_text)
+        timeout = int(timeout_text)
+        output_limit = int(output_limit_text)
+    except (TypeError, ValueError) as error:
+        raise ValueError("invalid trusted command bounds") from error
+    if (
+        deadline_ns < 1
+        or timeout < 1
+        or timeout > MAX_COMMAND_TIMEOUT_SECONDS
+        or output_limit < 1024
+        or output_limit > MAX_COMMAND_OUTPUT_BYTES
+    ):
+        raise ValueError("invalid trusted command bounds")
+    token = decode_executable_token(executable_binding, profile)
+    if token["test_only"] and os.environ.get("ODYSSEUS_TEST_RUNTIME") != "1":
+        raise OSError("command executable override is test-only")
+    if len(arguments) > 128 or any(
+        not isinstance(argument, str)
+        or len(os.fsencode(argument)) > MAX_PATH_BYTES
+        or "\x00" in argument
+        for argument in arguments
+    ):
+        raise ValueError("invalid trusted command arguments")
+    descriptor, descriptors, route, _record = open_executable(
+        token["path"], token["record"]
+    )
+    try:
+        if route != token["route"]:
+            raise OSError("command executable route changed after binding")
+        now_ns = time.monotonic_ns()
+        call_deadline_ns = now_ns + timeout * 1_000_000_000
+        effective_deadline_ns = min(deadline_ns, call_deadline_ns)
+        if effective_deadline_ns <= now_ns:
+            raise TimeoutError("trusted command operation deadline expired")
+        portable_test_script = (
+            sys.platform == "darwin"
+            and token["test_only"]
+            and os.environ.get("ODYSSEUS_TEST_RUNTIME") == "1"
+            and not any(os.environ.get(name) for name in GITHUB_CREDENTIAL_VARIABLES)
+        )
+        if portable_test_script:
+            script = read_exact_test_script(descriptor, token["record"])
+            launch_path = verified_system_bash()
+            command = [launch_path, "-s", "--", *arguments]
+            verify_held_route(descriptors, token["route"])
+            status, output, failure = supervise_trusted_command(
+                command,
+                launch_path,
+                (),
+                command_environment(profile),
+                effective_deadline_ns,
+                output_limit,
+                script,
+            )
+        else:
+            with executable_launch(descriptor, token["record"]) as (
+                launch_path,
+                inherited_descriptors,
+            ):
+                verify_held_route(descriptors, token["route"])
+                status, output, failure = supervise_trusted_command(
+                    [token["path"], *arguments],
+                    launch_path,
+                    inherited_descriptors,
+                    command_environment(profile),
+                    effective_deadline_ns,
+                    output_limit,
+                )
+    finally:
+        os.close(descriptor)
+        close_route(descriptors)
+    if failure is not None:
+        print(f"error: {failure}", file=sys.stderr)
+        raise SystemExit(124)
+    descriptor, descriptors, route, _record = open_executable(
+        token["path"], token["record"]
+    )
+    if route != token["route"]:
+        os.close(descriptor)
+        close_route(descriptors)
+        raise OSError("command executable route changed during execution")
+    os.close(descriptor)
+    close_route(descriptors)
+    sys.stdout.buffer.write(output["stdout"])
+    sys.stderr.buffer.write(output["stderr"])
+    raise SystemExit(status)
+
+
 def bind(target, operation):
     if operation not in OPERATIONS:
         raise ValueError("unsupported report operation")
@@ -517,10 +1830,11 @@ def bind(target, operation):
         destination_descriptor, content, destination_state = open_bound_file(
             parent_descriptor, name, READ_FLAGS
         )
-        if operation == "inject":
-            if content is None:
-                raise OSError("injection target does not exist")
-            marker_parts(content)
+        if destination_state is not None:
+            raise ReportUpdateUnavailable(
+                "existing report update is unavailable because an exact-object "
+                "move cannot be guaranteed"
+            )
         verify_held_route(parent_descriptors, parent_route)
         verify_parent_path(parent, parent_route)
         return encode_token(
@@ -540,6 +1854,64 @@ def bind(target, operation):
         close_route(parent_descriptors)
 
 
+def submodule_repositories(target):
+    absolute, parent, name = split_target(target)
+    parent_descriptors, parent_route = open_parent(parent)
+    parent_descriptor = parent_descriptors[-1]
+    descriptor = -1
+    try:
+        descriptor, content, _state = open_bound_file(
+            parent_descriptor,
+            name,
+            READ_FLAGS,
+        )
+        if descriptor < 0 or content is None:
+            raise OSError("canonical submodule inventory is unavailable")
+        parser = configparser.RawConfigParser(interpolation=None, strict=True)
+        parser.optionxform = str
+        parser.read_string(content.decode("utf-8"), source=absolute)
+        if not parser.sections():
+            raise ValueError("canonical submodule inventory is empty")
+        seen_paths = set()
+        seen_repositories = set()
+        repositories = []
+        for section in parser.sections():
+            match = re.fullmatch(r'submodule "([A-Za-z0-9._/-]+)"', section)
+            if match is None or set(parser[section]) != {"path", "url"}:
+                raise ValueError("malformed canonical submodule section")
+            submodule = match.group(1)
+            path = parser[section]["path"]
+            url = parser[section]["url"]
+            segments = path.split("/")
+            if (
+                path != submodule
+                or not segments
+                or any(not value or value in {".", ".."} for value in segments)
+                or re.fullmatch(r"[A-Za-z0-9._/-]+", path) is None
+                or path in seen_paths
+            ):
+                raise ValueError("unsafe or duplicate canonical submodule path")
+            url_match = re.fullmatch(
+                r"(?:https://github\.com/HomericIntelligence/|"
+                r"git@github\.com:HomericIntelligence/)"
+                r"([A-Za-z0-9_.-]+)\.git",
+                url,
+            )
+            repository = url_match.group(1) if url_match is not None else ""
+            if not repository or repository in seen_repositories:
+                raise ValueError("unsafe or duplicate canonical repository URL")
+            seen_paths.add(path)
+            seen_repositories.add(repository)
+            repositories.append("HomericIntelligence/" + repository)
+        verify_held_route(parent_descriptors, parent_route)
+        verify_parent_path(parent, parent_route)
+        return repositories
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        close_route(parent_descriptors)
+
+
 def verify_named_file(parent_descriptor, name, descriptor, expected_identity):
     held = os.fstat(descriptor)
     named = os.lstat(name, dir_fd=parent_descriptor)
@@ -547,27 +1919,6 @@ def verify_named_file(parent_descriptor, name, descriptor, expected_identity):
     require_direct_file(named)
     if (
         file_identity(held) != expected_identity
-        or file_identity(named) != expected_identity
-    ):
-        raise OSError("report destination name changed")
-
-
-def verify_existing_state(parent_descriptor, name, descriptor, expected):
-    before = os.fstat(descriptor)
-    content = read_all(descriptor)
-    after = os.fstat(descriptor)
-    named = os.lstat(name, dir_fd=parent_descriptor)
-    require_direct_file(before)
-    require_direct_file(after)
-    require_direct_file(named)
-    if (
-        file_record(before, content) != expected
-        or file_record(after, content) != expected
-    ):
-        raise OSError("report destination content changed")
-    expected_identity = file_identity(before)
-    if (
-        file_identity(after) != expected_identity
         or file_identity(named) != expected_identity
     ):
         raise OSError("report destination name changed")
@@ -639,7 +1990,6 @@ def prepare_candidate(
     target_name,
     content,
     mode,
-    expected_owner=None,
 ):
     candidate_name, descriptor = create_candidate(
         parent_descriptor,
@@ -648,18 +1998,6 @@ def prepare_candidate(
         len(content),
     )
     try:
-        if expected_owner is not None:
-            current = os.fstat(descriptor)
-            if (
-                current.st_uid != expected_owner["uid"]
-                or current.st_gid != expected_owner["gid"]
-            ):
-                os.fchown(
-                    descriptor,
-                    expected_owner["uid"],
-                    expected_owner["gid"],
-                )
-            os.fchmod(descriptor, stat.S_IMODE(expected_owner["mode"]))
         replace_descriptor_content(descriptor, content)
         identity = file_identity(os.fstat(descriptor))
         verify_named_file(
@@ -675,24 +2013,6 @@ def prepare_candidate(
         # after an error would let a concurrent replacement become the victim.
         os.close(descriptor)
         raise
-
-
-def verify_displaced_file(parent_descriptor, name, descriptor, expected):
-    expected_identity = {
-        key: expected[key]
-        for key in ("dev", "gid", "ino", "mode", "nlink", "uid")
-    }
-    verify_named_file(parent_descriptor, name, descriptor, expected_identity)
-    before = os.fstat(descriptor)
-    content = read_all(descriptor)
-    after = os.fstat(descriptor)
-    if (
-        file_identity(before) != expected_identity
-        or file_identity(after) != expected_identity
-        or len(content) != expected["size"]
-        or hashlib.sha256(content).hexdigest() != expected["digest"]
-    ):
-        raise OSError("displaced report object changed")
 
 
 def verify_published_content(
@@ -714,163 +2034,6 @@ def require_absent(parent_descriptor, name):
     except FileNotFoundError:
         return
     raise FileExistsError(errno.EEXIST, "report destination appeared")
-
-
-def open_named_identity(parent_descriptor, name):
-    named = os.lstat(name, dir_fd=parent_descriptor)
-    require_direct_file(named)
-    descriptor = os.open(name, READ_FLAGS, dir_fd=parent_descriptor)
-    try:
-        opened = os.fstat(descriptor)
-        require_direct_file(opened)
-        identity = file_identity(opened)
-        if identity != file_identity(named):
-            raise OSError("report entry changed while opening")
-        verify_named_file(parent_descriptor, name, descriptor, identity)
-        return descriptor, identity
-    except BaseException:
-        os.close(descriptor)
-        raise
-
-
-def reserve_quarantine_name(parent_descriptor, target_name):
-    for _attempt in range(CANDIDATE_ATTEMPTS):
-        name = CANDIDATE_PREFIX + os.urandom(24).hex()
-        if name == target_name:
-            continue
-        try:
-            os.lstat(name, dir_fd=parent_descriptor)
-        except FileNotFoundError:
-            return name
-    raise OSError("could not reserve a report quarantine name")
-
-
-def rollback_existing_commit(
-    parent_descriptor,
-    candidate_name,
-    target_name,
-    prior_descriptor,
-    expected,
-):
-    atomic_exchange(parent_descriptor, candidate_name, target_name)
-    os.fsync(parent_descriptor)
-    verify_displaced_file(
-        parent_descriptor,
-        target_name,
-        prior_descriptor,
-        expected,
-    )
-    quarantine_descriptor, quarantine_identity = open_named_identity(
-        parent_descriptor,
-        candidate_name,
-    )
-    try:
-        verify_named_file(
-            parent_descriptor,
-            candidate_name,
-            quarantine_descriptor,
-            quarantine_identity,
-        )
-    finally:
-        os.close(quarantine_descriptor)
-
-
-def rollback_absent_commit(parent_descriptor, target_name):
-    published_descriptor, published_identity = open_named_identity(
-        parent_descriptor,
-        target_name,
-    )
-    try:
-        quarantine_name = reserve_quarantine_name(parent_descriptor, target_name)
-        atomic_noreplace(
-            parent_descriptor,
-            target_name,
-            quarantine_name,
-        )
-        os.fsync(parent_descriptor)
-        require_absent(parent_descriptor, target_name)
-        verify_named_file(
-            parent_descriptor,
-            quarantine_name,
-            published_descriptor,
-            published_identity,
-        )
-    finally:
-        os.close(published_descriptor)
-
-
-def publish_existing(
-    parent_descriptor,
-    name,
-    expected,
-    operation,
-    replacement,
-    verify_route,
-):
-    descriptor, existing, current = open_bound_file(
-        parent_descriptor, name, READ_FLAGS
-    )
-    if descriptor < 0 or current != expected:
-        if descriptor >= 0:
-            os.close(descriptor)
-        raise OSError("report destination changed")
-    candidate_descriptor = -1
-    try:
-        content = build_content(operation, existing, replacement)
-        verify_existing_state(parent_descriptor, name, descriptor, expected)
-        candidate_name, candidate_descriptor, candidate_identity = prepare_candidate(
-            parent_descriptor,
-            name,
-            content,
-            stat.S_IMODE(expected["mode"]),
-            expected,
-        )
-        verify_route()
-        verify_existing_state(parent_descriptor, name, descriptor, expected)
-        verify_named_file(
-            parent_descriptor,
-            candidate_name,
-            candidate_descriptor,
-            candidate_identity,
-        )
-        committed = False
-        try:
-            atomic_exchange(parent_descriptor, candidate_name, name)
-            committed = True
-            os.fsync(parent_descriptor)
-            verify_published_content(
-                parent_descriptor,
-                name,
-                candidate_descriptor,
-                candidate_identity,
-                content,
-            )
-            verify_displaced_file(
-                parent_descriptor,
-                candidate_name,
-                descriptor,
-                expected,
-            )
-            verify_route()
-        except BaseException as commit_error:
-            if committed:
-                try:
-                    rollback_existing_commit(
-                        parent_descriptor,
-                        candidate_name,
-                        name,
-                        descriptor,
-                        expected,
-                    )
-                except BaseException as rollback_error:
-                    raise OSError(
-                        "report commit failed and rollback is uncertain"
-                    ) from rollback_error
-            raise commit_error
-    finally:
-        if candidate_descriptor >= 0:
-            os.close(candidate_descriptor)
-        os.close(descriptor)
 
 
 def publish_absent(
@@ -896,30 +2059,20 @@ def publish_absent(
             descriptor,
             identity,
         )
-        committed = False
-        try:
-            atomic_noreplace(parent_descriptor, candidate_name, name)
-            committed = True
-            os.fsync(parent_descriptor)
-            verify_published_content(
-                parent_descriptor,
-                name,
-                descriptor,
-                identity,
-                content,
-            )
-            verify_route()
-        except BaseException as commit_error:
-            if committed:
-                try:
-                    rollback_absent_commit(parent_descriptor, name)
-                except BaseException as rollback_error:
-                    raise OSError(
-                        "report commit failed and rollback is uncertain"
-                    ) from rollback_error
-            raise commit_error
+        atomic_noreplace(parent_descriptor, candidate_name, name)
+        os.fsync(parent_descriptor)
+        verify_published_content(
+            parent_descriptor,
+            name,
+            descriptor,
+            identity,
+            content,
+        )
+        verify_route()
     finally:
-        # On failure, retain the exact candidate object for forensic recovery.
+        # On failure, retain the exact object for forensic recovery. After the
+        # commit syscall its current pathname is uncertain and must not be used
+        # as authority for another mutation.
         os.close(descriptor)
 
 
@@ -944,24 +2097,19 @@ def publish(target, operation, encoded_token, replacement):
             verify_parent_path(parent, token["route"])
 
         verify_route()
+        if token["destination"] is not None:
+            raise ReportUpdateUnavailable(
+                "existing report update is unavailable because an exact-object "
+                "move cannot be guaranteed"
+            )
         with defer_termination_signals():
-            if token["destination"] is None:
-                publish_absent(
-                    parent_descriptor,
-                    name,
-                    operation,
-                    replacement,
-                    verify_route,
-                )
-            else:
-                publish_existing(
-                    parent_descriptor,
-                    name,
-                    token["destination"],
-                    operation,
-                    replacement,
-                    verify_route,
-                )
+            publish_absent(
+                parent_descriptor,
+                name,
+                operation,
+                replacement,
+                verify_route,
+            )
             os.fsync(parent_descriptor)
         verify_route()
     finally:
@@ -986,6 +2134,29 @@ def ensure_distinct(first, second):
 
 
 def main():
+    if len(sys.argv) == 4 and sys.argv[1] == "resolve":
+        print(resolve_executable(sys.argv[2], sys.argv[3]))
+        return
+    if len(sys.argv) == 3 and sys.argv[1] == "deadline":
+        print(operation_deadline(sys.argv[2]))
+        return
+    if len(sys.argv) == 3 and sys.argv[1] == "candidate":
+        print(candidate_target(sys.argv[2]))
+        return
+    if len(sys.argv) >= 8 and sys.argv[1] == "run":
+        run_trusted_command(
+            sys.argv[2],
+            sys.argv[3],
+            sys.argv[4],
+            sys.argv[5],
+            sys.argv[6],
+            sys.argv[7:],
+        )
+        return
+    if len(sys.argv) == 3 and sys.argv[1] == "inventory":
+        for repository in submodule_repositories(sys.argv[2]):
+            print(repository)
+        return
     if len(sys.argv) == 4 and sys.argv[1] == "bind":
         print(bind(sys.argv[2], sys.argv[3]))
         return
@@ -1001,10 +2172,18 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except ReportUpdateUnavailable as error:
+        print(f"error: {error}", file=sys.stderr)
+        raise SystemExit(2)
+    except TimeoutError as error:
+        print(f"error: {error}", file=sys.stderr)
+        raise SystemExit(124)
     except (
         binascii.Error,
+        configparser.Error,
         NotImplementedError,
         OSError,
+        subprocess.SubprocessError,
         TypeError,
         UnicodeError,
         ValueError,

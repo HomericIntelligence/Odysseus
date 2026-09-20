@@ -10,9 +10,45 @@ set -euo pipefail
 set -m
 
 active_worker_pids=("")
+active_worker_sentinel_ids=("")
+active_worker_sentinel_fds=("")
+worker_controller_pid=$$
+worker_launch_critical=0
+pending_worker_signal_name=""
+pending_worker_signal_status=0
+CREATED_WORKER_SENTINEL_PATH=""
+CREATED_WORKER_SENTINEL_ID=""
+CREATED_WORKER_SENTINEL_FD=""
+next_worker_sentinel_fd=40
+
+# Bash 3.2 has no {var} descriptor syntax. Only a controller-generated,
+# range-checked integer is interpolated; the hostile pathname remains a
+# quoted shell variable when the fixed redirection is evaluated.
+open_worker_sentinel_descriptor() {
+    local descriptor=$1 candidate=$2
+    [[ "$descriptor" =~ ^[0-9]+$ \
+        && "$descriptor" -ge 40 && "$descriptor" -le 255 ]] || return 1
+    eval "exec ${descriptor}> \"\$candidate\""
+}
+
+close_worker_sentinel_descriptor() {
+    local descriptor=$1
+    [[ "$descriptor" =~ ^[0-9]+$ \
+        && "$descriptor" -ge 40 && "$descriptor" -le 255 ]] || return 1
+    eval "exec ${descriptor}>&-"
+}
+
+inherit_worker_sentinel_descriptor() {
+    local descriptor=$1
+    [[ "$descriptor" =~ ^[0-9]+$ \
+        && "$descriptor" -ge 40 && "$descriptor" -le 255 ]] || return 1
+    eval "exec 19>&${descriptor}"
+}
 
 remember_worker_pid() {
     active_worker_pids+=("$1")
+    active_worker_sentinel_ids+=("$2")
+    active_worker_sentinel_fds+=("$3")
 }
 
 forget_worker_pid() {
@@ -20,88 +56,267 @@ forget_worker_pid() {
     local active_index
     for active_index in "${!active_worker_pids[@]}"; do
         if [[ "${active_worker_pids[$active_index]}" == "$completed_pid" ]]; then
+            local descriptor=${active_worker_sentinel_fds[$active_index]}
+            if ! close_worker_sentinel_descriptor "$descriptor"; then
+                return 1
+            fi
             unset 'active_worker_pids[active_index]'
+            unset 'active_worker_sentinel_ids[active_index]'
+            unset 'active_worker_sentinel_fds[active_index]'
             return
         fi
     done
+    return 1
+}
+
+create_worker_sentinel() {
+    local directory=$1 tag=$2 attempt candidate descriptor identity
+    local saved_umask noclobber_was_set=0
+    CREATED_WORKER_SENTINEL_PATH=""
+    CREATED_WORKER_SENTINEL_ID=""
+    CREATED_WORKER_SENTINEL_FD=""
+    saved_umask=$(umask)
+    [[ -o noclobber ]] && noclobber_was_set=1
+    umask 077
+    set -o noclobber
+    for ((attempt = 0; attempt < 128; attempt++)); do
+        candidate="$directory/.worker-sentinel-$tag.$$.$RANDOM.$attempt"
+        descriptor=$next_worker_sentinel_fd
+        ((next_worker_sentinel_fd += 1))
+        if open_worker_sentinel_descriptor "$descriptor" "$candidate"; then
+            break
+        fi
+        descriptor=""
+    done
+    if [[ "$noclobber_was_set" == 0 ]]; then
+        set +o noclobber
+    fi
+    umask "$saved_umask"
+    [[ "$descriptor" =~ ^[0-9]+$ ]] || return 1
+    if ! identity=$(python3 -I -E -c '
+import os, stat, sys
+descriptor = int(sys.argv[1])
+opened = os.fstat(descriptor)
+named = os.stat(sys.argv[2], follow_symlinks=False)
+key = lambda value: (value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode))
+if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
+        or opened.st_uid != os.geteuid() or key(opened) != key(named)
+        or stat.S_IMODE(opened.st_mode) & 0o077):
+    raise SystemExit(1)
+print(f"{opened.st_dev}:{opened.st_ino}")
+' "$descriptor" "$candidate"); then
+        close_worker_sentinel_descriptor "$descriptor"
+        return 1
+    fi
+    CREATED_WORKER_SENTINEL_PATH=$candidate
+    CREATED_WORKER_SENTINEL_ID=$identity
+    CREATED_WORKER_SENTINEL_FD=$descriptor
+}
+
+prepare_worker_sentinel() {
+    local own_fd=$1 expected=$2 descriptor actual
+    shift 2
+    for descriptor in "$@"; do
+        [[ "$descriptor" =~ ^[0-9]+$ ]] || return 1
+        if [[ "$descriptor" != "$own_fd" ]]; then
+            close_worker_sentinel_descriptor "$descriptor"
+        fi
+    done
+    if [[ "$own_fd" != 19 ]]; then
+        inherit_worker_sentinel_descriptor "$own_fd"
+        descriptor=$own_fd
+        close_worker_sentinel_descriptor "$descriptor"
+    fi
+    actual=$(python3 -I -E -c '
+import os, stat
+value = os.fstat(19)
+if not stat.S_ISREG(value.st_mode): raise SystemExit(1)
+print(f"{value.st_dev}:{value.st_ino}")
+') || return 1
+    [[ "$actual" == "$expected" ]] || return 1
+    printf R >&19
+}
+
+wait_worker_sentinel_ready() {
+    local worker_pid=$1 descriptor=$2 expected=$3 attempt
+    for ((attempt = 0; attempt < 100; attempt++)); do
+        if python3 -I -E -c '
+import os, stat, sys, time
+descriptor = int(sys.argv[1])
+device, inode = map(int, sys.argv[2].split(":"))
+value = os.fstat(descriptor)
+if (not stat.S_ISREG(value.st_mode)
+        or (value.st_dev, value.st_ino) != (device, inode)):
+    raise SystemExit(2)
+if value.st_size == 1:
+    raise SystemExit(0)
+if value.st_size != 0:
+    raise SystemExit(2)
+time.sleep(0.02)
+raise SystemExit(1)
+' "$descriptor" "$expected"; then
+            return 0
+        fi
+        [[ "$pending_worker_signal_status" == 0 ]] || return 1
+    done
+    return 1
 }
 
 worker_sentinel_holders() {
-    local sentinel=$1 output rc=0
-    output=$("$LSOF_BIN" -t -- "$sentinel" 2>/dev/null) || rc=$?
-    [[ "$rc" == 0 || "$rc" == 1 ]] || return 2
-    if [[ "$rc" == 0 ]]; then
-        printf '%s\n' "$output" | awk '/^[0-9]+$/ && !seen[$0]++'
+    local expected=$1 output rc=0 holder
+    [[ "$expected" =~ ^[0-9]+:[0-9]+$ ]] || return 2
+    # This function runs in command substitution. Drop the substitution
+    # shell's inherited controller descriptors before its scanner starts, or
+    # that short-lived shell would report itself as an escaped worker.
+    for holder in "${active_worker_sentinel_fds[@]}"; do
+        [[ -n "$holder" ]] || continue
+        close_worker_sentinel_descriptor "$holder" || return 2
+    done
+    if [[ "$(uname -s)" == Linux ]]; then
+        python3 -I -E -c '
+import glob, os, sys
+device, inode = map(int, sys.argv[1].split(":"))
+controller = sys.argv[2]
+for proc in glob.glob("/proc/[0-9]*"):
+    pid = proc.rsplit("/", 1)[-1]
+    if pid == controller or int(pid) == os.getpid(): continue
+    try: entries = os.listdir(proc + "/fd")
+    except (FileNotFoundError, PermissionError): continue
+    for entry in entries:
+        try: value = os.stat(proc + "/fd/" + entry)
+        except (FileNotFoundError, PermissionError): continue
+        if (value.st_dev, value.st_ino) == (device, inode):
+            print(pid)
+            break
+' "$expected" "$worker_controller_pid"
+        return
     fi
-    return 0
+    output=$("$LSOF_BIN" -F pDi 2>/dev/null) || rc=$?
+    [[ "$rc" == 0 || "$rc" == 1 ]] || return 2
+    [[ "$rc" == 0 ]] || return 0
+    python3 -I -E -c '
+import sys
+device, inode = map(int, sys.argv[1].split(":"))
+controller = sys.argv[2]
+pid = None; current_device = None; seen = set()
+for raw in sys.stdin:
+    line = raw.rstrip("\n")
+    if line.startswith("p") and line[1:].isdigit():
+        pid = line[1:]; current_device = None
+    elif line.startswith("D"):
+        try: current_device = int(line[1:], 0)
+        except ValueError: current_device = None
+    elif line.startswith("i") and pid is not None and current_device == device:
+        try: current_inode = int(line[1:])
+        except ValueError: continue
+        if current_inode == inode and pid != controller and pid not in seen:
+            print(pid); seen.add(pid)
+' "$expected" "$worker_controller_pid" <<< "$output"
 }
 
 signal_worker_holder() {
-    local holder=$1 sentinel=$2 signal_name=$3
+    local holder=$1 expected=$2 signal_name=$3
     if [[ "$(uname -s)" == Linux ]]; then
         python3 -I -E -c '
 import os, signal, sys
-pid, path, signal_name = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+pid, expected, signal_name = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+device, inode = map(int, expected.split(":"))
 if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"): raise SystemExit(2)
-expected = os.stat(path, follow_symlinks=False)
-pidfd = os.pidfd_open(pid)
+try: pidfd = os.pidfd_open(pid)
+except ProcessLookupError: raise SystemExit(0)
 try:
-    held = any((value.st_dev, value.st_ino) == (expected.st_dev, expected.st_ino)
-        for name in os.listdir(f"/proc/{pid}/fd")
-        for value in [os.stat(f"/proc/{pid}/fd/{name}")])
-    if held: signal.pidfd_send_signal(pidfd, getattr(signal, "SIG" + signal_name))
+    held = False
+    try: names = os.listdir(f"/proc/{pid}/fd")
+    except FileNotFoundError: names = ()
+    for name in names:
+        try: value = os.stat(f"/proc/{pid}/fd/{name}")
+        except (FileNotFoundError, PermissionError): continue
+        if (value.st_dev, value.st_ino) == (device, inode):
+            held = True
+            break
+    if held:
+        try: signal.pidfd_send_signal(pidfd, getattr(signal, "SIG" + signal_name))
+        except ProcessLookupError: pass
 finally: os.close(pidfd)
-' "$holder" "$sentinel" "$signal_name"
-    elif "$LSOF_BIN" -t -a -p "$holder" -- "$sentinel" 2>/dev/null \
-            | grep -Fxq "$holder"; then
-        kill -"$signal_name" "$holder" 2>/dev/null
+' "$holder" "$expected" "$signal_name"
+    else
+        return 2
     fi
 }
 
 extinguish_worker_sentinel() {
-    local sentinel=$1 signal_name holder holders attempt rc
-    [[ -f "$sentinel" && ! -L "$sentinel" ]] || return 1
+    local expected=$1 signal_name holder holders attempt rc
+    [[ "$expected" =~ ^[0-9]+:[0-9]+$ ]] || return 1
     for signal_name in TERM KILL; do
         for ((attempt = 0; attempt < 20; attempt++)); do
             rc=0
-            holders=$(worker_sentinel_holders "$sentinel") || rc=$?
+            holders=$(worker_sentinel_holders "$expected") || rc=$?
             [[ "$rc" == 0 ]] || return 1
             [[ -n "$holders" ]] || return 0
             while IFS= read -r holder; do
                 [[ "$holder" =~ ^[0-9]+$ ]] || continue
-                signal_worker_holder "$holder" "$sentinel" "$signal_name" || true
+                signal_worker_holder "$holder" "$expected" "$signal_name" \
+                    || return 1
             done <<< "$holders"
-            sleep 0.1 || true
+            if ! sleep 0.1; then :; fi
         done
     done
     rc=0
-    holders=$(worker_sentinel_holders "$sentinel") || rc=$?
+    holders=$(worker_sentinel_holders "$expected") || rc=$?
     [[ "$rc" == 0 && -z "$holders" ]]
 }
 
+retire_worker_pid() {
+    local worker_pid=$1 expected=$2
+    extinguish_worker_sentinel "$expected" || return 1
+    forget_worker_pid "$worker_pid"
+}
+
 stop_owned_workers() {
-    local worker_pid sentinel shutdown_failed=0
-    for sentinel in "$staging_root"/.worker-sentinel-*; do
-        [[ -e "$sentinel" ]] || continue
-        extinguish_worker_sentinel "$sentinel" || shutdown_failed=1
-    done
-    for worker_pid in $(jobs -pr 2>/dev/null); do
-        wait "$worker_pid" 2>/dev/null || true
+    local worker_pid expected shutdown_failed=0
+    for expected in "${active_worker_sentinel_ids[@]}"; do
+        [[ -n "$expected" ]] || continue
+        extinguish_worker_sentinel "$expected" || shutdown_failed=1
     done
     [[ "$shutdown_failed" == 0 ]] || return 1
+    for worker_pid in $(jobs -pr 2>/dev/null); do
+        if ! wait "$worker_pid" 2>/dev/null; then :; fi
+    done
     active_worker_pids=("")
+    active_worker_sentinel_ids=("")
+    for expected in "${active_worker_sentinel_fds[@]}"; do
+        [[ -n "$expected" ]] || continue
+        local descriptor=$expected
+        close_worker_sentinel_descriptor "$descriptor"
+    done
+    active_worker_sentinel_fds=("")
     return 0
 }
 
 handle_worker_signal() {
     local signal_name=$1
     local exit_status=$2
+    if [[ "$worker_launch_critical" == 1 ]]; then
+        pending_worker_signal_name=$signal_name
+        pending_worker_signal_status=$exit_status
+        return 0
+    fi
     trap ':' INT TERM HUP
     echo "ERROR: received SIG$signal_name; stopping active collection workers." >&2
     if ! stop_owned_workers; then
         echo "ERROR: worker extinction or reap could not be verified; collection staging was retained." >&2
     fi
     exit "$exit_status"
+}
+
+honor_pending_worker_signal() {
+    local signal_name=$pending_worker_signal_name
+    local exit_status=$pending_worker_signal_status
+    if [[ "$exit_status" != 0 ]]; then
+        pending_worker_signal_name=""
+        pending_worker_signal_status=0
+        handle_worker_signal "$signal_name" "$exit_status"
+    fi
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -131,7 +346,10 @@ usage_error() {
 if ! PYTHON_BIN=$(command -v python3); then
     usage_error "python3 is required for safe result publication."
 fi
-LSOF_BIN=$(command -v lsof 2>/dev/null || true)
+LSOF_BIN=""
+if discovered_lsof=$(command -v lsof 2>/dev/null); then
+    LSOF_BIN=$discovered_lsof
+fi
 [[ -n "$LSOF_BIN" ]] || LSOF_BIN=/usr/sbin/lsof
 [[ -x "$LSOF_BIN" ]] \
     || usage_error "lsof is required for descriptor-bound worker extinction."
@@ -455,34 +673,83 @@ trap 'handle_worker_signal TERM 143' TERM
 trap 'handle_worker_signal HUP 129' HUP
 
 pids=()
-worker_sentinels=()
+worker_sentinel_paths=()
+worker_sentinel_ids=()
+worker_sentinel_fds=()
 for ((host_index = 0; host_index < ${#fleet_hosts[@]}; host_index++)); do
-    worker_sentinel=$(mktemp "$staging_root/.worker-sentinel-transfer-${host_index}.XXXXXX") \
-        || usage_error "could not create a worker ownership sentinel."
-    chmod 600 "$worker_sentinel"
-    worker_sentinels+=("$worker_sentinel")
-    ( exec 19< "$worker_sentinel"; transfer_one "$host_index" ) &
-    pids+=("$!")
-    remember_worker_pid "$!"
+    create_worker_sentinel "$staging_root" "transfer-$host_index" \
+        || usage_error "could not create a bound worker ownership sentinel."
+    worker_sentinel=$CREATED_WORKER_SENTINEL_PATH
+    worker_sentinel_id=$CREATED_WORKER_SENTINEL_ID
+    worker_sentinel_fd=$CREATED_WORKER_SENTINEL_FD
+    worker_sentinel_paths+=("$worker_sentinel")
+    worker_sentinel_ids+=("$worker_sentinel_id")
+    worker_sentinel_fds+=("$worker_sentinel_fd")
+done
+
+for ((host_index = 0; host_index < ${#fleet_hosts[@]}; host_index++)); do
+    worker_sentinel=${worker_sentinel_paths[$host_index]}
+    worker_sentinel_id=${worker_sentinel_ids[$host_index]}
+    worker_sentinel_fd=${worker_sentinel_fds[$host_index]}
+    worker_launch_critical=1
+    (
+        prepare_worker_sentinel "$worker_sentinel_fd" "$worker_sentinel_id" \
+            "${worker_sentinel_fds[@]}"
+        transfer_one "$host_index"
+    ) &
+    worker_pid=$!
+    pids+=("$worker_pid")
+    remember_worker_pid "$worker_pid" "$worker_sentinel_id" \
+        "$worker_sentinel_fd"
+    if ! wait_worker_sentinel_ready "$worker_pid" "$worker_sentinel_fd" \
+            "$worker_sentinel_id"; then
+        if ! extinguish_worker_sentinel "$worker_sentinel_id"; then
+            echo "ERROR: collection worker failed before readiness and could not be extinguished; staging retained." >&2
+        else
+            if ! wait "$worker_pid" 2>/dev/null; then :; fi
+            if ! forget_worker_pid "$worker_pid"; then
+                echo "ERROR: collection worker sentinel could not be retired; staging retained." >&2
+            fi
+        fi
+        worker_launch_critical=0
+        honor_pending_worker_signal
+        echo "ERROR: collection worker failed before its readiness receipt." >&2
+        exit 1
+    fi
+    worker_launch_critical=0
+    honor_pending_worker_signal
 done
 
 transfer_failed=0
+worker_extinction_failed=0
 transfer_results=()
 host_identities=()
 for ((host_index = 0; host_index < ${#fleet_hosts[@]}; host_index++)); do
     host=${fleet_hosts[$host_index]}
     receipt_name="$host_index.detail"
-    if wait "${pids[$host_index]}" \
+    transfer_rc=0
+    wait "${pids[$host_index]}" || transfer_rc=$?
+    worker_extinct=0
+    if retire_worker_pid "${pids[$host_index]}" \
+            "${worker_sentinel_ids[$host_index]}"; then
+        worker_extinct=1
+    fi
+    if [[ "$transfer_rc" == 0 && "$worker_extinct" == 1 ]] \
             && host_identity=$(result_filesystem identify-host \
-                7 "$host" "$run_id") \
-            && extinguish_worker_sentinel "${worker_sentinels[$host_index]}"; then
-        forget_worker_pid "${pids[$host_index]}"
+                7 "$host" "$run_id"); then
         echo "$host: transfer verified"
         transfer_results+=(1)
         host_identities+=("$host_identity")
     else
-        transfer_rc=$?
-        forget_worker_pid "${pids[$host_index]}"
+        if [[ "$worker_extinct" == 0 ]]; then
+            echo "$host: escaped transfer worker survived; staging retained" >&2
+            worker_extinction_failed=1
+            if [[ "$transfer_rc" == 0 ]]; then
+                transfer_rc=1
+            fi
+        elif [[ "$transfer_rc" == 0 ]]; then
+            transfer_rc=1
+        fi
         echo "$host: transfer failed (exit $transfer_rc)" >&2
         transfer_detail=""
         if ! transfer_detail=$(result_filesystem read-receipt \
@@ -497,10 +764,13 @@ for ((host_index = 0; host_index < ${#fleet_hosts[@]}; host_index++)); do
         transfer_failed=1
         transfer_results+=(0)
         host_identities+=("")
-        extinguish_worker_sentinel "${worker_sentinels[$host_index]}" \
-            || transfer_failed=1
     fi
 done
+
+if [[ "$worker_extinction_failed" != 0 ]]; then
+    echo "ERROR: transfer worker extinction was not verified; collection staging was retained: $staging_root" >&2
+    exit 1
+fi
 
 if ! central_identity=$(result_filesystem create-central \
         "$central_parent" "$parent_identity" 9 "$central_name"); then

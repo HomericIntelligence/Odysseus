@@ -829,7 +829,7 @@ for _ in $(seq 1 200); do
   python3 -c 'import time; time.sleep(0.01)'
 done
 if [ "$WEBHOOK_READY_STATUS" -ne 0 ]; then
-  wait "$WEBHOOK_CAPTURE_PID" 2>/dev/null || :
+  if ! wait "$WEBHOOK_CAPTURE_PID" 2>/dev/null; then :; fi
   WEBHOOK_CAPTURE_PID=""
   fail "Exact NATS evidence consumer did not become ready"
 fi

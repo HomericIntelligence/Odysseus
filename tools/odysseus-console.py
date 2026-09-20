@@ -16,8 +16,9 @@ Usage:
         [--context TEXT] [--repo OWNER/NAME] --no-watch
 
 Environment:
-    NESTOR_URL          Nestor base URL (default: http://localhost:8081)
-                        Plaintext HTTP is limited to loopback; redirects fail.
+    NESTOR_URL          Nestor base URL (default: http://127.0.0.1:8081)
+                        Plaintext HTTP requires a numeric loopback literal;
+                        redirects fail.
     NESTOR_API_KEY      Bearer token for Nestor, if configured
     NESTOR_CA_FILE      Optional CA bundle for an HTTPS Nestor endpoint
 """
@@ -39,7 +40,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-NESTOR_URL = os.environ.get("NESTOR_URL", "http://localhost:8081")
+NESTOR_URL = os.environ.get("NESTOR_URL", "http://127.0.0.1:8081")
 WATCH_UNAVAILABLE = (
     "watch mode is unavailable: the canonical NATS policy has no dedicated "
     "least-privilege NATS identity for the Odysseus console"
@@ -53,6 +54,7 @@ MAX_RESEARCH_ID_LENGTH = 256
 MAX_NESTOR_RESPONSE_BYTES = 64 * 1024
 MAX_NESTOR_CA_BYTES = 2 * 1024 * 1024
 NESTOR_REQUEST_TIMEOUT_SECONDS = 10.0
+MAX_CONSOLE_ERROR_DETAIL_CHARS = 512
 
 
 class NestorResponseError(ValueError):
@@ -65,6 +67,18 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
         """Refuse redirects so credentials never cross an unverified origin."""
         return None
+
+
+def _safe_error_detail(value: object) -> str:
+    """Render an untrusted exception field as one bounded printable record."""
+    try:
+        detail = str(value)
+    except Exception:  # pragma: no cover - defensive against hostile __str__
+        detail = type(value).__name__
+    escaped = ascii(detail)
+    if len(escaped) > MAX_CONSOLE_ERROR_DETAIL_CHARS:
+        escaped = escaped[: MAX_CONSOLE_ERROR_DETAIL_CHARS - 3] + "..."
+    return escaped
 
 
 def _remaining(deadline: float) -> float:
@@ -265,15 +279,18 @@ def validated_nestor_url(value: str) -> str:
     if parsed.query or parsed.fragment:
         raise ValueError("NESTOR_URL must not contain a query or fragment")
 
-    host = parsed.hostname.rstrip(".").casefold()
-    is_loopback = host == "localhost"
-    if not is_loopback:
+    if parsed.scheme == "http":
+        host = parsed.hostname
         try:
-            is_loopback = ipaddress.ip_address(host).is_loopback
-        except ValueError:
-            is_loopback = False
-    if parsed.scheme == "http" and not is_loopback:
-        raise ValueError("plaintext HTTP is limited to loopback NESTOR_URL hosts")
+            address = ipaddress.ip_address(host)
+        except ValueError as error:
+            raise ValueError(
+                "plaintext HTTP requires a numeric loopback NESTOR_URL host"
+            ) from error
+        if not address.is_loopback or "%" in host:
+            raise ValueError(
+                "plaintext HTTP requires a numeric loopback NESTOR_URL host"
+            )
 
     return value.rstrip("/")
 
@@ -352,20 +369,28 @@ def main() -> None:
     try:
         result = submit_research(args.idea, args.context, args.repo)
     except NestorResponseError as error:
-        print(f"{RED}✗ Nestor response failure: {error}{RESET}", file=sys.stderr)
+        print(
+            f"{RED}✗ Nestor response failure: {_safe_error_detail(error)}{RESET}",
+            file=sys.stderr,
+        )
         raise SystemExit(1) from error
     except ValueError as error:
-        print(f"{RED}✗ Invalid console configuration: {error}{RESET}", file=sys.stderr)
+        print(
+            f"{RED}✗ Invalid console configuration: {_safe_error_detail(error)}{RESET}",
+            file=sys.stderr,
+        )
         raise SystemExit(2) from error
     except urllib.error.HTTPError as error:
         print(
-            f"{RED}✗ Nestor rejected the submission: HTTP {error.code}{RESET}",
+            f"{RED}✗ Nestor rejected the submission: "
+            f"HTTP {_safe_error_detail(error.code)}{RESET}",
             file=sys.stderr,
         )
         raise SystemExit(1) from error
     except urllib.error.URLError as error:
         print(
-            f"{RED}✗ Nestor unreachable at {NESTOR_URL}: {error.reason}{RESET}",
+            f"{RED}✗ Nestor endpoint is unreachable: "
+            f"{_safe_error_detail(error.reason)}{RESET}",
             file=sys.stderr,
         )
         raise SystemExit(1) from error

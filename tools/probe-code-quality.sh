@@ -1,471 +1,735 @@
-#!/usr/bin/env bash
-#
-# probe-code-quality.sh — Discover Code Quality, Code Scanning, Dependabot, and
-# Secret Scanning readbacks across HomericIntelligence repositories. Read-only.
-#
-# Interpret each readback with current official GitHub documentation and
-# docs/runbooks/disable-code-quality.md before you select an action. This probe
-# does not set a desired state and does not make remote changes.
-#
-# Usage:
-#   tools/probe-code-quality.sh                  # gitlink inventory + Odysseus
-#   tools/probe-code-quality.sh --all            # live organization inventory
-#   tools/probe-code-quality.sh --output PATH    # also write Markdown to PATH
-#
-# Requires: gh authenticated with read access to HomericIntelligence.
+#!/bin/bash -p
+# Read-only GitHub security and Code Quality discovery for HomericIntelligence.
 
-set -uo pipefail
+set -euo pipefail
 
+unset BASH_ENV ENV PYTHONHOME PYTHONPATH PYTHONSTARTUP \
+  GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_CONFIG GIT_CONFIG_GLOBAL \
+  GIT_CONFIG_SYSTEM GIT_CONFIG_PARAMETERS GIT_SSH GIT_SSH_COMMAND \
+  LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT LD_DEBUG LD_DEBUG_OUTPUT LD_PROFILE \
+  DYLD_INSERT_LIBRARIES DYLD_LIBRARY_PATH DYLD_FRAMEWORK_PATH \
+  DYLD_FALLBACK_LIBRARY_PATH DYLD_FALLBACK_FRAMEWORK_PATH DYLD_PRINT_TO_FILE
+
+TRUSTED_PYTHON=/usr/bin/python3
+ORG=HomericIntelligence
 OUTPUT_PATH=""
 ALL_ORG=0
 
-while [ $# -gt 0 ]; do
-  case "${1:-}" in
-    --output)  OUTPUT_PATH="${2:-}"
-               [ -z "$OUTPUT_PATH" ] && { printf 'error: --output requires a path\n' >&2; exit 2; }
-               shift 2 ;;
-    --all)     ALL_ORG=1; shift ;;
-    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *)         printf 'error: unknown arg: %s\n' "$1" >&2; exit 2 ;;
+usage() {
+  printf '%s\n' \
+    'Usage: tools/probe-code-quality.sh [--all] [--output PATH]' \
+    '' \
+    'Read current GitHub security and Code Quality state without changing it.' \
+    '' \
+    '  --all          Probe the complete live organization inventory.' \
+    '  --output PATH  Atomically publish the same Markdown report to PATH.'
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output)
+      OUTPUT_PATH="${2:-}"
+      [ -n "$OUTPUT_PATH" ] || {
+        printf 'error: --output requires a path\n' >&2
+        exit 2
+      }
+      shift 2
+      ;;
+    --all) ALL_ORG=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) printf 'error: unknown arg: %s\n' "$1" >&2; exit 2 ;;
   esac
 done
 
-command -v gh >/dev/null 2>&1 || { printf 'error: gh CLI not found\n' >&2; exit 2; }
-command -v jq >/dev/null 2>&1 || { printf 'error: jq not found\n'     >&2; exit 2; }
+case "$OSTYPE" in
+  linux*) ;;
+  *)
+    printf 'error: Linux descendant containment is required for GitHub reads\n' >&2
+    exit 2
+    ;;
+esac
 
-ORG="HomericIntelligence"
+[ -x "$TRUSTED_PYTHON" ] || {
+  printf 'error: trusted Python runtime is unavailable\n' >&2
+  exit 2
+}
 
-# Build the repository list. Capture discovery before mapfile so a failed
-# command cannot become an empty, successful inventory.
-repo_names=""
+script_location="${BASH_SOURCE[0]}"
+case "$script_location" in
+  */*) script_parent="${script_location%/*}"; [ -n "$script_parent" ] || script_parent=/ ;;
+  *) script_parent=. ;;
+esac
+TOOL_ROOT="$(CDPATH='' cd -P -- "$script_parent" && pwd -P)" || {
+  printf 'error: tool directory is unavailable\n' >&2
+  exit 2
+}
+REPO_ROOT="${TOOL_ROOT%/tools}"
+REPORT_RUNTIME="$REPO_ROOT/scripts/safe_report_publish.py"
+[ -f "$REPORT_RUNTIME" ] && [ ! -L "$REPORT_RUNTIME" ] || {
+  printf 'error: trusted reporting runtime is unavailable\n' >&2
+  exit 2
+}
+
+PYTHON_ENV_LAUNCHER_SOURCE=$(/bin/cat <<'PY'
+import os
+import sys
+
+if (
+    len(sys.argv) < 4
+    or sys.argv[1] != "/usr/bin/python3"
+    or sys.argv[2] not in {"plain", "github"}
+):
+    raise SystemExit(2)
+profile = sys.argv[2]
+environment = {
+    "HOME": "/dev/null",
+    "LC_ALL": "C",
+    "PATH": "/usr/bin:/bin",
+    "TZ": "UTC",
+    "XDG_CONFIG_HOME": "/dev/null",
+}
+if profile == "github":
+    for name in ("GH_TOKEN", "GITHUB_TOKEN"):
+        value = os.environ.get(name)
+        if value:
+            environment[name] = value
+os.execve(sys.argv[1], [sys.argv[1], *sys.argv[3:]], environment)
+PY
+)
+minimal_python() {
+  "$TRUSTED_PYTHON" -I -S -c "$PYTHON_ENV_LAUNCHER_SOURCE" \
+    "$TRUSTED_PYTHON" plain "$@"
+}
+github_python() {
+  "$TRUSTED_PYTHON" -I -S -c "$PYTHON_ENV_LAUNCHER_SOURCE" \
+    "$TRUSTED_PYTHON" github "$@"
+}
+
+load_runtime_source() {
+  minimal_python -I -S - "$1" <<'PY'
+import os
+import stat
+import sys
+
+maximum = 2 * 1024 * 1024
+path = os.path.abspath(sys.argv[1])
+parent, name = os.path.dirname(path), os.path.basename(path)
+if os.path.realpath(parent) != parent or name in {"", ".", ".."}:
+    raise SystemExit(2)
+parent_descriptor = os.open(
+    parent,
+    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+)
+try:
+    named = os.lstat(name, dir_fd=parent_descriptor)
+    if (
+        not stat.S_ISREG(named.st_mode)
+        or named.st_uid != os.geteuid()
+        or named.st_nlink != 1
+        or stat.S_IMODE(named.st_mode) & 0o022
+        or named.st_size > maximum
+    ):
+        raise OSError("unsafe runtime source")
+    descriptor = os.open(
+        name,
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        dir_fd=parent_descriptor,
+    )
+    try:
+        opened = os.fstat(descriptor)
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, 65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > maximum:
+                raise OSError("runtime source is too large")
+            chunks.append(chunk)
+        content = b"".join(chunks)
+        final = os.fstat(descriptor)
+        rebound = os.lstat(name, dir_fd=parent_descriptor)
+        def record(value):
+            return (
+                value.st_ctime_ns,
+                value.st_dev,
+                value.st_gid,
+                value.st_ino,
+                value.st_mode,
+                value.st_mtime_ns,
+                value.st_nlink,
+                value.st_size,
+                value.st_uid,
+            )
+        if record(opened) != record(final) or record(opened) != record(rebound):
+            raise OSError("runtime source changed")
+    finally:
+        os.close(descriptor)
+finally:
+    os.close(parent_descriptor)
+source = content.decode("utf-8")
+compile(source, path, "exec")
+sys.stdout.write(source)
+PY
+}
+
+RUNTIME_SOURCE=$(load_runtime_source "$REPORT_RUNTIME") || {
+  printf 'error: trusted reporting runtime is unavailable\n' >&2
+  exit 2
+}
+PROCESS_SUPERVISOR_SOURCE=$(/bin/cat <<'PY'
+import ctypes
+import os
+from pathlib import Path
+import select
+import signal
+import subprocess
+import sys
+import time
+from contextlib import contextmanager
+
+
+PR_SET_CHILD_SUBREAPER = 36
+PR_GET_CHILD_SUBREAPER = 37
+PR_SET_PDEATHSIG = 1
+QUIESCENT_SCANS = 2
+TERMINATION_SIGNALS = frozenset({signal.SIGINT, signal.SIGTERM, signal.SIGHUP})
+
+
+class TerminationRequested(BaseException):
+    def __init__(self, signal_number):
+        super().__init__(f"termination requested by signal {signal_number}")
+        self.signal_number = signal_number
+
+
+@contextmanager
+def blocked_termination_signals():
+    blocker = getattr(signal, "pthread_sigmask", None)
+    pending_reader = getattr(signal, "sigpending", None)
+    if not callable(blocker) or not callable(pending_reader):
+        raise NotImplementedError("signal-safe process acquisition is unavailable")
+    previous = blocker(signal.SIG_BLOCK, TERMINATION_SIGNALS)
+    try:
+        yield
+    finally:
+        blocker(signal.SIG_SETMASK, previous)
+
+
+def raise_for_pending_termination():
+    pending = signal.sigpending()
+    for signal_number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        if signal_number in pending:
+            raise TerminationRequested(signal_number)
+
+
+def enable_subreaper():
+    if not sys.platform.startswith("linux"):
+        raise NotImplementedError("Linux descendant containment is unavailable")
+    if not callable(getattr(os, "pidfd_open", None)) or not callable(
+        getattr(signal, "pidfd_send_signal", None)
+    ):
+        raise NotImplementedError("Linux pidfd containment is unavailable")
+    library = ctypes.CDLL(None, use_errno=True)
+    prctl = getattr(library, "prctl", None)
+    if prctl is None:
+        raise NotImplementedError("Linux subreaper containment is unavailable")
+    prctl.argtypes = [
+        ctypes.c_int,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
+    ]
+    prctl.restype = ctypes.c_int
+    parent = os.getppid()
+    ctypes.set_errno(0)
+    if prctl(PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0) != 0:
+        number = ctypes.get_errno() or 1
+        raise OSError(number, "could not bind supervisor lifetime to its parent")
+    if os.getppid() != parent:
+        os.kill(os.getpid(), signal.SIGTERM)
+    ctypes.set_errno(0)
+    if prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+        number = ctypes.get_errno() or 1
+        raise OSError(number, "could not enable Linux subreaper containment")
+    state = ctypes.c_int(0)
+    ctypes.set_errno(0)
+    if prctl(PR_GET_CHILD_SUBREAPER, ctypes.addressof(state), 0, 0, 0) != 0:
+        number = ctypes.get_errno() or 1
+        raise OSError(number, "could not verify Linux subreaper containment")
+    if state.value != 1:
+        raise OSError("Linux subreaper containment is not active")
+
+
+def process_identity(process_id):
+    try:
+        with open(f"/proc/{process_id}/stat", "rb", buffering=0) as stream:
+            content = stream.read(65537)
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    if len(content) > 65536:
+        raise OSError("process identity exceeds its byte ceiling")
+    closing = content.rfind(b")")
+    fields = content[closing + 2 :].split() if closing >= 1 else ()
+    if len(fields) <= 19:
+        raise OSError("process identity is malformed")
+    return process_id, int(fields[19])
+
+
+def child_pids(process_id):
+    task_root = Path(f"/proc/{process_id}/task")
+    try:
+        tasks = tuple(entry.name for entry in task_root.iterdir() if entry.name.isdecimal())
+    except (FileNotFoundError, ProcessLookupError):
+        return set()
+    children = set()
+    for task in tasks:
+        try:
+            with open(task_root / task / "children", "rb", buffering=0) as stream:
+                content = stream.read(1048577)
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        if len(content) > 1048576:
+            raise OSError("child inventory exceeds its byte ceiling")
+        for value in content.split():
+            if not value.isdigit():
+                raise OSError("child inventory is malformed")
+            child = int(value)
+            if child > 1:
+                children.add(child)
+    return children
+
+
+class Scope:
+    def __init__(self):
+        enable_subreaper()
+        self.supervisor = os.getpid()
+        self.baseline = {
+            identity
+            for process_id in child_pids(self.supervisor)
+            if (identity := process_identity(process_id)) is not None
+        }
+        self.owned = {}
+
+    def track(self, process_id, root=False):
+        identity = process_identity(process_id)
+        if identity is None or (not root and identity in self.baseline):
+            return False
+        previous = self.owned.get(process_id)
+        if previous is not None and previous[0] == identity[1]:
+            return False
+        if previous is not None:
+            os.close(previous[1])
+        descriptor = os.pidfd_open(process_id, 0)
+        if process_identity(process_id) != identity:
+            os.close(descriptor)
+            raise OSError("process identity changed while binding")
+        self.owned[process_id] = (identity[1], descriptor)
+        return True
+
+    def track_root(self, process_id):
+        if not self.track(process_id, root=True):
+            raise OSError("could not bind command leader")
+        return self.owned[process_id][1]
+
+    def discover(self):
+        discovered = False
+        while True:
+            candidates = set(child_pids(self.supervisor))
+            for process_id, (start_time, _descriptor) in tuple(self.owned.items()):
+                if process_identity(process_id) == (process_id, start_time):
+                    candidates.update(child_pids(process_id))
+            changed = False
+            for process_id in candidates:
+                changed = self.track(process_id) or changed
+            discovered = discovered or changed
+            if not changed:
+                return discovered
+
+    @staticmethod
+    def exited(descriptor):
+        ready, _writable, _exceptional = select.select([descriptor], [], [], 0)
+        return bool(ready)
+
+    def live_snapshot(self):
+        return tuple(
+            (process_id, descriptor)
+            for process_id, (_start, descriptor) in self.owned.items()
+            if not self.exited(descriptor)
+        )
+
+    def live(self):
+        self.discover()
+        live = self.live_snapshot()
+        if live:
+            return live
+        # A bound parent can fork after its children inventory was read and
+        # exit before its pidfd is checked. Once every bound parent is exited,
+        # consecutive unchanged rescans bind all children adopted here.
+        unchanged_scans = 0
+        while unchanged_scans < QUIESCENT_SCANS:
+            changed = self.discover()
+            live = self.live_snapshot()
+            if live:
+                return live
+            unchanged_scans = 0 if changed else unchanged_scans + 1
+        return ()
+
+    def descendants(self, leader):
+        return tuple(item for item in self.live() if item[0] != leader)
+
+    def send(self, descriptor, number):
+        try:
+            signal.pidfd_send_signal(descriptor, number, None, 0)
+        except ProcessLookupError:
+            pass
+
+    def terminate(self, process):
+        cleanup_error = None
+        for number, interval in ((signal.SIGTERM, 0.25), (signal.SIGKILL, 0.5)):
+            deadline = time.monotonic() + interval
+            while True:
+                try:
+                    live = self.live()
+                except BaseException as error:
+                    cleanup_error = cleanup_error or error
+                    live = tuple(
+                        (process_id, descriptor)
+                        for process_id, (_start, descriptor) in self.owned.items()
+                        if not self.exited(descriptor)
+                    )
+                if not live:
+                    break
+                for _process_id, descriptor in live:
+                    try:
+                        self.send(descriptor, number)
+                    except BaseException as error:
+                        cleanup_error = cleanup_error or error
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.01)
+        if self.live():
+            raise OSError("owned descendants survived containment cleanup")
+        process.wait(timeout=1.0)
+        self.reap(process.pid)
+        if cleanup_error is not None:
+            raise OSError("descendant containment cleanup failed") from cleanup_error
+
+    def reap(self, leader):
+        for process_id in tuple(self.owned):
+            if process_id == leader:
+                continue
+            try:
+                os.waitpid(process_id, os.WNOHANG)
+            except ChildProcessError:
+                pass
+
+    def close(self):
+        for _start, descriptor in self.owned.values():
+            os.close(descriptor)
+        self.owned.clear()
+
+
+def main():
+    if len(sys.argv) < 6 or sys.argv[3:5] != ["run", "gh"]:
+        raise ValueError("invalid supervised runtime invocation")
+    python_path, runtime_source = sys.argv[1:3]
+    runtime_arguments = sys.argv[3:]
+    deadline_ns = int(runtime_arguments[2])
+    if deadline_ns <= time.monotonic_ns():
+        print(
+            "error: trusted command timed out: operation deadline expired",
+            file=sys.stderr,
+        )
+        raise SystemExit(124)
+    with blocked_termination_signals():
+        scope = Scope()
+        process = None
+        try:
+            raise_for_pending_termination()
+            process = subprocess.Popen(
+                [python_path, "-I", "-S", "-c", runtime_source, *runtime_arguments],
+                stdin=subprocess.DEVNULL,
+                close_fds=True,
+                start_new_session=True,
+            )
+            leader = scope.track_root(process.pid)
+            raise_for_pending_termination()
+            while not scope.exited(leader):
+                raise_for_pending_termination()
+                remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
+                if remaining <= 0:
+                    raise TimeoutError("trusted command operation deadline expired")
+                scope.discover()
+                select.select([leader], [], [], min(0.05, remaining))
+            if scope.descendants(process.pid):
+                scope.terminate(process)
+                print(
+                    "error: trusted command left a detached descendant",
+                    file=sys.stderr,
+                )
+                raise SystemExit(124)
+            raise_for_pending_termination()
+            status = process.wait(timeout=1.0)
+            scope.reap(process.pid)
+            raise SystemExit(status)
+        except TerminationRequested:
+            if process is not None:
+                scope.terminate(process)
+            raise
+        except TimeoutError as error:
+            if process is not None:
+                scope.terminate(process)
+            print(f"error: trusted command timed out: {error}", file=sys.stderr)
+            raise SystemExit(124)
+        except SystemExit:
+            raise
+        except BaseException:
+            if process is not None:
+                scope.terminate(process)
+            print("error: Linux command containment failed", file=sys.stderr)
+            raise SystemExit(2)
+        finally:
+            scope.close()
+
+
+main()
+PY
+)
+runtime_call() {
+  if [ "${1:-}" = run ]; then
+    github_python -I -S -c "$PROCESS_SUPERVISOR_SOURCE" \
+      "$TRUSTED_PYTHON" "$RUNTIME_SOURCE" "$@"
+  else
+    minimal_python -I -S -c "$RUNTIME_SOURCE" "$@"
+  fi
+}
+
+REMOTE_TIMEOUT_SECONDS=30
+REMOTE_OUTPUT_BYTES=8388608
+REMOTE_OPERATION_SECONDS=300
+
+OUTPUT_BINDING=""
+if [ -n "$OUTPUT_PATH" ]; then
+  OUTPUT_BINDING=$(runtime_call bind "$OUTPUT_PATH" replace) || exit 2
+fi
+OPERATION_DEADLINE=$(runtime_call deadline "$REMOTE_OPERATION_SECONDS") || exit 2
+GH_BINDING=$(runtime_call resolve gh "") || exit 2
+gh_call() {
+  runtime_call run gh "$OPERATION_DEADLINE" "$REMOTE_TIMEOUT_SECONDS" \
+    "$REMOTE_OUTPUT_BYTES" "$GH_BINDING" "$@"
+}
+
+parse_repository_pages() {
+  minimal_python -I -S -c '
+import json
+import re
+import sys
+pages = json.load(sys.stdin)
+if not isinstance(pages, list) or not pages:
+    raise SystemExit(1)
+seen = set()
+for page in pages:
+    if not isinstance(page, list):
+        raise SystemExit(1)
+    for item in page:
+        name = item.get("name") if isinstance(item, dict) else None
+        if not isinstance(name, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", name) is None:
+            raise SystemExit(1)
+        if name in seen or len(seen) >= 1000:
+            raise SystemExit(1)
+        seen.add(name)
+        print(name)
+if not seen:
+    raise SystemExit(1)
+'
+}
+
+parse_feature_state() {
+  minimal_python -I -S -c '
+import json
+import sys
+key = sys.argv[1]
+value = json.load(sys.stdin)
+if not isinstance(value, dict):
+    raise SystemExit(1)
+security = value.get("security_and_analysis")
+entry = security.get(key) if isinstance(security, dict) else None
+if not isinstance(entry, dict):
+    raise SystemExit(1)
+enabled = entry.get("enabled")
+status = entry.get("status")
+has_enabled = "enabled" in entry
+has_status = "status" in entry
+if has_enabled and type(enabled) is not bool:
+    raise SystemExit(1)
+if has_status and status not in {"enabled", "disabled"}:
+    raise SystemExit(1)
+states = []
+if has_enabled:
+    states.append("enabled" if enabled else "disabled")
+if has_status:
+    states.append(status)
+if not states or any(state != states[0] for state in states[1:]):
+    raise SystemExit(1)
+print(states[0])
+' "$1"
+}
+
+parse_scanning_state() {
+  minimal_python -I -S -c '
+import json
+import sys
+value = json.load(sys.stdin)
+state = value.get("state") if isinstance(value, dict) else None
+if state not in {"configured", "not-configured"}:
+    raise SystemExit(1)
+print(state)
+'
+}
+
+parse_quality_state() {
+  minimal_python -I -S -c '
+import json
+import sys
+decoder = json.JSONDecoder()
+source = sys.stdin.read()
+value, end = decoder.raw_decode(source)
+if source[end:].strip() or not isinstance(value, dict):
+    raise SystemExit(1)
+enabled = value.get("enabled")
+if enabled is True:
+    print("enabled")
+elif enabled is False:
+    print("disabled")
+else:
+    raise SystemExit(1)
+'
+}
+
+valid_json_object() {
+  minimal_python -I -S -c '
+import json
+import sys
+value = json.load(sys.stdin)
+if not isinstance(value, dict):
+    raise SystemExit(1)
+'
+}
+
+REPOS=()
 if [ "$ALL_ORG" -eq 1 ]; then
-  repo_names=$(gh api --paginate "orgs/${ORG}/repos?per_page=100&type=all" \
-    --jq '.[].name') \
-    || { printf 'error: could not read the organization repository inventory\n' >&2; exit 2; }
-else
-  REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" \
-    || { printf 'error: not inside a git repository\n' >&2; exit 2; }
-  [ -f "$REPO_ROOT/.gitmodules" ] && [ ! -L "$REPO_ROOT/.gitmodules" ] \
-    || { printf 'error: canonical gitlink inventory is not a direct regular file\n' >&2; exit 2; }
-  submodule_inventory=$(git config --file "$REPO_ROOT/.gitmodules" \
-    --get-regexp '^submodule\..*\.(path|url)$') \
-    || { printf 'error: could not read the canonical gitlink inventory\n' >&2; exit 2; }
-  [ -n "$submodule_inventory" ] \
-    || { printf 'error: canonical gitlink inventory is empty\n' >&2; exit 2; }
-
-  path_names=()
-  path_values=()
-  url_names=()
-  url_values=()
-  url_repos=()
-  while IFS=' ' read -r key value extra; do
-    if [ -z "$key" ] || [ -z "$value" ] || [ -n "${extra:-}" ]; then
-      printf 'error: malformed canonical gitlink inventory\n' >&2
-      exit 2
-    fi
-    case "$key" in
-      submodule.*.path)
-        name="${key#submodule.}"
-        name="${name%.path}"
-        if [ "submodule.${name}.path" != "$key" ] \
-          || [[ ! "$name" =~ ^[A-Za-z0-9._/-]+$ ]] \
-          || [[ ! "$value" =~ ^[A-Za-z0-9._/-]+$ ]]; then
-          printf 'error: malformed canonical gitlink path inventory\n' >&2
-          exit 2
-        fi
-        case "/$name/" in */./*|*/../*|*//* )
-          printf 'error: unsafe canonical gitlink name: %s\n' "$name" >&2
-          exit 2
-          ;;
-        esac
-        case "/$value/" in */./*|*/../*|*//* )
-          printf 'error: unsafe canonical gitlink path: %s\n' "$value" >&2
-          exit 2
-          ;;
-        esac
-        for known_name in ${path_names[@]+"${path_names[@]}"}; do
-          [ "$known_name" != "$name" ] || {
-            printf 'error: duplicate canonical gitlink name: %s\n' "$name" >&2
-            exit 2
-          }
-        done
-        for known_path in ${path_values[@]+"${path_values[@]}"}; do
-          [ "$known_path" != "$value" ] || {
-            printf 'error: duplicate canonical gitlink path: %s\n' "$value" >&2
-            exit 2
-          }
-        done
-        path_names+=("$name")
-        path_values+=("$value")
-        ;;
-      submodule.*.url)
-        name="${key#submodule.}"
-        name="${name%.url}"
-        if [ "submodule.${name}.url" != "$key" ] \
-          || [[ ! "$name" =~ ^[A-Za-z0-9._/-]+$ ]]; then
-          printf 'error: malformed canonical gitlink URL inventory\n' >&2
-          exit 2
-        fi
-        case "/$name/" in */./*|*/../*|*//* )
-          printf 'error: unsafe canonical gitlink URL name: %s\n' "$name" >&2
-          exit 2
-          ;;
-        esac
-        if [[ ! "$value" =~ ^https://github\.com/HomericIntelligence/[A-Za-z0-9][A-Za-z0-9._-]*\.git$ ]]; then
-          printf 'error: unsupported canonical gitlink URL: %s\n' "$value" >&2
-          exit 2
-        fi
-        repo_name="${value##*/}"
-        repo_name="${repo_name%.git}"
-        for known_name in ${url_names[@]+"${url_names[@]}"}; do
-          [ "$known_name" != "$name" ] || {
-            printf 'error: duplicate canonical gitlink URL name: %s\n' "$name" >&2
-            exit 2
-          }
-        done
-        for known_url in ${url_values[@]+"${url_values[@]}"}; do
-          [ "$known_url" != "$value" ] || {
-            printf 'error: duplicate canonical gitlink URL: %s\n' "$value" >&2
-            exit 2
-          }
-        done
-        url_names+=("$name")
-        url_values+=("$value")
-        url_repos+=("$repo_name")
-        ;;
-      *)
-        printf 'error: unsupported canonical gitlink inventory key\n' >&2
-        exit 2
-        ;;
-    esac
-  done <<< "$submodule_inventory"
-
-  [ "${#path_names[@]}" -eq "${#url_names[@]}" ] || {
-    printf 'error: canonical gitlink path and URL inventories differ\n' >&2
+  pages=$(gh_call api --paginate --slurp \
+    "orgs/${ORG}/repos?per_page=100&type=all") || {
+    printf 'error: could not read the organization repository inventory\n' >&2
     exit 2
   }
-  repo_names="Odysseus"
-  path_index=0
-  while [ "$path_index" -lt "${#path_names[@]}" ]; do
-    name="${path_names[$path_index]}"
-    matched_repo=""
-    url_index=0
-    while [ "$url_index" -lt "${#url_names[@]}" ]; do
-      if [ "${url_names[$url_index]}" = "$name" ]; then
-        matched_repo="${url_repos[$url_index]}"
-        break
-      fi
-      url_index=$((url_index + 1))
-    done
-    [ -n "$matched_repo" ] || {
-      printf 'error: canonical gitlink URL missing for %s\n' "$name" >&2
-      exit 2
-    }
-    repo_names+=$'\n'"$matched_repo"
-    path_index=$((path_index + 1))
-  done
-fi
-REPOS=()
-while IFS= read -r repo_name; do
-  [ -n "$repo_name" ] || continue
-  if [ "${#repo_name}" -gt 100 ] \
-    || [[ ! "$repo_name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
-    printf 'error: unsafe repository name in inventory\n' >&2
+  names=$(printf '%s' "$pages" | parse_repository_pages) || {
+    printf 'error: organization repository inventory is malformed\n' >&2
     exit 2
-  fi
-  for existing_repo in ${REPOS[@]+"${REPOS[@]}"}; do
-    if [ "$existing_repo" = "$repo_name" ]; then
-      printf 'error: duplicate repository in inventory: %s\n' "$repo_name" >&2
-      exit 2
-    fi
-  done
-  REPOS+=("$repo_name")
-done <<< "$repo_names"
-
-[ "${#REPOS[@]}" -gt 0 ] || { printf 'error: no repos resolved\n' >&2; exit 2; }
-
-# Probe a boolean inside security_and_analysis.
-sa_state() {
-  local repo="$1" key="$2" v
-  v=$(gh api "repos/${ORG}/${repo}" --jq ".security_and_analysis.${key}.enabled" 2>/dev/null) \
-    || { echo 'unavailable'; return; }
-  case "$v" in
-    true)  echo "enabled" ;;
-    false) echo "disabled" ;;
-    *)     echo "unavailable" ;;
-  esac
-}
-
-# Code scanning default-setup readback.
-cs_state() {
-  local repo="$1" v
-  v=$(gh api "repos/${ORG}/${repo}/code-scanning/default-setup" --jq '.state' 2>/dev/null) \
-    || { echo "unavailable"; return; }
-  case "$v" in
-    configured|not-configured) echo "$v" ;;
-    *)                         echo "unavailable" ;;
-  esac
-}
-
-# Code Quality endpoint probe.
-cq_state() {
-  local repo="$1" body parsed
-  body=$(gh api "repos/${ORG}/${repo}/code-quality" 2>/dev/null) \
-    || { echo "unavailable"; return; }
-  [ -n "$body" ] || { echo "unavailable"; return; }
-  if ! parsed=$(jq -r '
-    if .enabled    == true  then "enabled"
-    elif .enabled  == false then "disabled"
-    else "unavailable"
-    end
-  ' <<< "$body" 2>/dev/null); then
-    echo "unavailable"
-    return
-  fi
-  case "$parsed" in
-    enabled|disabled|unavailable) echo "$parsed" ;;
-    *)                            echo "unavailable" ;;
-  esac
-}
-
-# Read whether a path is present. A failed request is not proof of absence.
-has_file() {
-  local repo="$1" path="$2"
-  if gh api "repos/${ORG}/${repo}/contents/${path}" >/dev/null 2>&1; then
-    echo "present"
-  else
-    echo "unavailable"
-  fi
-}
-
-# Build the Markdown report.
-report=""
-append() { report+="$1"$'\n'; }
-generated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-  || { printf 'error: could not produce a report timestamp\n' >&2; exit 2; }
-if [ "$ALL_ORG" -eq 1 ]; then
+  }
+  while IFS= read -r name; do REPOS+=("$name"); done <<< "$names"
   scope_mode="organization inventory"
 else
+  GITMODULES="$REPO_ROOT/.gitmodules"
+  inventory=$(runtime_call inventory "$GITMODULES") || {
+    printf 'error: could not read the canonical gitlink inventory\n' >&2
+    exit 2
+  }
+  REPOS=(Odysseus)
+  while IFS= read -r repository; do
+    [ -n "$repository" ] || continue
+    REPOS+=("${repository#"$ORG/"}")
+  done <<< "$inventory"
   scope_mode="canonical gitlink inventory plus Odysseus"
 fi
+[ "${#REPOS[@]}" -gt 0 ] || {
+  printf 'error: no repos resolved\n' >&2
+  exit 2
+}
 
+feature_state() {
+  local repo="$1" key="$2" body
+  body=$(gh_call api "repos/${ORG}/${repo}") || {
+    printf 'warn: repository feature read unavailable for %s\n' "$repo" >&2
+    printf 'unavailable'
+    return
+  }
+  printf '%s' "$body" | parse_feature_state "$key" 2>/dev/null \
+    || printf 'unavailable'
+}
+
+scanning_state() {
+  local repo="$1" body
+  body=$(gh_call api "repos/${ORG}/${repo}/code-scanning/default-setup") || {
+    printf 'warn: Code Scanning read unavailable for %s\n' "$repo" >&2
+    printf 'unavailable'
+    return
+  }
+  printf '%s' "$body" | parse_scanning_state 2>/dev/null \
+    || printf 'unavailable'
+}
+
+quality_state() {
+  local repo="$1" body
+  body=$(gh_call api "repos/${ORG}/${repo}/code-quality") || {
+    printf 'warn: Code Quality read unavailable for %s\n' "$repo" >&2
+    printf 'unavailable'
+    return
+  }
+  printf '%s' "$body" | parse_quality_state 2>/dev/null \
+    || printf 'unavailable'
+}
+
+file_state() {
+  local repo="$1" path="$2" body
+  body=$(gh_call api "repos/${ORG}/${repo}/contents/${path}") || {
+    printf 'unavailable'
+    return
+  }
+  if printf '%s' "$body" | valid_json_object 2>/dev/null; then
+    printf 'present'
+  else
+    printf 'unavailable'
+  fi
+}
+
+generated_at=$(minimal_python -I -S -c \
+  'import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))') \
+  || { printf 'error: report timestamp unavailable\n' >&2; exit 2; }
+report=""
+append() { report+="$1"$'\n'; }
 append "# HomericIntelligence — repository security readbacks"
 append ""
 append "> Generated $generated_at by \`tools/probe-code-quality.sh\`"
 append "> Scope: **${#REPOS[@]}** repositories (mode: $scope_mode)"
 append ""
-
 append "## Per-repo state"
 append ""
 append "| Repo | Dependabot sec | Secret scan | Push prot | Code Scanning | Code Quality | CQ config |"
 append "|------|----|----|----|----|----|----|"
 
 for repo in "${REPOS[@]}"; do
-  d=$(sa_state "$repo" "dependabot_security_updates")
-  s=$(sa_state "$repo" "secret_scanning")
-  p=$(sa_state "$repo" "secret_scanning_push_protection")
-  cs=$(cs_state  "$repo")
-  cq=$(cq_state  "$repo")
-  cqc=$(has_file "$repo" ".github/codeql/code-quality-config.yml")
-  append "| ${repo} | ${d} | ${s} | ${p} | ${cs} | ${cq} | ${cqc} |"
+  dependabot=$(feature_state "$repo" dependabot_security_updates)
+  secrets=$(feature_state "$repo" secret_scanning)
+  push=$(feature_state "$repo" secret_scanning_push_protection)
+  scanning=$(scanning_state "$repo")
+  quality=$(quality_state "$repo")
+  config=$(file_state "$repo" .github/codeql/code-quality-config.yml)
+  append "| $repo | $dependabot | $secrets | $push | $scanning | $quality | $config |"
 done
 
 append ""
 append "## Readback boundaries"
 append ""
 append "- \`enabled\` and \`disabled\` are explicit API values from this run."
-append "- \`unavailable\` means that transport, authorization, endpoint, or schema state did not permit a readback. Do not infer a setting from it."
+append "- \`unavailable\` means transport, authorization, endpoint, or schema state did not permit a readback. Do not infer a setting from it."
 append "- \`present\` means that this run read the listed repository path."
 append "- Consult current official GitHub documentation and \`docs/runbooks/disable-code-quality.md\` before a separately authorized setting change."
 
 if [ -n "$OUTPUT_PATH" ]; then
-  if [ -L "$OUTPUT_PATH" ] \
-    || { [ -e "$OUTPUT_PATH" ] && [ ! -f "$OUTPUT_PATH" ]; }; then
-    printf 'error: unsafe output target: %s\n' "$OUTPUT_PATH" >&2
-    exit 2
-  fi
-  if ! python3 - "$OUTPUT_PATH" "$report" <<'PY'
-import hashlib
-import os
-import secrets
-import stat
-import sys
-
-
-destination, report = sys.argv[1:]
-payload = report.encode("utf-8")
-
-
-def required_flag(name):
-    value = getattr(os, name, None)
-    if value is None:
-        raise OSError(f"{name} is required for safe report publication")
-    return value
-
-
-def direct_regular_state(parent_descriptor, name):
-    try:
-        value = os.lstat(name, dir_fd=parent_descriptor)
-    except FileNotFoundError:
-        return None
-    if not stat.S_ISREG(value.st_mode) or value.st_nlink != 1:
-        raise OSError("report target is not one direct regular file")
-    return value.st_dev, value.st_ino
-
-
-def descriptor_digest(descriptor):
-    digest = hashlib.sha256()
-    os.lseek(descriptor, 0, os.SEEK_SET)
-    while True:
-        chunk = os.read(descriptor, 65536)
-        if not chunk:
-            return digest.digest()
-        digest.update(chunk)
-
-
-def write_all(descriptor, content):
-    remaining = memoryview(content)
-    while remaining:
-        written = os.write(descriptor, remaining)
-        if written <= 0:
-            raise OSError("report write made no progress")
-        remaining = remaining[written:]
-
-
-source_descriptor = -1
-published_descriptor = -1
-parent_descriptor = -1
-source_name = ""
-source_identity = None
-source_created = False
-try:
-    destination = os.path.abspath(destination)
-    destination_parent = os.path.dirname(destination)
-    destination_name = os.path.basename(destination)
-    if destination_name in {"", ".", ".."}:
-        raise OSError("invalid report destination name")
-
-    directory_flags = os.O_RDONLY | required_flag("O_DIRECTORY") \
-        | required_flag("O_NOFOLLOW") | required_flag("O_CLOEXEC")
-    parent_descriptor = os.open(destination_parent, directory_flags)
-    parent_state = os.fstat(parent_descriptor)
-    if not stat.S_ISDIR(parent_state.st_mode):
-        raise OSError("report parent is not a directory")
-
-    def verify_parent_binding():
-        rebound_descriptor = os.open(destination_parent, directory_flags)
-        try:
-            rebound_state = os.fstat(rebound_descriptor)
-            if (
-                not stat.S_ISDIR(rebound_state.st_mode)
-                or (rebound_state.st_dev, rebound_state.st_ino)
-                    != (parent_state.st_dev, parent_state.st_ino)
-            ):
-                raise OSError("report parent changed during publication")
-        finally:
-            os.close(rebound_descriptor)
-
-    verify_parent_binding()
-    initial_destination = direct_regular_state(
-        parent_descriptor,
-        destination_name,
-    )
-    source_flags = os.O_RDWR | required_flag("O_NOFOLLOW") \
-        | required_flag("O_CLOEXEC")
-    create_flags = source_flags | os.O_CREAT | os.O_EXCL
-    for _ in range(16):
-        candidate = f".odysseus-report-{secrets.token_hex(16)}.tmp"
-        try:
-            source_descriptor = os.open(
-                candidate,
-                create_flags,
-                0o600,
-                dir_fd=parent_descriptor,
-            )
-        except FileExistsError:
-            continue
-        source_name = candidate
-        source_created = True
-        break
-    if source_descriptor < 0:
-        raise OSError("could not create temporary report")
-
-    source_state = os.fstat(source_descriptor)
-    source_identity = source_state.st_dev, source_state.st_ino
-    named_source = os.lstat(source_name, dir_fd=parent_descriptor)
-    if (
-        not stat.S_ISREG(source_state.st_mode)
-        or source_state.st_nlink != 1
-        or source_identity
-            != (named_source.st_dev, named_source.st_ino)
-    ):
-        raise OSError("temporary report changed before publication")
-    write_all(source_descriptor, payload)
-    source_digest = descriptor_digest(source_descriptor)
-    if source_digest != hashlib.sha256(payload).digest():
-        raise OSError("temporary report writeback diverged")
-    os.fsync(source_descriptor)
-
-    verify_parent_binding()
-    rebound_destination = direct_regular_state(
-        parent_descriptor,
-        destination_name,
-    )
-    if rebound_destination != initial_destination:
-        raise OSError("report target changed before publication")
-    rebound_source = os.lstat(source_name, dir_fd=parent_descriptor)
-    if source_identity \
-            != (rebound_source.st_dev, rebound_source.st_ino):
-        raise OSError("temporary report changed before rename")
-
-    os.replace(
-        source_name,
-        destination_name,
-        src_dir_fd=parent_descriptor,
-        dst_dir_fd=parent_descriptor,
-    )
-    source_created = False
-    published_descriptor = os.open(
-        destination_name,
-        source_flags,
-        dir_fd=parent_descriptor,
-    )
-    published_state = os.fstat(published_descriptor)
-    named_destination = os.lstat(destination_name, dir_fd=parent_descriptor)
-    if (
-        not stat.S_ISREG(published_state.st_mode)
-        or published_state.st_nlink != 1
-        or (published_state.st_dev, published_state.st_ino)
-            != source_identity
-        or (published_state.st_dev, published_state.st_ino)
-            != (named_destination.st_dev, named_destination.st_ino)
-        or descriptor_digest(published_descriptor) != source_digest
-    ):
-        raise OSError("published report failed descriptor readback")
-    os.fsync(published_descriptor)
-    verify_parent_binding()
-    os.fsync(parent_descriptor)
-except (NotImplementedError, OSError, TypeError, ValueError):
-    raise SystemExit("error: unsafe report publication target")
-finally:
-    if source_created and parent_descriptor >= 0 and source_name:
-        try:
-            named_source = os.lstat(source_name, dir_fd=parent_descriptor)
-            if source_identity == (named_source.st_dev, named_source.st_ino):
-                os.unlink(source_name, dir_fd=parent_descriptor)
-        except FileNotFoundError:
-            pass
-    for descriptor in (
-        published_descriptor,
-        source_descriptor,
-        parent_descriptor,
-    ):
-        if descriptor >= 0:
-            os.close(descriptor)
-PY
-  then
-    exit 2
-  fi
+  printf '%s' "$report" \
+    | runtime_call publish "$OUTPUT_PATH" replace "$OUTPUT_BINDING" || exit 2
 fi
-
 printf '%s' "$report"

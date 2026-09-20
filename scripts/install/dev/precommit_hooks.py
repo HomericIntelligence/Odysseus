@@ -2,12 +2,16 @@
 """Install configured pre-commit hooks through one isolated boundary."""
 
 import argparse
+import csv
 import ctypes
 import errno
 import fcntl
 import hashlib
+import io
 import math
 import os
+import platform
+import pwd
 import re
 import resource
 import secrets
@@ -18,8 +22,10 @@ import signal
 import stat
 import subprocess
 import sys
-import tempfile
+import sysconfig
+import tarfile
 import time
+import zlib
 from dataclasses import dataclass
 
 
@@ -42,6 +48,7 @@ HEADER = (
     "",
     "# start templated",
 )
+MANAGED_HEADER = ("#!/bin/bash -p",) + HEADER[1:]
 TAIL = (
     "# end templated",
     "",
@@ -57,10 +64,1001 @@ TAIL = (
     "    exit 1",
     "fi",
 )
+MANAGED_RUNTIME_MARKER = "# Odysseus managed pre-commit runtime v1"
+MANAGED_RUNTIME_BOOTSTRAP = r"""import atexit
+import fcntl
+import hashlib
+import os
+import resource
+import select
+import signal
+import stat
+import sys
+import time
+import zlib
+
+
+owned_descriptors = set()
+WALL_SECONDS = 30
+CANCELLATION_SIGNALS = (
+    signal.SIGTERM,
+    signal.SIGHUP,
+    signal.SIGINT,
+    signal.SIGQUIT,
+)
+cancelled = [None]
+active_signal_mask = set()
+wall_deadline = None
+
+
+def own(descriptor):
+    owned_descriptors.add(descriptor)
+    return descriptor
+
+
+def close_owned(descriptor):
+    if descriptor in owned_descriptors:
+        owned_descriptors.remove(descriptor)
+        os.close(descriptor)
+
+
+def close_all_owned():
+    for descriptor in tuple(owned_descriptors):
+        try:
+            close_owned(descriptor)
+        except OSError:
+            pass
+
+
+atexit.register(close_all_owned)
+
+
+def abort(message):
+    sys.stderr.write("pre-commit runtime: {}\n".format(message))
+    raise SystemExit(1)
+
+
+def identity(value):
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_uid,
+        value.st_gid,
+        value.st_nlink,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def bind(path, expected_digest, system=False, executable=True):
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
+    try:
+        named = os.lstat(path)
+        descriptor = own(os.open(path, flags))
+        opened = os.fstat(descriptor)
+    except OSError as error:
+        abort("cannot bind {}: {}".format(path, error))
+    allowed_owners = (0,) if system else (0, os.geteuid())
+    if (
+        identity(named) != identity(opened)
+        or not stat.S_ISREG(opened.st_mode)
+        or opened.st_uid not in allowed_owners
+        or (not system and opened.st_nlink != 1)
+        or (executable and not opened.st_mode & 0o111)
+        or opened.st_size > 256 * 1024 * 1024
+    ):
+        abort("unsafe executable route: {}".format(path))
+    if system and stat.S_IMODE(opened.st_mode) & 0o022:
+        abort("system interpreter is writable: {}".format(path))
+    if system:
+        current = os.path.dirname(path)
+        while True:
+            directory = os.lstat(current)
+            if (
+                not stat.S_ISDIR(directory.st_mode)
+                or directory.st_uid != 0
+                or stat.S_IMODE(directory.st_mode) & 0o022
+            ):
+                abort("unsafe interpreter directory: {}".format(current))
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+    data = os.pread(descriptor, opened.st_size + 1, 0)
+    try:
+        after = os.fstat(descriptor)
+        named_after = os.lstat(path)
+    except OSError as error:
+        abort("cannot revalidate {}: {}".format(path, error))
+    if (
+        len(data) != opened.st_size
+        or identity(opened) != identity(after)
+        or identity(after) != identity(named_after)
+        or hashlib.sha256(data).hexdigest() != expected_digest
+    ):
+        abort("executable provenance changed: {}".format(path))
+    return descriptor, data
+
+
+def cancellation_handler(signum, _frame):
+    if cancelled[0] is None:
+        cancelled[0] = signum
+
+
+def establish_limits():
+    global active_signal_mask, wall_deadline
+    requested = (
+        (resource.RLIMIT_CPU, 10, "CPU"),
+        (resource.RLIMIT_NOFILE, 2048, "file-descriptor"),
+        (resource.RLIMIT_FSIZE, 8 * 1024 * 1024, "file-size"),
+        (resource.RLIMIT_CORE, 0, "core-file"),
+        (resource.RLIMIT_NPROC, 128, "process-count"),
+    )
+    if not hasattr(resource, "RLIMIT_AS"):
+        abort("Linux memory containment is unavailable")
+    requested += ((resource.RLIMIT_AS, 512 * 1024 * 1024, "memory"),)
+    for key, wanted, label in requested:
+        try:
+            _soft, hard = resource.getrlimit(key)
+            value = wanted if hard == resource.RLIM_INFINITY else min(wanted, hard)
+            resource.setrlimit(key, (value, value))
+            actual, _hard = resource.getrlimit(key)
+        except (OSError, ValueError) as error:
+            abort("cannot establish {} limit: {}".format(label, error))
+        if actual == resource.RLIM_INFINITY or actual > wanted:
+            abort("cannot verify {} limit".format(label))
+    if not hasattr(signal, "pthread_sigmask"):
+        abort("cancellation signal-mask containment is unavailable")
+    previous_handlers = {}
+    previous_mask = None
+    try:
+        previous_mask = signal.pthread_sigmask(
+            signal.SIG_BLOCK, set(CANCELLATION_SIGNALS)
+        )
+        for signum in CANCELLATION_SIGNALS:
+            previous_handlers[signum] = signal.getsignal(signum)
+            signal.signal(signum, cancellation_handler)
+        active_signal_mask = set(previous_mask).difference(CANCELLATION_SIGNALS)
+        signal.pthread_sigmask(signal.SIG_SETMASK, active_signal_mask)
+        current_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+    except (OSError, RuntimeError, ValueError) as error:
+        if previous_mask is not None:
+            try:
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+            except (OSError, RuntimeError, ValueError):
+                pass
+        for signum, handler in previous_handlers.items():
+            try:
+                signal.signal(signum, handler)
+            except (OSError, RuntimeError, ValueError):
+                pass
+        abort("cannot establish cancellation signal state: {}".format(error))
+    if any(signum in current_mask for signum in CANCELLATION_SIGNALS):
+        abort("cannot verify cancellation signal mask")
+    if any(
+        signal.getsignal(signum) is not cancellation_handler
+        for signum in CANCELLATION_SIGNALS
+    ):
+        abort("cannot verify cancellation signal handlers")
+    wall_deadline = time.monotonic() + WALL_SECONDS
+
+
+def child_status(wait_status):
+    value = os.waitstatus_to_exitcode(wait_status)
+    return 128 - value if value < 0 else value
+
+
+def leader_exited(pid):
+    try:
+        result = os.waitid(
+            os.P_PID,
+            pid,
+            os.WEXITED | os.WNOHANG | os.WNOWAIT,
+        )
+    except ChildProcessError:
+        abort("managed runtime leader was reaped outside its supervisor")
+    return result is not None
+
+
+def terminate_group(pid):
+    for signum, grace in ((signal.SIGTERM, 0.25), (signal.SIGKILL, 0.1)):
+        try:
+            os.killpg(pid, signum)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + grace
+        while time.monotonic() < deadline:
+            time.sleep(min(0.01, deadline - time.monotonic()))
+
+
+def reap_extinct_group(pid):
+    _pid, status = os.waitpid(pid, 0)
+    deadline = time.monotonic() + 1
+    while True:
+        try:
+            os.killpg(pid, 0)
+        except ProcessLookupError:
+            return status
+        if time.monotonic() >= deadline:
+            abort("managed runtime descendants survived process-group teardown")
+        time.sleep(0.01)
+
+
+def execute_supervised(arguments, environment):
+    if not all(
+        hasattr(os, name)
+        for name in ("fork", "setsid", "waitid", "WNOWAIT", "waitstatus_to_exitcode")
+    ):
+        abort("managed runtime supervision is unavailable")
+    if cancelled[0] is not None:
+        signum = cancelled[0]
+        sys.stderr.write(
+            "pre-commit runtime: cancelled by {}\n".format(
+                signal.Signals(signum).name
+            )
+        )
+        return 128 + signum
+
+    if wall_deadline is None:
+        abort("managed runtime wall deadline is unavailable")
+    read_ready, write_ready = os.pipe2(os.O_CLOEXEC)
+    read_gate, write_gate = os.pipe2(os.O_CLOEXEC)
+    signal.pthread_sigmask(signal.SIG_BLOCK, set(CANCELLATION_SIGNALS))
+    try:
+        pid = os.fork()
+    except OSError as error:
+        signal.pthread_sigmask(signal.SIG_SETMASK, active_signal_mask)
+        for descriptor in (read_ready, write_ready, read_gate, write_gate):
+            os.close(descriptor)
+        abort("cannot create managed runtime supervisor: {}".format(error))
+    if pid == 0:
+        try:
+            os.close(read_ready)
+            os.close(write_gate)
+            os.setsid()
+            for signum in CANCELLATION_SIGNALS:
+                signal.signal(signum, signal.SIG_DFL)
+            signal.pthread_sigmask(signal.SIG_SETMASK, active_signal_mask)
+            os.write(write_ready, b"1")
+            os.close(write_ready)
+            if os.read(read_gate, 1) != b"1":
+                raise RuntimeError("supervisor did not release boundary execution")
+            os.close(read_gate)
+            os.execve(boundary_fd, arguments, environment)
+        except BaseException as error:
+            try:
+                os.write(
+                    2,
+                    "pre-commit runtime: boundary execution failed: {}\n".format(
+                        error
+                    ).encode("utf-8", "backslashreplace"),
+                )
+            finally:
+                os._exit(126)
+
+    signal.pthread_sigmask(signal.SIG_SETMASK, active_signal_mask)
+    os.close(write_ready)
+    os.close(read_gate)
+    ready = False
+    released = False
+    deadline = wall_deadline
+    try:
+        while not ready:
+            if cancelled[0] is not None or time.monotonic() >= deadline:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                os.waitpid(pid, 0)
+                if cancelled[0] is not None:
+                    signum = cancelled[0]
+                    sys.stderr.write(
+                        "pre-commit runtime: cancelled by {}\n".format(
+                            signal.Signals(signum).name
+                        )
+                    )
+                    return 128 + signum
+                sys.stderr.write(
+                    "pre-commit runtime: wall-clock deadline exceeded\n"
+                )
+                return 124
+            readable, _writable, _exceptional = select.select(
+                [read_ready],
+                [],
+                [],
+                max(0, min(0.05, deadline - time.monotonic())),
+            )
+            if readable:
+                ready = os.read(read_ready, 1) == b"1"
+                if not ready:
+                    _pid, status = os.waitpid(pid, 0)
+                    return child_status(status)
+
+        os.write(write_gate, b"1")
+        os.close(write_gate)
+        released = True
+
+        while True:
+            signum = cancelled[0]
+            if signum is not None:
+                terminate_group(pid)
+                status = reap_extinct_group(pid)
+                sys.stderr.write(
+                    "pre-commit runtime: cancelled by {}\n".format(
+                        signal.Signals(signum).name
+                    )
+                )
+                return 128 + signum
+            if time.monotonic() >= deadline:
+                terminate_group(pid)
+                reap_extinct_group(pid)
+                sys.stderr.write(
+                    "pre-commit runtime: wall-clock deadline exceeded\n"
+                )
+                return 124
+            if leader_exited(pid):
+                terminate_group(pid)
+                status = reap_extinct_group(pid)
+                return child_status(status)
+            time.sleep(max(0, min(0.02, deadline - time.monotonic())))
+    finally:
+        os.close(read_ready)
+        if not released:
+            os.close(write_gate)
+
+
+def bind_directory(path, label):
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_DIRECTORY
+    try:
+        named = os.lstat(path)
+        descriptor = own(os.open(path, flags))
+        opened = os.fstat(descriptor)
+    except OSError as error:
+        abort("cannot bind {}: {}".format(label, error))
+    if (
+        os.path.realpath(path) != os.path.abspath(path)
+        or identity(named) != identity(opened)
+        or not stat.S_ISDIR(opened.st_mode)
+        or opened.st_uid not in (0, os.geteuid())
+        or stat.S_IMODE(opened.st_mode) & 0o022
+    ):
+        close_owned(descriptor)
+        abort("unsafe {} route: {}".format(label, path))
+    return descriptor
+
+
+def payload(encoded, expected_digest, label):
+    try:
+        data = bytes.fromhex(encoded)
+    except ValueError:
+        abort("{} payload is not hexadecimal".format(label))
+    if hashlib.sha256(data).hexdigest() != expected_digest:
+        abort("{} payload provenance changed".format(label))
+    return data
+
+
+def seal(data, executable, label):
+    if not sys.platform.startswith("linux") or not hasattr(os, "memfd_create"):
+        abort("immutable {} snapshots are unavailable".format(label))
+    names = (
+        "F_ADD_SEALS", "F_GET_SEALS", "F_SEAL_SEAL",
+        "F_SEAL_SHRINK", "F_SEAL_GROW", "F_SEAL_WRITE",
+    )
+    if not all(hasattr(fcntl, name) for name in names):
+        abort("immutable {} seals are unavailable".format(label))
+    flags = getattr(os, "MFD_CLOEXEC", 0x0001) | getattr(
+        os, "MFD_ALLOW_SEALING", 0x0002
+    )
+    descriptor = own(os.memfd_create("odysseus-managed-hook", flags))
+    try:
+        view = memoryview(data)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                abort("{} snapshot write made no progress".format(label))
+            view = view[written:]
+        os.fchmod(descriptor, 0o500 if executable else 0o400)
+        required = (
+            fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_GROW
+            | fcntl.F_SEAL_WRITE | fcntl.F_SEAL_SEAL
+        )
+        fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, required)
+        opened = os.fstat(descriptor)
+        if (
+            opened.st_size != len(data)
+            or fcntl.fcntl(descriptor, fcntl.F_GET_SEALS) & required != required
+            or hashlib.sha256(os.pread(descriptor, len(data), 0)).digest()
+            != hashlib.sha256(data).digest()
+        ):
+            abort("{} snapshot could not be authenticated".format(label))
+        return descriptor
+    except BaseException:
+        close_owned(descriptor)
+        raise
+
+
+(
+    source_path, source_digest, interpreter_path, interpreter_digest,
+    git_path, git_digest, boundary_path, boundary_digest,
+    hook_type, hook_path, repository,
+    git_directory, git_common, trusted_home, config_hex, config_digest,
+    policy_hex, policy_digest, pyyaml_manifest_hex, closure_manifest_hex,
+    *hook_args
+) = sys.argv[1:]
+establish_limits()
+source_origin_fd, source_data = bind(source_path, source_digest)
+interpreter_fd, _interpreter_data = bind(
+    interpreter_path, interpreter_digest, system=True
+)
+git_origin_fd, git_data = bind(git_path, git_digest, system=True)
+boundary_fd, _boundary_data = bind(
+    boundary_path, boundary_digest, system=True
+)
+config_data = payload(config_hex, config_digest, "configuration")
+policy_data = payload(policy_hex, policy_digest, "policy")
+try:
+    original_pyyaml_manifest = bytes.fromhex(pyyaml_manifest_hex).decode(
+        "utf-8", "strict"
+    )
+except (ValueError, UnicodeError):
+    abort("PyYAML manifest payload is invalid")
+try:
+    closure_manifest = zlib.decompress(bytes.fromhex(closure_manifest_hex)).decode(
+        "utf-8", "strict"
+    )
+except (ValueError, UnicodeError, zlib.error):
+    abort("provider closure manifest payload is invalid")
+source_fd = seal(source_data, True, "provider")
+git_fd = seal(git_data, True, "Git provider")
+config_fd = seal(config_data, False, "configuration")
+close_owned(source_origin_fd)
+close_owned(git_origin_fd)
+closure_fds = []
+original_closure_routes = []
+closure_expected_digests = {}
+site_roots = []
+closure_bytes = 0
+for record in closure_manifest.splitlines():
+    try:
+        path, digest = record.rsplit("\t", 1)
+    except ValueError:
+        abort("provider closure manifest is malformed")
+    if (
+        not os.path.isabs(path)
+        or os.path.realpath(path) != path
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        abort("provider closure manifest is malformed")
+    if path in original_closure_routes or len(original_closure_routes) >= 768:
+        abort("provider closure manifest entry budget exceeded")
+    origin_fd, data = bind(path, digest, executable=False)
+    closure_bytes += len(data)
+    if closure_bytes > 64 * 1024 * 1024:
+        close_owned(origin_fd)
+        abort("provider closure manifest byte budget exceeded")
+    try:
+        sealed_fd = seal(data, bool(os.fstat(origin_fd).st_mode & 0o111), path)
+    finally:
+        close_owned(origin_fd)
+    closure_fds.append(sealed_fd)
+    original_closure_routes.append(path)
+    closure_expected_digests[path] = digest
+    parts = path.split(os.sep)
+    for category in ("site-packages", "dist-packages"):
+        if category in parts:
+            root = os.sep.join(parts[: parts.index(category) + 1]) or os.sep
+            if root not in site_roots:
+                site_roots.append(root)
+if not original_closure_routes or len(site_roots) != 1:
+    abort("provider closure manifest does not name one package root")
+original_site_root = site_roots[0]
+private_site_root = "/odysseus/provider/site-packages"
+closure_routes = []
+for path in original_closure_routes:
+    if os.path.commonpath((path, original_site_root)) != original_site_root:
+        abort("provider closure escapes its package root")
+    relative = os.path.relpath(path, original_site_root)
+    if relative in ("", ".") or relative.startswith(".." + os.sep):
+        abort("provider closure contains an invalid package route")
+    route = os.path.normpath(os.path.join(private_site_root, relative))
+    if os.path.commonpath((route, private_site_root)) != private_site_root:
+        abort("provider closure contains an invalid private route")
+    closure_routes.append(route)
+private_yaml_manifest = []
+seen_yaml_routes = set()
+for record in original_pyyaml_manifest.splitlines():
+    try:
+        path, digest = record.rsplit("=", 1)
+    except ValueError:
+        abort("PyYAML manifest payload is invalid")
+    if (
+        path in seen_yaml_routes
+        or closure_expected_digests.get(path) != digest
+        or path not in original_closure_routes
+    ):
+        abort("PyYAML manifest is outside the provider closure")
+    seen_yaml_routes.add(path)
+    relative = os.path.relpath(path, original_site_root)
+    private_yaml_manifest.append(
+        "{}={}".format(os.path.join(private_site_root, relative), digest)
+    )
+if not private_yaml_manifest:
+    abort("PyYAML manifest is empty")
+pyyaml_manifest = "\n".join(private_yaml_manifest) + "\n"
+site_roots = [private_site_root]
+route_descriptors = []
+try:
+    interpreter_now = os.lstat(interpreter_path)
+    if identity(interpreter_now) != identity(os.fstat(interpreter_fd)):
+        abort("interpreter changed before execution")
+    if os.execve not in os.supports_fd:
+        abort("descriptor-bound interpreter execution is unavailable")
+    routes = []
+    for label, route in (
+        ("system runtime", "/usr"),
+        ("repository", repository),
+        ("Git directory", git_directory),
+        ("Git common directory", git_common),
+    ):
+        route = os.path.realpath(route)
+        if route == "/usr" or not route.startswith("/usr/"):
+            if route not in [item[0] for item in routes]:
+                descriptor = bind_directory(route, label)
+                routes.append((route, descriptor))
+                route_descriptors.append(descriptor)
+    os.set_inheritable(source_fd, True)
+    os.set_inheritable(git_fd, True)
+    os.set_inheritable(config_fd, True)
+    os.set_inheritable(interpreter_fd, True)
+    os.lseek(source_fd, 0, os.SEEK_SET)
+    os.lseek(git_fd, 0, os.SEEK_SET)
+    os.lseek(config_fd, 0, os.SEEK_SET)
+    os.lseek(interpreter_fd, 0, os.SEEK_SET)
+    trusted_interpreter = "/odysseus/runtime/python"
+    trusted_provider = "/odysseus/runtime/pre-commit"
+    trusted_git = "/odysseus/runtime/git"
+    trusted_config = "/odysseus/runtime/config.yaml"
+    environment = {
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_NO_LAZY_FETCH": "1",
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "HOME": "/tmp/home",
+            "LANG": "C",
+            "LC_ALL": "C",
+            "ODYSSEUS_MANAGED_PRE_COMMIT": "1",
+            "ODYSSEUS_PRE_COMMIT_INTERPRETER": trusted_interpreter,
+            "ODYSSEUS_PRE_COMMIT_INTERPRETER_SHA256": interpreter_digest,
+            "ODYSSEUS_PRE_COMMIT_PROVIDER": trusted_provider,
+            "ODYSSEUS_PRE_COMMIT_PROVIDER_SHA256": source_digest,
+            "ODYSSEUS_PRE_COMMIT_GIT": trusted_git,
+            "ODYSSEUS_PRE_COMMIT_GIT_SHA256": git_digest,
+            "ODYSSEUS_PRE_COMMIT_POLICY_HEX": policy_hex,
+            "ODYSSEUS_PRE_COMMIT_POLICY_SHA256": policy_digest,
+            "ODYSSEUS_PYYAML_MANIFEST": pyyaml_manifest,
+            "ODYSSEUS_EXECUTABLE_ORIGIN": trusted_provider,
+            "PATH": "/usr/bin:/bin",
+            "PRE_COMMIT_HOME": "/tmp/pre-commit",
+            "PYTHONNOUSERSITE": "1",
+            "TMPDIR": "/tmp",
+    }
+    index = os.environ.get("GIT_INDEX_FILE")
+    if index and os.path.isabs(index) and "\x00" not in index:
+        normalized_index = os.path.abspath(index)
+        if any(
+            os.path.commonpath((normalized_index, root)) == root
+            for root in (repository, git_directory, git_common)
+        ):
+            environment["GIT_INDEX_FILE"] = normalized_index
+
+    mount_arguments = []
+    created = {"/tmp", "/dev", "/proc", "/odysseus", "/odysseus/runtime"}
+
+    def create_parents(route):
+        current = os.path.dirname(route)
+        parents = []
+        while current not in ("", "/"):
+            parents.append(current)
+            current = os.path.dirname(current)
+        for parent in reversed(parents):
+            if parent not in created:
+                mount_arguments.extend(("--dir", parent))
+                created.add(parent)
+
+    for route, descriptor in routes:
+        create_parents(route)
+        os.set_inheritable(descriptor, True)
+        mount_arguments.extend(("--ro-bind-fd", str(descriptor), route))
+        created.add(route)
+
+    mounted_original_root = any(
+        os.path.commonpath((original_site_root, route)) == route
+        for route, _descriptor in routes
+    )
+    if mounted_original_root:
+        if original_site_root in [route for route, _descriptor in routes]:
+            abort("provider package root cannot replace an authority root")
+        create_parents(original_site_root)
+        mount_arguments.extend((
+            "--tmpfs", original_site_root,
+            "--remount-ro", original_site_root,
+        ))
+        created.add(original_site_root)
+
+    for descriptor, route in zip(closure_fds, closure_routes):
+        create_parents(route)
+        os.set_inheritable(descriptor, True)
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        mount_arguments.extend((
+            "--perms", "0500" if os.fstat(descriptor).st_mode & 0o111 else "0400",
+            "--ro-bind-data", str(descriptor), route,
+        ))
+        created.add(route)
+    mount_arguments.extend(("--remount-ro", private_site_root))
+
+    provider_loader = (
+        "import sys; count=int(sys.argv[1]); roots=sys.argv[2:2+count]; "
+        "script=sys.argv[2+count]; sys.path[:0]=roots; "
+        "sys.argv=sys.argv[2+count:]; "
+        "exec(compile(open(script,'rb').read(),script,'exec'),"
+        "{'__name__':'__main__','__file__':script})"
+    )
+    provider_arguments = [
+        trusted_interpreter,
+        "-I",
+        "-S",
+        "-c",
+        provider_loader,
+        str(len(site_roots)),
+    ] + site_roots + [
+        trusted_provider,
+        "hook-impl",
+        "--config={}".format(trusted_config),
+        "--hook-type={}".format(hook_type),
+        "--hook-dir",
+        os.path.dirname(os.path.abspath(hook_path)),
+        "--",
+    ] + hook_args
+    system_aliases = [
+        "--symlink", "usr/bin", "/bin",
+        "--symlink", "usr/sbin", "/sbin",
+        "--symlink", "usr/lib", "/lib",
+    ]
+    if os.path.isdir("/usr/lib64"):
+        system_aliases.extend(("--symlink", "usr/lib64", "/lib64"))
+    arguments = [
+        boundary_path,
+        "--die-with-parent",
+        "--unshare-user",
+        "--disable-userns",
+        "--unshare-pid",
+        "--unshare-net",
+        "--unshare-ipc",
+        "--cap-drop",
+        "ALL",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--tmpfs",
+        "/tmp",
+        "--dir",
+        "/tmp/home",
+        "--dir",
+        "/tmp/pre-commit",
+        "--dir",
+        "/odysseus",
+        "--dir",
+        "/odysseus/runtime",
+        "--perms",
+        "0555",
+        "--ro-bind-data",
+        str(interpreter_fd),
+        trusted_interpreter,
+        "--perms",
+        "0555",
+        "--ro-bind-data",
+        str(source_fd),
+        trusted_provider,
+        "--perms",
+        "0555",
+        "--ro-bind-data",
+        str(git_fd),
+        trusted_git,
+        "--perms",
+        "0444",
+        "--ro-bind-data",
+        str(config_fd),
+        trusted_config,
+    ] + system_aliases + mount_arguments + [
+        "--chdir",
+        repository,
+        "--",
+    ] + provider_arguments
+    raise SystemExit(execute_supervised(arguments, environment))
+except BaseException:
+    close_owned(source_fd)
+    close_owned(git_fd)
+    close_owned(config_fd)
+    close_owned(interpreter_fd)
+    close_owned(boundary_fd)
+    for descriptor in route_descriptors:
+        close_owned(descriptor)
+    for descriptor in closure_fds:
+        close_owned(descriptor)
+    raise
+"""
+MANAGED_RUNTIME_LOADER = (
+    "exec(compile(bytes.fromhex({!r}).decode('utf-8'),"
+    "'<odysseus-precommit-runtime>','exec'))"
+).format(MANAGED_RUNTIME_BOOTSTRAP.encode("utf-8").hex())
+MANAGED_RUNTIME_EXEC = (
+    "exec /usr/bin/python3 -I -S -c "
+    + shlex.quote(MANAGED_RUNTIME_LOADER)
+    + ' "$PRE_COMMIT_SOURCE" "$PRE_COMMIT_SHA256"'
+    + ' "$PRE_COMMIT_INTERPRETER" "$PRE_COMMIT_INTERPRETER_SHA256"'
+    + ' "$TRUSTED_GIT" "$TRUSTED_GIT_SHA256"'
+    + ' "$TRUSTED_BOUNDARY" "$TRUSTED_BOUNDARY_SHA256"'
+    + ' "$HOOK_TYPE" "$0" "$TRUSTED_REPOSITORY"'
+    + ' "$TRUSTED_GIT_DIRECTORY" "$TRUSTED_GIT_COMMON" "$TRUSTED_HOME"'
+    + ' "$TRUSTED_CONFIG_HEX" "$TRUSTED_CONFIG_SHA256"'
+    + ' "$TRUSTED_POLICY_HEX" "$TRUSTED_POLICY_SHA256"'
+    + ' "$TRUSTED_PYYAML_MANIFEST_HEX" "$TRUSTED_CLOSURE_MANIFEST_HEX" "$@"'
+)
 READ_FLAGS = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
 DIR_FLAGS = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_DIRECTORY
 VERSION = re.compile(r"pre-commit ([0-9]+\.[0-9]+(?:\.[0-9]+)?)")
 MAX_TOOL_BYTES = 256 * 1024 * 1024
+MAX_DIRECTORY_ENTRIES = 4096
+MAX_CONFIGS = 128
+MAX_REPOSITORIES = 128
+MAX_CONFIG_BYTES = 64 * 1024 * 1024
+MAX_HOOK_ENTRIES = 256
+MAX_HOOK_BYTES = 16 * 1024 * 1024
+MAX_RUNTIME_SIBLINGS = 512
+MAX_RUNTIME_BYTES = 64 * 1024 * 1024
+SCRATCH_ROOT = "/tmp/odysseus-precommit"
+SCRATCH_HOME = SCRATCH_ROOT + "/home"
+SCRATCH_CACHE = SCRATCH_ROOT + "/cache"
+SCRATCH_REPO = SCRATCH_ROOT + "/repo"
+RUNTIME_ROOT = SCRATCH_ROOT + "/runtime"
+GENERATOR_DRIVER = rb"""#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+pre_commit=$1
+pre_commit_origin=$2
+git=$3
+git_origin=$4
+mode=$5
+repo=/tmp/odysseus-precommit/repo
+hooks=$repo/.git/hooks
+
+ODYSSEUS_EXECUTABLE_ORIGIN="$git_origin" \
+    "$git" -c init.templateDir= init -q "$repo" >&2
+cd "$repo"
+ODYSSEUS_EXECUTABLE_ORIGIN="$pre_commit_origin" \
+    "$pre_commit" validate-config .pre-commit-config.yaml >&2
+ODYSSEUS_EXECUTABLE_ORIGIN="$pre_commit_origin" \
+    "$pre_commit" install >&2
+
+inventory=()
+for hook in commit-msg post-checkout post-commit post-merge post-rewrite \
+    pre-commit pre-merge-commit pre-push pre-rebase prepare-commit-msg; do
+    if [[ -e "$hooks/$hook" ]]; then
+        [[ -f "$hooks/$hook" && ! -L "$hooks/$hook" ]] || {
+            printf 'unsafe generated hook: %s\n' "$hook" >&2
+            exit 77
+        }
+        inventory+=("$hook")
+    fi
+done
+for path in "$hooks"/*; do
+    [[ -e "$path" || -L "$path" ]] || continue
+    name=${path##*/}
+    case "$name" in
+        *.sample|commit-msg|post-checkout|post-commit|post-merge|post-rewrite|\
+pre-commit|pre-merge-commit|pre-push|pre-rebase|prepare-commit-msg) ;;
+        *) printf 'unexpected generated hook: %s\n' "$name" >&2; exit 78 ;;
+    esac
+done
+(( ${#inventory[@]} > 0 )) || {
+    printf 'pre-commit discovered no install hook types\n' >&2
+    exit 79
+}
+declare -A expected=()
+for hook in "${inventory[@]}"; do
+    expected["$hook"]=1
+done
+
+if [[ "$mode" == install ]]; then
+    for hook in "${inventory[@]}"; do
+        /bin/rm -f -- "$hooks/$hook"
+    done
+    install_args=(install --install-hooks)
+    for hook in "${inventory[@]}"; do
+        install_args+=(--hook-type "$hook")
+    done
+    ODYSSEUS_EXECUTABLE_ORIGIN="$pre_commit_origin" \
+        "$pre_commit" "${install_args[@]}" >&2
+fi
+
+for hook in "${inventory[@]}"; do
+    [[ -f "$hooks/$hook" && ! -L "$hooks/$hook" ]] || {
+        printf 'missing generated hook: %s\n' "$hook" >&2
+        exit 80
+    }
+done
+for path in "$hooks"/*; do
+    [[ -e "$path" || -L "$path" ]] || continue
+    name=${path##*/}
+    case "$name" in
+        *.sample) ;;
+        commit-msg|post-checkout|post-commit|post-merge|post-rewrite|\
+pre-commit|pre-merge-commit|pre-push|pre-rebase|prepare-commit-msg)
+            [[ ${expected["$name"]+present} ]] || {
+                printf 'install added an undiscovered hook: %s\n' "$name" >&2
+                exit 81
+            }
+            ;;
+        *) printf 'unexpected installed hook: %s\n' "$name" >&2; exit 82 ;;
+    esac
+done
+exec /usr/bin/tar --format=ustar -cf - -C "$hooks" -- "${inventory[@]}"
+"""
+
+
+class OperationDeadline:
+    """One monotonic deadline shared by the complete installer invocation."""
+
+    def __init__(self, timeout):
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise SetupError("timeout must be finite and positive")
+        self.expires = time.monotonic() + timeout
+
+    def remaining(self, label="installer operation"):
+        value = self.expires - time.monotonic()
+        if value <= 0:
+            raise SetupError("{} exceeded the installer deadline".format(label))
+        return value
+
+    def check(self, label="installer operation"):
+        self.remaining(label)
+
+
+class OperationBudget:
+    """One invocation-wide deadline and unique graph count/byte ledger."""
+
+    def __init__(self, deadline):
+        self.deadline = deadline
+        self.directory_entries = set()
+        self.configurations = set()
+        self.repositories = set()
+        self.hook_entries = set()
+        self.hook_bytes = 0
+        self.config_bytes = 0
+        self.runtime_entries = set()
+        self.runtime_files = set()
+        self.runtime_bytes = 0
+
+    def check(self, label="installer operation"):
+        self.deadline.check(label)
+
+    def remaining(self, label="installer operation"):
+        return self.deadline.remaining(label)
+
+    def charge_directory_entry(self, directory_token, name):
+        key = (directory_token[0], directory_token[1], os.fsencode(name))
+        if key in self.directory_entries:
+            return
+        self.directory_entries.add(key)
+        if len(self.directory_entries) > MAX_DIRECTORY_ENTRIES:
+            raise SetupError("configuration discovery entry budget exceeded")
+
+    def charge_configuration(self, path, token):
+        key = (os.path.abspath(path), token)
+        if key in self.configurations:
+            return
+        self.configurations.add(key)
+        self.config_bytes += token[6]
+        if len(self.configurations) > MAX_CONFIGS:
+            raise SetupError("configuration count budget exceeded")
+        if self.config_bytes > MAX_CONFIG_BYTES:
+            raise SetupError("configuration byte budget exceeded")
+
+    def charge_repository(self, path):
+        path = os.path.abspath(path)
+        if path in self.repositories:
+            return
+        self.repositories.add(path)
+        if len(self.repositories) > MAX_REPOSITORIES:
+            raise SetupError("repository count budget exceeded")
+
+    def charge_hook(self, directory_token, name, token, size):
+        key = (
+            directory_token[0],
+            directory_token[1],
+            os.fsencode(name),
+            token,
+        )
+        if key in self.hook_entries:
+            return
+        self.hook_entries.add(key)
+        self.hook_bytes += size
+        if len(self.hook_entries) > MAX_HOOK_ENTRIES:
+            raise SetupError("hook inventory entry budget exceeded")
+        if self.hook_bytes > MAX_HOOK_BYTES:
+            raise SetupError("hook inventory byte budget exceeded")
+
+    def charge_runtime_entry(self, directory_token, name):
+        key = (directory_token[0], directory_token[1], os.fsencode(name))
+        if key in self.runtime_entries:
+            return
+        self.runtime_entries.add(key)
+        if len(self.runtime_entries) > MAX_RUNTIME_SIBLINGS:
+            raise SetupError("runtime sibling entry budget exceeded")
+
+    def charge_runtime_file(self, path, token, size):
+        key = (os.path.abspath(path), token)
+        if key in self.runtime_files:
+            return
+        self.runtime_files.add(key)
+        self.runtime_bytes += size
+        if self.runtime_bytes > MAX_RUNTIME_BYTES:
+            raise SetupError("runtime dependency byte budget exceeded")
+
+
+def _operation_budget(value):
+    if isinstance(value, OperationBudget):
+        return value
+    if isinstance(value, OperationDeadline):
+        return OperationBudget(value)
+    return OperationBudget(OperationDeadline(value))
+
+
+def _remaining(timeout, label="installer operation"):
+    if isinstance(timeout, OperationBudget):
+        return timeout.remaining(label)
+    if isinstance(timeout, OperationDeadline):
+        return timeout.remaining(label)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise SetupError("timeout must be finite and positive")
+    return timeout
+
+
+def _bounded_directory_names(
+    descriptor, limit, label, deadline=None, budget_kind=None
+):
+    """Stream one directory twice, enforcing a stable aggregate entry ceiling."""
+
+    def scan():
+        names = []
+        if deadline is not None:
+            deadline.check(label + " inventory")
+        try:
+            iterator = os.scandir(descriptor)
+        except OSError as error:
+            raise SetupError("cannot inventory {}: {}".format(label, error)) from error
+        with iterator:
+            for entry in iterator:
+                if deadline is not None:
+                    deadline.check(label + " inventory")
+                names.append(entry.name)
+                if len(names) > limit:
+                    raise SetupError("{} entry budget exceeded".format(label))
+        return sorted(names, key=os.fsencode)
+
+    names = scan()
+    if names != scan():
+        raise SetupError("{} changed while reading".format(label))
+    if isinstance(deadline, OperationBudget) and budget_kind == "runtime":
+        directory_token = dir_ident(os.fstat(descriptor))
+        for name in names:
+            deadline.charge_runtime_entry(directory_token, name)
+    return names
 
 
 class SetupError(RuntimeError):
@@ -127,7 +1125,7 @@ class BoundFile:
     directory_fd: int = None
 
     @classmethod
-    def open(cls, path, executable=None, directory_fd=None):
+    def open(cls, path, executable=None, directory_fd=None, limit=MAX_RUNTIME_BYTES):
         try:
             named = os.stat(path, dir_fd=directory_fd, follow_symlinks=False)
             descriptor = os.open(path, READ_FLAGS, dir_fd=directory_fd)
@@ -137,9 +1135,13 @@ class BoundFile:
             opened = os.fstat(descriptor)
             if ident(named) != ident(opened) or not stat.S_ISREG(opened.st_mode):
                 raise SetupError("{} is not a direct regular file".format(path))
-            if opened.st_nlink != 1 or opened.st_uid != os.geteuid():
+            if (
+                opened.st_uid not in (0, os.geteuid())
+                or (opened.st_uid == os.geteuid() and opened.st_nlink != 1)
+                or (opened.st_uid == 0 and stat.S_IMODE(opened.st_mode) & 0o022)
+            ):
                 raise SetupError("{} has an unsafe owner or link count".format(path))
-            data = read_fd(descriptor)
+            data = read_fd(descriptor, limit)
             after = os.fstat(descriptor)
             named_after = os.stat(path, dir_fd=directory_fd, follow_symlinks=False)
             if ident(opened) != ident(after) or ident(after) != ident(named_after):
@@ -158,10 +1160,22 @@ class BoundFile:
 
 
 @dataclass
+class TrustedPayload:
+    """Installer-owned fail-closed bytes used when no policy hook is configured."""
+
+    data: bytes
+
+    def verify(self):
+        return None
+
+
+@dataclass
 class BoundTool:
     path: str
     token: tuple
     descriptor: int
+    sealed: bool = False
+    digest: bytes = None
 
     @classmethod
     def open(cls, path):
@@ -191,6 +1205,48 @@ class BoundTool:
     def verify(self):
         if self.descriptor < 0:
             raise SetupError("executable binding is closed: {}".format(self.path))
+        if self.sealed:
+            opened = os.fstat(self.descriptor)
+            stable = (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_mode,
+                opened.st_uid,
+                opened.st_gid,
+                opened.st_nlink,
+                opened.st_size,
+            )
+            expected = (
+                self.token[0],
+                self.token[1],
+                self.token[2],
+                self.token[3],
+                self.token[4],
+                self.token[5],
+                self.token[6],
+            )
+            required_seals = (
+                fcntl.F_SEAL_SEAL
+                | fcntl.F_SEAL_SHRINK
+                | fcntl.F_SEAL_GROW
+                | fcntl.F_SEAL_WRITE
+            )
+            try:
+                seals = fcntl.fcntl(self.descriptor, fcntl.F_GET_SEALS)
+            except (AttributeError, OSError) as error:
+                raise SetupError(
+                    "cannot verify sealed executable {}: {}".format(self.path, error)
+                ) from error
+            if (
+                stable != expected
+                or seals & required_seals != required_seals
+                or hashlib.sha256(os.pread(self.descriptor, opened.st_size, 0)).digest()
+                != self.digest
+            ):
+                raise SetupError(
+                    "sealed executable changed after binding: {}".format(self.path)
+                )
+            return
         try:
             named = os.lstat(self.path)
             opened = os.fstat(self.descriptor)
@@ -207,6 +1263,8 @@ class BoundTool:
         return os.pread(self.descriptor, limit, 0)
 
     def trusted_system_route(self):
+        if self.sealed:
+            return False
         if (
             os.geteuid() == 0
             or self.token[3] != 0
@@ -233,6 +1291,57 @@ class BoundTool:
                 return True
             current = parent
 
+    @classmethod
+    def sealed_bytes(cls, path, data, executable=True):
+        if not sys.platform.startswith("linux") or not hasattr(os, "memfd_create"):
+            raise SetupError(
+                "immutable executable snapshots are unavailable on this platform"
+            )
+        required_names = (
+            "F_ADD_SEALS",
+            "F_GET_SEALS",
+            "F_SEAL_SEAL",
+            "F_SEAL_SHRINK",
+            "F_SEAL_GROW",
+            "F_SEAL_WRITE",
+        )
+        if not all(hasattr(fcntl, name) for name in required_names):
+            raise SetupError("immutable executable seals are unavailable")
+        flags = getattr(os, "MFD_CLOEXEC", 0x0001) | getattr(
+            os, "MFD_ALLOW_SEALING", 0x0002
+        )
+        descriptor = os.memfd_create("odysseus-runtime", flags)
+        try:
+            write_all(descriptor, data)
+            os.fsync(descriptor)
+            os.fchmod(descriptor, 0o500 if executable else 0o400)
+            required_seals = (
+                fcntl.F_SEAL_SHRINK
+                | fcntl.F_SEAL_GROW
+                | fcntl.F_SEAL_WRITE
+                | fcntl.F_SEAL_SEAL
+            )
+            fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, required_seals)
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_uid != os.geteuid()
+                or opened.st_nlink != 0
+                or stat.S_IMODE(opened.st_mode) != (0o500 if executable else 0o400)
+                or opened.st_size != len(data)
+            ):
+                raise SetupError("unsafe sealed executable snapshot")
+            return cls(
+                path,
+                ident(opened),
+                descriptor,
+                sealed=True,
+                digest=hashlib.sha256(data).digest(),
+            )
+        except BaseException:
+            os.close(descriptor)
+            raise
+
     def snapshot(self, tree, name):
         if (
             not name
@@ -243,46 +1352,13 @@ class BoundTool:
             raise SetupError("invalid executable snapshot name")
         tree.verify()
         self.verify()
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
-        descriptor = os.open(name, flags, 0o600, dir_fd=tree.root.descriptor)
-        total = 0
-        try:
-            os.lseek(self.descriptor, 0, os.SEEK_SET)
-            while True:
-                chunk = os.read(self.descriptor, 65536)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > MAX_TOOL_BYTES:
-                    raise SetupError("executable exceeds the allowed size")
-                write_all(descriptor, chunk)
-            if total != self.token[6]:
-                raise SetupError("executable changed while snapshotting")
-            os.fsync(descriptor)
-            os.fchmod(descriptor, 0o500)
-            os.fsync(descriptor)
-            copied = os.fstat(descriptor)
-            if (
-                not stat.S_ISREG(copied.st_mode)
-                or copied.st_uid != os.geteuid()
-                or copied.st_nlink != 1
-                or stat.S_IMODE(copied.st_mode) != 0o500
-                or copied.st_size != total
-            ):
-                raise SetupError("unsafe executable snapshot")
-        finally:
-            os.close(descriptor)
+        data = read_fd(self.descriptor, MAX_TOOL_BYTES)
+        if len(data) != self.token[6]:
+            raise SetupError("executable changed while snapshotting")
+        result = self.sealed_bytes(os.path.join(tree.path, name), data)
         self.verify()
         tree.verify()
-        result = BoundTool.open(os.path.join(tree.path, name))
-        if (
-            result.token[3] != os.geteuid()
-            or result.token[5] != 1
-            or stat.S_IMODE(result.token[2]) != 0o500
-            or result.token[6] != total
-        ):
-            result.close()
-            raise SetupError("unsafe executable snapshot")
+        result.verify()
         return result
 
     def close(self):
@@ -293,35 +1369,53 @@ class BoundTool:
         os.close(descriptor)
 
 
-class ReadOnlyExecutionBoundary:
-    """Run tools with a read-only host and one private writable tree."""
+class NamespaceTree:
+    """Virtual paths created only inside each verified mount namespace."""
 
-    def __init__(self, tree, data_tree, bound_tools):
-        self.tree = tree
-        self.data_tree = data_tree
+    def __init__(self, path):
+        self.path = path
+
+    def verify(self):
+        return None
+
+    def mkdir(self, name):
+        if (
+            not name
+            or name in (".", "..")
+            or os.sep in name
+            or (os.altsep is not None and os.altsep in name)
+        ):
+            raise SetupError("invalid namespace directory name")
+        return os.path.join(self.path, name)
+
+
+class ReadOnlyExecutionBoundary:
+    """Run tools with a read-only host and namespace-owned scratch only."""
+
+    def __init__(self, bound_tools, deadline=None):
+        self.tree = NamespaceTree(RUNTIME_ROOT)
         self.bound_tools = bound_tools
+        self.budget = deadline if isinstance(deadline, OperationBudget) else None
+        self.deadline = (
+            deadline.deadline if isinstance(deadline, OperationBudget) else deadline
+        )
         self.guard = None
         self.kind = None
 
     def require(self):
         if self.guard is not None:
             return
-        if sys.platform.startswith("linux"):
-            candidates = (
-                ("bubblewrap", "/usr/bin/bwrap"),
-                ("bubblewrap", "/bin/bwrap"),
-            )
-        else:
+        if not sys.platform.startswith("linux"):
             raise SetupError(
                 "no secure execution boundary is available on this platform"
             )
-        for kind, path in candidates:
+        for path in ("/usr/bin/bwrap", "/bin/bwrap"):
             try:
                 guard = BoundTool.open(path)
             except SetupError:
                 continue
             if guard.trusted_system_route():
-                self.kind = kind
+                self.kind = "bubblewrap"
                 self.guard = guard
                 self.bound_tools.append(guard)
                 return
@@ -332,7 +1426,6 @@ class ReadOnlyExecutionBoundary:
 
     def verify(self):
         self.tree.verify()
-        self.data_tree.verify()
         if self.guard is not None:
             self.guard.verify()
 
@@ -345,17 +1438,40 @@ class ReadOnlyExecutionBoundary:
             current = os.path.dirname(current)
         return list(reversed(result))
 
-    def wrap(self, command, cwd="/", readonly_paths=()):
+    def wrap(
+        self,
+        command,
+        cwd="/",
+        readonly_paths=(),
+        sealed_files=(),
+        argv0=None,
+    ):
         if self.guard is None:
             return list(command), command[0]
         self.verify()
         if self.kind == "bubblewrap":
+
+            def route_path(value):
+                return value.path if isinstance(value, BoundDir) else os.fspath(value)
+
             directory_args = []
-            for path in (self.tree.path, self.data_tree.path, *readonly_paths):
+            directory_paths = {
+                SCRATCH_ROOT,
+                SCRATCH_HOME,
+                SCRATCH_CACHE,
+                SCRATCH_REPO,
+            }
+            for path in (
+                *(route_path(value) for value in readonly_paths),
+                *(item.path for item in sealed_files),
+            ):
                 for parent in self._parent_directories(path):
-                    if parent not in directory_args:
+                    if parent not in directory_paths:
+                        directory_paths.add(parent)
                         directory_args.extend(("--dir", parent))
             system_args = []
+            if os.path.isdir("/usr/lib64"):
+                system_args.extend(("--symlink", "usr/lib64", "/lib64"))
             if os.path.isdir("/etc/alternatives"):
                 system_args.extend(
                     (
@@ -364,6 +1480,33 @@ class ReadOnlyExecutionBoundary:
                         "--ro-bind",
                         "/etc/alternatives",
                         "/etc/alternatives",
+                    )
+                )
+            sealed_args = []
+            for item in sealed_files:
+                item.verify()
+                os.lseek(item.descriptor, 0, os.SEEK_SET)
+                sealed_args.extend(
+                    (
+                        "--perms",
+                        "0500" if item.token[2] & 0o111 else "0400",
+                        "--ro-bind-data",
+                        str(item.descriptor),
+                        item.path,
+                    )
+                )
+            readonly_args = []
+            for item in readonly_paths:
+                if not isinstance(item, BoundDir):
+                    raise SetupError(
+                        "read-only host routes require an open directory binding"
+                    )
+                item.verify()
+                readonly_args.extend(
+                    (
+                        "--ro-bind-fd",
+                        str(item.descriptor),
+                        item.path,
                     )
                 )
             return (
@@ -396,29 +1539,29 @@ class ReadOnlyExecutionBoundary:
                     "/dev",
                     "--tmpfs",
                     "/tmp",
+                    "--dir",
+                    SCRATCH_ROOT,
+                    "--dir",
+                    SCRATCH_HOME,
+                    "--dir",
+                    SCRATCH_CACHE,
+                    "--dir",
+                    SCRATCH_REPO,
                 ]
                 + system_args
                 + directory_args
-                + [
-                    "--ro-bind",
-                    self.tree.path,
-                    self.tree.path,
-                    "--bind",
-                    self.data_tree.path,
-                    self.data_tree.path,
-                ]
-                + [
-                    value
-                    for path in readonly_paths
-                    for value in ("--ro-bind", path, path)
-                ]
+                + sealed_args
+                + readonly_args
                 + [
                     "--chdir",
                     cwd,
+                ]
+                + (["--argv0", argv0] if argv0 is not None else [])
+                + [
                     "--",
                 ]
                 + list(command),
-                self.guard.path,
+                "/proc/self/fd/{}".format(self.guard.descriptor),
             )
         raise SetupError("invalid read-only executable boundary")
 
@@ -434,6 +1577,7 @@ class BoundExecutable(str):
         interpreter_source=None,
         interpreter_execution=None,
         dependencies=(),
+        python_paths=(),
     ):
         value = super().__new__(cls, source.path)
         value.source = source
@@ -442,6 +1586,7 @@ class BoundExecutable(str):
         value.interpreter_source = interpreter_source
         value.interpreter_execution = interpreter_execution
         value.dependencies = tuple(dependencies)
+        value.python_paths = tuple(python_paths)
         return value
 
 
@@ -463,7 +1608,9 @@ class BoundDir:
                 opened.st_uid == 0 and mode == 0o1777
             )
         else:
-            owner_is_safe = opened.st_uid == os.geteuid()
+            owner_is_safe = opened.st_uid == os.geteuid() or (
+                safe and opened.st_uid == 0 and not mode & 0o022
+            )
         if not owner_is_safe:
             raise SetupError("unsafe directory owner: {}".format(path))
         if safe and mode & 0o022:
@@ -523,6 +1670,29 @@ class BoundDir:
         os.close(descriptor)
 
 
+def _trusted_runtime_library_paths(*tools):
+    library_paths = []
+    for tool in tools:
+        if tool is None or not tool.trusted_system_route():
+            continue
+        candidate = os.path.realpath(
+            os.path.join(os.path.dirname(os.path.dirname(tool.path)), "lib")
+        )
+        if candidate in library_paths or not os.path.isdir(candidate):
+            continue
+        item = os.stat(candidate)
+        if (
+            item.st_uid != 0
+            or stat.S_IMODE(item.st_mode) & 0o022
+            or not candidate.startswith("/usr/")
+        ):
+            raise SetupError(
+                "unsafe system runtime library directory: {}".format(candidate)
+            )
+        library_paths.append(candidate)
+    return tuple(library_paths)
+
+
 def clean_env(pre_commit, git, home, cache):
     def execution_directory(command):
         execution = getattr(command, "execution", None)
@@ -539,7 +1709,7 @@ def clean_env(pre_commit, git, home, cache):
     ):
         if path not in paths:
             paths.append(path)
-    return {
+    environment = {
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_NOSYSTEM": "1",
         "HOME": home,
@@ -550,6 +1720,18 @@ def clean_env(pre_commit, git, home, cache):
         "PYTHONNOUSERSITE": "1",
         "TMPDIR": home,
     }
+    library_paths = _trusted_runtime_library_paths(
+        pre_commit.source,
+        pre_commit.interpreter_source,
+        git.source,
+        git.interpreter_source,
+    )
+    if library_paths:
+        # Sealed interpreters execute at private in-namespace routes.  Preserve
+        # only their verified root-owned system library roots so $ORIGIN-based
+        # loader lookup does not depend on the synthetic executable pathname.
+        environment["LD_LIBRARY_PATH"] = os.pathsep.join(library_paths)
+    return environment
 
 
 class LeaderObserver:
@@ -656,13 +1838,17 @@ def stop_group(process, observer=None, leader_exited=False):
 
 
 def _child_resource_limits(timeout):
+    parent_pid = os.getpid()
     requested = (
-        (resource.RLIMIT_AS, 512 * 1024 * 1024),
         (resource.RLIMIT_CPU, min(4, max(1, math.ceil(timeout) + 1))),
         (resource.RLIMIT_NOFILE, 128),
         (resource.RLIMIT_FSIZE, 8 * 1024 * 1024),
         (resource.RLIMIT_CORE, 0),
     )
+    if sys.platform.startswith("linux"):
+        if not hasattr(resource, "RLIMIT_AS"):
+            raise SetupError("Linux child memory containment is unavailable")
+        requested += ((resource.RLIMIT_AS, 512 * 1024 * 1024),)
     if hasattr(resource, "RLIMIT_NPROC"):
         requested += ((resource.RLIMIT_NPROC, 512),)
 
@@ -671,18 +1857,43 @@ def _child_resource_limits(timeout):
             _soft, hard = resource.getrlimit(key)
             value = wanted if hard == resource.RLIM_INFINITY else min(wanted, hard)
             resource.setrlimit(key, (value, value))
+        if sys.platform.startswith("linux"):
+            libc = ctypes.CDLL(None, use_errno=True)
+            prctl = getattr(libc, "prctl", None)
+            if prctl is None:
+                raise OSError(errno.ENOSYS, "Linux parent-death control unavailable")
+            prctl.argtypes = (
+                ctypes.c_int,
+                ctypes.c_ulong,
+                ctypes.c_ulong,
+                ctypes.c_ulong,
+                ctypes.c_ulong,
+            )
+            prctl.restype = ctypes.c_int
+            ctypes.set_errno(0)
+            if prctl(1, signal.SIGKILL, 0, 0, 0) != 0:
+                value = ctypes.get_errno() or errno.EPERM
+                raise OSError(value, "cannot establish Linux parent-death signal")
+            if os.getppid() != parent_pid:
+                os.kill(os.getpid(), signal.SIGKILL)
 
     return apply
 
 
-def run(argv, cwd, env, timeout):
-    if not math.isfinite(timeout) or timeout <= 0:
-        raise SetupError("timeout must be finite and positive")
+def run(argv, cwd, env, timeout, readonly_paths=(), input_files=()):
+    timeout = _remaining(timeout, "child process")
     if signal.getsignal(signal.SIGCHLD) is not signal.SIG_DFL:
         raise SetupError(
             "SIGCHLD must use its default disposition before process creation"
         )
+    cancellation_signals = (
+        signal.SIGTERM,
+        signal.SIGHUP,
+        signal.SIGINT,
+        signal.SIGQUIT,
+    )
     previous_handlers = {}
+    previous_mask = None
     cancelled = [None]
 
     def cancel(signum, _frame):
@@ -718,13 +1929,67 @@ def run(argv, cwd, env, timeout):
             if len(buffers[key.data]) > 1024 * 1024:
                 raise SetupError("command output exceeded the allowed size")
 
+    def restore_signal_state():
+        problems = []
+        if previous_mask is not None:
+            try:
+                signal.pthread_sigmask(
+                    signal.SIG_BLOCK, set(cancellation_signals)
+                )
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+                restored = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+                if set(restored) != set(previous_mask):
+                    raise SetupError("cannot verify restored cancellation signal mask")
+            except BaseException as error:
+                problems.append(error)
+        for signum, handler in reversed(tuple(previous_handlers.items())):
+            try:
+                signal.signal(signum, handler)
+                if signal.getsignal(signum) != handler:
+                    raise SetupError(
+                        "cannot verify restored {} handler".format(
+                            signal.Signals(signum).name
+                        )
+                    )
+            except BaseException as error:
+                problems.append(error)
+        previous_handlers.clear()
+        if problems:
+            raise SetupError(
+                "cannot restore cancellation signal state: {}".format(problems[0])
+            ) from problems[0]
+
     try:
         try:
-            for signum in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            if not hasattr(signal, "pthread_sigmask"):
+                raise SetupError("cancellation signal-mask control is unavailable")
+            previous_mask = signal.pthread_sigmask(
+                signal.SIG_BLOCK, set(cancellation_signals)
+            )
+            for signum in cancellation_signals:
                 previous_handlers[signum] = signal.getsignal(signum)
                 signal.signal(signum, cancel)
-        except ValueError:
-            previous_handlers = {}
+            active_mask = set(previous_mask).difference(cancellation_signals)
+            signal.pthread_sigmask(signal.SIG_SETMASK, active_mask)
+            current_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+            if any(signum in current_mask for signum in cancellation_signals):
+                raise SetupError("cannot unblock cancellation signals")
+            if any(
+                signal.getsignal(signum) is not cancel
+                for signum in cancellation_signals
+            ):
+                raise SetupError("cannot verify cancellation signal handlers")
+        except BaseException as error:
+            restoration_error = None
+            try:
+                restore_signal_state()
+            except BaseException as caught:
+                restoration_error = caught
+            if isinstance(error, SetupError):
+                raise error from restoration_error
+            raise SetupError(
+                "cannot establish cancellation signal state: {}".format(error)
+            ) from (restoration_error or error)
 
         problem = cancellation_error()
         if problem is not None:
@@ -743,38 +2008,104 @@ def run(argv, cwd, env, timeout):
         if bound is not None:
             bound.source.verify()
             bound.execution.verify()
+            sealed_files = []
+            sealed_descriptors = set()
+
+            def add_sealed(item):
+                item.verify()
+                if item.sealed and item.descriptor not in sealed_descriptors:
+                    sealed_descriptors.add(item.descriptor)
+                    sealed_files.append(item)
+
+            add_sealed(bound.execution)
             for source_dependency, execution_dependency in bound.dependencies:
                 source_dependency.verify()
-                execution_dependency.verify()
+                add_sealed(execution_dependency)
             executable = bound.execution
+            execution_argv0 = bound.source.path
             target_command = [bound.execution.path] + list(argv[1:])
             if bound.interpreter_source is not None:
                 bound.interpreter_source.verify()
-                bound.interpreter_execution.verify()
-                target_command = [
-                    bound.interpreter_execution.path,
-                    bound.execution.path,
-                ] + list(argv[1:])
+                add_sealed(bound.interpreter_execution)
+                if bound.python_paths:
+                    loader = (
+                        "import sys; count=int(sys.argv[1]); "
+                        "roots=sys.argv[2:2+count]; script=sys.argv[2+count]; "
+                        "sys.path[:0]=roots; sys.argv=sys.argv[2+count:]; "
+                        "exec(compile(open(script,'rb').read(),script,'exec'),"
+                        "{'__name__':'__main__','__file__':script})"
+                    )
+                    target_command = [
+                        bound.interpreter_execution.path,
+                        "-I",
+                        "-S",
+                        "-c",
+                        loader,
+                        str(len(bound.python_paths)),
+                        *bound.python_paths,
+                        bound.execution.path,
+                    ] + list(argv[1:])
+                else:
+                    target_command = [
+                        bound.interpreter_execution.path,
+                        bound.execution.path,
+                    ] + list(argv[1:])
                 executable = bound.interpreter_execution
+                execution_argv0 = bound.interpreter_source.path
+            for item in input_files:
+                if not isinstance(item, BoundTool) or not item.sealed:
+                    raise SetupError("boundary inputs must be sealed files")
+                add_sealed(item)
             if bound.boundary.guard is not None:
-                readonly_paths = ()
+                selected_readonly_paths = list(readonly_paths)
+                selected_destinations = {
+                    value.path if isinstance(value, BoundDir) else os.fspath(value)
+                    for value in selected_readonly_paths
+                }
                 if (
                     len(argv) >= 3
                     and argv[1] == "-C"
                     and os.path.isabs(os.fspath(argv[2]))
-                    and not os.path.commonpath(
-                        (bound.boundary.data_tree.path, os.fspath(argv[2]))
-                    )
-                    == bound.boundary.data_tree.path
+                    and not os.path.commonpath((SCRATCH_ROOT, os.fspath(argv[2])))
+                    == SCRATCH_ROOT
                 ):
-                    readonly_paths = (os.fspath(argv[2]),)
+                    inferred = os.fspath(argv[2])
+                    if inferred not in selected_destinations:
+                        selected_readonly_paths.append(inferred)
                 command, executable_path = bound.boundary.wrap(
-                    target_command, cwd, readonly_paths
+                    target_command,
+                    cwd,
+                    selected_readonly_paths,
+                    tuple(sealed_files),
+                    execution_argv0,
                 )
                 executable = executable_path
                 popen_kwargs["cwd"] = "/"
+                inherited_descriptors = [
+                    bound.boundary.guard.descriptor,
+                    *(item.descriptor for item in sealed_files),
+                    *(
+                        value.descriptor
+                        for value in selected_readonly_paths
+                        if isinstance(value, BoundDir)
+                    ),
+                ]
+                popen_kwargs["pass_fds"] = tuple(dict.fromkeys(inherited_descriptors))
+            elif sealed_files:
+                raise SetupError(
+                    "sealed executable snapshots require an execution boundary"
+                )
             popen_kwargs["env"] = dict(env)
             popen_kwargs["env"]["ODYSSEUS_EXECUTABLE_ORIGIN"] = bound.execution.path
+            loader_source = (
+                bound.interpreter_source
+                if bound.interpreter_source is not None
+                else bound.source
+            )
+            library_paths = _trusted_runtime_library_paths(loader_source)
+            popen_kwargs["env"].pop("LD_LIBRARY_PATH", None)
+            if library_paths:
+                popen_kwargs["env"]["LD_LIBRARY_PATH"] = os.pathsep.join(library_paths)
             popen_kwargs["executable"] = (
                 executable.path if isinstance(executable, BoundTool) else executable
             )
@@ -829,6 +2160,8 @@ def run(argv, cwd, env, timeout):
             if bound.interpreter_source is not None:
                 bound.interpreter_source.verify()
                 bound.interpreter_execution.verify()
+            for item in input_files:
+                item.verify()
         return returncode, bytes(buffers["out"]), bytes(buffers["err"])
     except BaseException as original_error:
         cleanup_error = None
@@ -872,12 +2205,11 @@ def run(argv, cwd, env, timeout):
                         if final_cleanup_error is None:
                             final_cleanup_error = error
         final_problem = cancellation_error()
-        for signum, handler in previous_handlers.items():
-            try:
-                signal.signal(signum, handler)
-            except BaseException as error:
-                if final_cleanup_error is None:
-                    final_cleanup_error = error
+        try:
+            restore_signal_state()
+        except BaseException as error:
+            if final_cleanup_error is None:
+                final_cleanup_error = error
         if final_problem is None:
             final_problem = cancellation_error()
         if final_problem is not None:
@@ -891,157 +2223,6 @@ def require_ok(label, result):
     if result[0] != 0:
         detail = (result[2] or result[1]).decode("utf-8", "replace").strip()
         raise SetupError("{} failed{}".format(label, ": " + detail if detail else ""))
-
-
-class PrivateTree:
-    def __init__(self):
-        base = os.path.realpath(tempfile.gettempdir())
-        self.parent = None
-        self.root = None
-        self.name = ".odysseus-precommit-{}".format(secrets.token_hex(12))
-        self.path = os.path.join(base, self.name)
-        created = False
-        try:
-            self.parent = BoundDir.open(base, shared_temp=True)
-            os.mkdir(self.name, 0o700, dir_fd=self.parent.descriptor)
-            created = True
-            self.root = BoundDir.open_at(
-                self.parent.descriptor, self.name, self.path, safe=True
-            )
-        except BaseException as error:
-            if self.root is not None:
-                self.root.close()
-                self.root = None
-            if self.parent is not None:
-                self.parent.close()
-                self.parent = None
-            if created:
-                raise SetupError(
-                    "private resource binding failed; preserved unbound route {}: {}".format(
-                        self.path, error
-                    )
-                ) from error
-            raise
-
-    def mkdir(self, name):
-        os.mkdir(name, 0o700, dir_fd=self.root.descriptor)
-        path = os.path.join(self.path, name)
-        child = BoundDir.open(path, safe=True)
-        child.close()
-        return path
-
-    def verify(self):
-        self.parent.verify()
-        self.root.verify()
-
-    @staticmethod
-    def _cleanup_token(item):
-        # Rename can change timestamps.  Device and inode identify the moved
-        # object; mode and ownership retain the security properties needed for
-        # recursive cleanup.
-        return dir_ident(item)
-
-    @staticmethod
-    def _quarantine_name(descriptor):
-        for _attempt in range(128):
-            name = ".odysseus-quarantine-{}".format(secrets.token_hex(12))
-            try:
-                os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-            except FileNotFoundError:
-                return name
-        raise SetupError("cannot allocate a private cleanup quarantine name")
-
-    @staticmethod
-    def _restore_quarantine(descriptor, quarantine, name):
-        try:
-            atomic_rename(descriptor, quarantine, name)
-        except SetupError:
-            return quarantine
-        return name
-
-    def quarantine(self, descriptor, name, expected):
-        quarantine = self._quarantine_name(descriptor)
-        atomic_rename(descriptor, name, quarantine)
-        try:
-            moved = os.stat(quarantine, dir_fd=descriptor, follow_symlinks=False)
-        except OSError as error:
-            raise SetupError(
-                "temporary entry disappeared after atomic quarantine; "
-                "preserved route {}: {}".format(quarantine, error)
-            ) from error
-        if self._cleanup_token(moved) != expected:
-            route = self._restore_quarantine(descriptor, quarantine, name)
-            raise SetupError(
-                "temporary entry changed at atomic quarantine; "
-                "replacement preserved as {}".format(route)
-            )
-        return quarantine
-
-    def clear(self, descriptor):
-        for name in os.listdir(descriptor):
-            item = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-            expected = self._cleanup_token(item)
-            quarantine = self.quarantine(descriptor, name, expected)
-            if stat.S_ISDIR(item.st_mode):
-                child = os.open(quarantine, DIR_FLAGS, dir_fd=descriptor)
-                try:
-                    if dir_ident(os.fstat(child)) != expected:
-                        raise SetupError("temporary directory changed during cleanup")
-                    self.clear(child)
-                finally:
-                    os.close(child)
-                if (
-                    dir_ident(
-                        os.stat(quarantine, dir_fd=descriptor, follow_symlinks=False)
-                    )
-                    != expected
-                ):
-                    raise SetupError("temporary directory changed before cleanup")
-                os.rmdir(quarantine, dir_fd=descriptor)
-            else:
-                current = os.stat(quarantine, dir_fd=descriptor, follow_symlinks=False)
-                if self._cleanup_token(current) != expected:
-                    raise SetupError("temporary entry changed before cleanup")
-                os.unlink(quarantine, dir_fd=descriptor)
-
-    def close(self):
-        problem = None
-        root_quarantine = None
-        try:
-            self.parent.verify()
-            if dir_ident(os.fstat(self.root.descriptor)) != self.root.token:
-                raise SetupError("temporary root descriptor changed before cleanup")
-            root_quarantine = self.quarantine(
-                self.parent.descriptor, self.name, self.root.token
-            )
-            self.clear(self.root.descriptor)
-            named = os.stat(
-                root_quarantine,
-                dir_fd=self.parent.descriptor,
-                follow_symlinks=False,
-            )
-            if dir_ident(named) != self.root.token:
-                raise SetupError(
-                    "temporary root changed after atomic quarantine; "
-                    "replacement was preserved as {}".format(root_quarantine)
-                )
-            os.rmdir(root_quarantine, dir_fd=self.parent.descriptor)
-            root_quarantine = None
-        except (OSError, SetupError) as error:
-            recovery = root_quarantine
-            if root_quarantine is not None:
-                recovery = self._restore_quarantine(
-                    self.parent.descriptor, root_quarantine, self.name
-                )
-            problem = "cannot safely clean temporary resources"
-            if recovery is not None:
-                problem += "; preserved root as {}".format(recovery)
-            problem += ": {}".format(error)
-        self.root.close()
-        self.parent.close()
-        self.root = None
-        self.parent = None
-        return problem
 
 
 class _SnapshotTarget:
@@ -1058,8 +2239,7 @@ def _snapshot_sibling_closure(source, tree, name, bound_tools, boundary):
 
     boundary.require()
     closure_path = tree.mkdir(name + "-runtime")
-    closure = BoundDir.open(closure_path, safe=True)
-    bound_tools.append(closure)
+    closure = NamespaceTree(closure_path)
     target = _SnapshotTarget(closure)
     source_name = os.path.basename(source.path)
     execution = source.snapshot(target, source_name)
@@ -1068,7 +2248,13 @@ def _snapshot_sibling_closure(source, tree, name, bound_tools, boundary):
     total = 0
     parent = BoundDir.open(os.path.dirname(source.path), safe=True)
     try:
-        for sibling_name in sorted(os.listdir(parent.descriptor), key=os.fsencode):
+        for sibling_name in _bounded_directory_names(
+            parent.descriptor,
+            MAX_RUNTIME_SIBLINGS,
+            "runtime sibling",
+            getattr(boundary, "budget", None) or getattr(boundary, "deadline", None),
+            budget_kind="runtime",
+        ):
             if sibling_name == source_name:
                 continue
             try:
@@ -1083,8 +2269,14 @@ def _snapshot_sibling_closure(source, tree, name, bound_tools, boundary):
                 continue
             source_dependency = BoundFile.open(os.path.join(parent.path, sibling_name))
             total += len(source_dependency.data)
-            if total > 64 * 1024 * 1024:
+            if total > MAX_RUNTIME_BYTES:
                 raise SetupError("runtime sibling closure exceeds the allowed size")
+            if boundary.budget is not None:
+                boundary.budget.charge_runtime_file(
+                    source_dependency.path,
+                    source_dependency.token,
+                    len(source_dependency.data),
+                )
             suffix = (
                 sibling_name[len(source_name) :]
                 if sibling_name.startswith(source_name)
@@ -1093,22 +2285,14 @@ def _snapshot_sibling_closure(source, tree, name, bound_tools, boundary):
             destination_name = (
                 source_name + suffix if suffix is not None else sibling_name
             )
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
-            descriptor = os.open(
-                destination_name,
-                flags,
-                0o500 if source_dependency.executable else 0o400,
-                dir_fd=closure.descriptor,
+            execution_dependency = BoundTool.sealed_bytes(
+                os.path.join(closure.path, destination_name),
+                source_dependency.data,
+                executable=source_dependency.executable,
             )
-            try:
-                write_all(descriptor, source_dependency.data)
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
-            execution_dependency = BoundFile.open(
-                os.path.join(closure.path, destination_name)
-            )
+            bound_tools.append(execution_dependency)
             source_dependency.verify()
+            execution_dependency.verify()
             dependencies.append((source_dependency, execution_dependency))
     finally:
         parent.close()
@@ -1118,8 +2302,537 @@ def _snapshot_sibling_closure(source, tree, name, bound_tools, boundary):
 
 def execution_tool(source, tree, name, bound_tools, boundary):
     if source.trusted_system_route():
-        return source, ()
+        boundary.require()
+        execution = source.snapshot(_SnapshotTarget(tree), name)
+        bound_tools.append(execution)
+        return execution, ()
     return _snapshot_sibling_closure(source, tree, name, bound_tools, boundary)
+
+
+def _distribution_name(value):
+    return re.sub(r"[-_.]+", "-", value).lower()
+
+
+@dataclass(frozen=True)
+class _ProviderRequirement:
+    name: str
+    extras: frozenset
+    specifiers: tuple
+    marker: str
+
+
+def _parse_provider_requirement(value):
+    """Parse one PEP 508 requirement or reject unsupported syntax completely."""
+
+    match = re.match(r"\s*([A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?)", value)
+    if match is None:
+        raise SetupError("provider requirement metadata is malformed")
+    name = _distribution_name(match.group(1))
+    position = match.end()
+    length = len(value)
+
+    while position < length and value[position].isspace():
+        position += 1
+    extras = set()
+    if position < length and value[position] == "[":
+        end = value.find("]", position + 1)
+        if end < 0:
+            raise SetupError("provider requirement extras are malformed")
+        raw_extras = value[position + 1 : end]
+        if not raw_extras.strip():
+            raise SetupError("provider requirement extras are empty")
+        for raw_extra in raw_extras.split(","):
+            extra = raw_extra.strip()
+            if not re.fullmatch(
+                r"[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?", extra
+            ):
+                raise SetupError("provider requirement extras are malformed")
+            normalized = _distribution_name(extra)
+            if normalized in extras:
+                raise SetupError("provider requirement repeats an extra")
+            extras.add(normalized)
+        position = end + 1
+
+    remainder = value[position:].strip()
+    if remainder.startswith("@"):
+        raise SetupError("provider direct-reference requirements are unsupported")
+    requirement_text, separator, marker = remainder.partition(";")
+    requirement_text = requirement_text.strip()
+    marker = marker.strip() if separator else ""
+    if separator and not marker:
+        raise SetupError("provider requirement marker is empty")
+    if requirement_text.startswith("("):
+        if not requirement_text.endswith(")"):
+            raise SetupError("provider requirement version parentheses are malformed")
+        requirement_text = requirement_text[1:-1].strip()
+
+    specifiers = []
+    if requirement_text:
+        for clause in requirement_text.split(","):
+            specifier = re.fullmatch(
+                r"\s*(~=|<=|>=|==|!=|<|>)\s*([^\s,;()]+)\s*", clause
+            )
+            if specifier is None:
+                raise SetupError("provider requirement version is unsupported")
+            operation, version = specifier.groups()
+            _version_parts(version)
+            specifiers.append((operation, version))
+    return _ProviderRequirement(
+        name,
+        frozenset(extras),
+        tuple(specifiers),
+        marker,
+    )
+
+
+def _provider_version_allows(value, specifiers):
+    actual, wildcard = _version_parts(value.strip())
+    if wildcard:
+        raise SetupError("provider Version metadata cannot contain a wildcard")
+    for operation, expected in specifiers:
+        if operation == "~=":
+            lower, expected_wildcard = _version_parts(expected)
+            if expected_wildcard or len(lower) < 2:
+                raise SetupError("provider compatible-release metadata is unsupported")
+            upper = lower[:-2] + (lower[-2] + 1,)
+            if not _compare_release(actual, ">=", expected):
+                return False
+            if not _compare_release(
+                actual, "<", ".".join(str(part) for part in upper)
+            ):
+                return False
+            continue
+        if not _compare_release(actual, operation, expected):
+            return False
+    return True
+
+
+def _execution_python_environment():
+    """Return the exact interpreter facts used by the pure-Python provider."""
+
+    implementation = getattr(sys.implementation, "name", "")
+    cache_tag = getattr(sys.implementation, "cache_tag", "")
+    soabi = sysconfig.get_config_var("SOABI")
+    machine = platform.machine()
+    if (
+        implementation != "cpython"
+        or not cache_tag
+        or not isinstance(soabi, str)
+        or not soabi
+        or not machine
+    ):
+        raise SetupError("trusted Python runtime has no complete ABI identity")
+    version = tuple(sys.version_info[:3])
+    return {
+        "implementation_name": implementation,
+        "platform_python_implementation": platform.python_implementation(),
+        "python_version": "{}.{}".format(*version[:2]),
+        "python_full_version": "{}.{}.{}".format(*version),
+        "os_name": os.name,
+        "sys_platform": sys.platform,
+        "platform_machine": machine,
+        "extra": "",
+        "_version": version,
+        "_cache_tag": cache_tag,
+        "_soabi": soabi,
+    }
+
+
+def _version_parts(value):
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*(?:\.\*)?", value):
+        raise SetupError("provider metadata contains an unsupported Python version")
+    wildcard = value.endswith(".*")
+    if wildcard:
+        value = value[:-2]
+    return tuple(int(part) for part in value.split(".")), wildcard
+
+
+def _compare_release(left, operation, right):
+    expected, wildcard = _version_parts(right)
+    actual = tuple(left)
+    width = max(len(actual), len(expected))
+    normalized_actual = actual + (0,) * (width - len(actual))
+    normalized_expected = expected + (0,) * (width - len(expected))
+    if wildcard:
+        equal = actual[: len(expected)] == expected
+        if operation == "==":
+            return equal
+        if operation == "!=":
+            return not equal
+        raise SetupError("provider metadata uses a wildcard with an ordered comparison")
+    return {
+        "<": normalized_actual < normalized_expected,
+        "<=": normalized_actual <= normalized_expected,
+        "==": normalized_actual == normalized_expected,
+        "!=": normalized_actual != normalized_expected,
+        ">=": normalized_actual >= normalized_expected,
+        ">": normalized_actual > normalized_expected,
+    }[operation]
+
+
+def _requires_python_allows(value, environment):
+    for clause in value.split(","):
+        match = re.fullmatch(r"\s*(~=|<=|>=|==|!=|<|>)\s*([^\s]+)\s*", clause)
+        if match is None:
+            raise SetupError("provider Requires-Python metadata is unsupported")
+        operation, expected = match.groups()
+        if operation == "~=":
+            lower, wildcard = _version_parts(expected)
+            if wildcard or len(lower) < 2:
+                raise SetupError("provider compatible-release metadata is unsupported")
+            upper = lower[:-2] + (lower[-2] + 1,)
+            if not _compare_release(environment["_version"], ">=", expected):
+                return False
+            if not _compare_release(
+                environment["_version"], "<", ".".join(str(part) for part in upper)
+            ):
+                return False
+            continue
+        if not _compare_release(environment["_version"], operation, expected):
+            return False
+    return True
+
+
+def _marker_tokens(value):
+    tokens = []
+    position = 0
+    pattern = re.compile(
+        r"\s*(?:(and|or|not|in)\b|([A-Za-z_][A-Za-z0-9_]*)|"
+        r"(===|~=|==|!=|<=|>=|<|>)|([()])|('(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"))"
+    )
+    while position < len(value):
+        match = pattern.match(value, position)
+        if match is None:
+            raise SetupError("provider requirement marker is unsupported")
+        keyword, name, operator, parenthesis, quoted = match.groups()
+        if keyword:
+            tokens.append((keyword, keyword))
+        elif name:
+            tokens.append(("name", name))
+        elif operator:
+            tokens.append(("operator", operator))
+        elif parenthesis:
+            tokens.append((parenthesis, parenthesis))
+        else:
+            quote = quoted[0]
+            body = quoted[1:-1]
+            if "\\" in body:
+                raise SetupError("provider requirement marker uses an escaped literal")
+            tokens.append(("literal", body))
+        position = match.end()
+    tokens.append(("end", ""))
+    return tokens
+
+
+def _provider_marker_allows(value, environment):
+    tokens = _marker_tokens(value)
+    position = [0]
+
+    def take(kind=None, text=None):
+        token = tokens[position[0]]
+        if (kind is not None and token[0] != kind) or (
+            text is not None and token[1] != text
+        ):
+            return None
+        position[0] += 1
+        return token
+
+    def operand():
+        token = take("name") or take("literal")
+        if token is None:
+            raise SetupError("provider requirement marker has no operand")
+        return token
+
+    def comparison():
+        if take("("):
+            result = disjunction()
+            if not take(")"):
+                raise SetupError("provider requirement marker has unbalanced parentheses")
+            return result
+        left = operand()
+        negate_membership = False
+        operator = take("operator")
+        if operator is None:
+            if take("not"):
+                if not take("in"):
+                    raise SetupError("provider requirement marker has an invalid operator")
+                operation = "not in"
+                negate_membership = True
+            elif take("in"):
+                operation = "in"
+            else:
+                raise SetupError("provider requirement marker has no comparison")
+        else:
+            operation = operator[1]
+        right = operand()
+        if left[0] != "name" or right[0] != "literal":
+            raise SetupError("provider requirement marker must compare a runtime field")
+        field = left[1]
+        literal = right[1]
+        if field not in environment or field.startswith("_"):
+            raise SetupError("provider requirement marker names an unknown runtime field")
+        actual = environment[field]
+        if operation in ("in", "not in"):
+            selected = actual in literal
+            return not selected if negate_membership else selected
+        if operation in ("===", "~="):
+            raise SetupError("provider requirement marker uses an unsupported comparison")
+        if field in ("python_version", "python_full_version"):
+            actual_parts, _wildcard = _version_parts(actual)
+            selected = _compare_release(actual_parts, operation, literal)
+        else:
+            selected = {
+                "<": actual < literal,
+                "<=": actual <= literal,
+                "==": actual == literal,
+                "!=": actual != literal,
+                ">=": actual >= literal,
+                ">": actual > literal,
+            }[operation]
+        return selected
+
+    def conjunction():
+        result = comparison()
+        while take("and"):
+            right = comparison()
+            result = result and right
+        return result
+
+    def disjunction():
+        result = conjunction()
+        while take("or"):
+            right = conjunction()
+            result = result or right
+        return result
+
+    selected = disjunction()
+    if not take("end"):
+        raise SetupError("provider requirement marker has trailing syntax")
+    return selected
+
+
+def _native_provider_artifact(path):
+    lowered = path.lower()
+    return lowered.endswith((".so", ".dylib", ".dll", ".pyd"))
+
+
+def _provider_site_root(interpreter_path):
+    executable = os.path.realpath(interpreter_path)
+    prefix = os.path.dirname(os.path.dirname(executable))
+    candidates = []
+    library = os.path.join(prefix, "lib")
+    if os.path.isdir(library) and not os.path.islink(library):
+        for abi in sorted(os.listdir(library), key=os.fsencode):
+            if not re.fullmatch(r"python\d+\.\d+", abi):
+                continue
+            for category in ("site-packages", "dist-packages"):
+                candidate = os.path.join(library, abi, category)
+                if os.path.isdir(candidate) and not os.path.islink(candidate):
+                    candidates.append(os.path.abspath(candidate))
+    if len(candidates) != 1:
+        raise SetupError("pre-commit interpreter has no unique package root")
+    return candidates[0]
+
+
+def _provider_metadata_headers(text):
+    """Parse unfolded core-metadata headers and reject ambiguous continuations."""
+
+    normalized = text.replace("\r\n", "\n")
+    if "\r" in normalized:
+        raise SetupError("provider metadata uses malformed line endings")
+    header_block = normalized.split("\n\n", 1)[0]
+    headers = {}
+    for line in header_block.split("\n"):
+        if not line:
+            continue
+        if line[:1] in (" ", "\t"):
+            raise SetupError("provider metadata uses a folded header")
+        name, separator, value = line.partition(":")
+        if not separator or not re.fullmatch(r"[A-Za-z0-9-]+", name):
+            raise SetupError("provider metadata contains a malformed header")
+        headers.setdefault(name.lower(), []).append(value.strip())
+    return headers
+
+
+def _provider_distribution_closure(interpreter_path, deadline=None):
+    """Bind the pure-Python provider closure for this exact trusted runtime."""
+
+    site_root = _provider_site_root(interpreter_path)
+    environment = _execution_python_environment()
+    directory = BoundDir.open(site_root, safe=True)
+    metadata = {}
+    try:
+        for name in _bounded_directory_names(
+            directory.descriptor,
+            MAX_RUNTIME_SIBLINGS * 4,
+            "provider distribution",
+            deadline,
+            budget_kind="runtime",
+        ):
+            if not name.endswith((".dist-info", ".egg-info")):
+                continue
+            suffix = ".dist-info" if name.endswith(".dist-info") else ".egg-info"
+            stem = name[: -len(suffix)]
+            match = re.match(r"^(.+?)-(?=\d)", stem)
+            if match is None:
+                continue
+            normalized = _distribution_name(match.group(1))
+            metadata.setdefault(normalized, []).append(os.path.join(site_root, name))
+    finally:
+        directory.close()
+
+    selected = set()
+    requested_extras = {}
+    constraints = {}
+    processed_states = {}
+    pending = [
+        (_parse_provider_requirement("pre-commit"), True),
+        (_parse_provider_requirement("pyyaml"), True),
+    ]
+    try:
+        while pending:
+            if deadline is not None:
+                deadline.check("provider import closure")
+            requirement, required = pending.pop()
+            name = requirement.name
+            requested_extras.setdefault(name, set()).update(requirement.extras)
+            constraints.setdefault(name, set()).update(requirement.specifiers)
+            state = (
+                frozenset(requested_extras[name]),
+                frozenset(constraints[name]),
+            )
+            if processed_states.get(name) == state:
+                continue
+            candidates = metadata.get(name, ())
+            if len(candidates) != 1:
+                if required:
+                    raise SetupError(
+                        "provider import closure cannot select one distribution {}".format(name)
+                    )
+                continue
+            metadata_path = os.path.join(candidates[0], "METADATA")
+            item = BoundFile.open(metadata_path)
+            try:
+                text = item.data.decode("utf-8", "strict")
+            except UnicodeError as error:
+                raise SetupError("provider metadata is not UTF-8") from error
+            item.verify()
+            headers = _provider_metadata_headers(text)
+            declared = headers.get("name", ())
+            if len(declared) != 1 or _distribution_name(declared[0]) != name:
+                raise SetupError("provider metadata name disagrees with its route")
+            versions = headers.get("version", ())
+            if len(versions) != 1:
+                raise SetupError("provider metadata must declare one Version")
+            if not _provider_version_allows(versions[0], constraints[name]):
+                raise SetupError(
+                    "provider distribution {} does not satisfy its selected version".format(
+                        name
+                    )
+                )
+            requires_python = headers.get("requires-python", ())
+            if len(requires_python) > 1:
+                raise SetupError("provider metadata repeats Requires-Python")
+            if requires_python and not _requires_python_allows(
+                requires_python[0], environment
+            ):
+                raise SetupError(
+                    "provider distribution {} is incompatible with the trusted runtime".format(
+                        name
+                    )
+                )
+            selected.add(name)
+            marker_environments = [
+                dict(environment, extra=extra)
+                for extra in sorted(requested_extras[name])
+            ]
+            if not marker_environments:
+                marker_environments.append(dict(environment))
+            for raw_requirement in headers.get("requires-dist", ()):
+                dependency = _parse_provider_requirement(raw_requirement)
+                if dependency.marker and not any(
+                    _provider_marker_allows(dependency.marker, marker_environment)
+                    for marker_environment in marker_environments
+                ):
+                    continue
+                pending.append((dependency, True))
+            processed_states[name] = state
+
+        paths = set()
+        for name in sorted(selected):
+            dist_info = metadata[name][0]
+            record_path = os.path.join(dist_info, "RECORD")
+            record = BoundFile.open(record_path)
+            try:
+                rows = csv.reader(io.StringIO(record.data.decode("utf-8", "strict")))
+                for row in rows:
+                    if not row:
+                        continue
+                    relative = row[0].replace("/", os.sep)
+                    path = os.path.abspath(os.path.join(site_root, relative))
+                    if os.path.commonpath((path, site_root)) != site_root:
+                        continue
+                    if "__pycache__" in path.split(os.sep) or path.endswith(
+                        (".pyc", ".pyo")
+                    ):
+                        continue
+                    if _native_provider_artifact(path):
+                        continue
+                    if os.path.islink(path):
+                        raise SetupError(
+                            "provider import closure contains a symbolic route"
+                        )
+                    if os.path.isfile(path):
+                        paths.add(path)
+            except UnicodeError as error:
+                raise SetupError("provider RECORD is not UTF-8") from error
+        if not paths:
+            raise SetupError("provider import closure is empty")
+        if len(paths) > 768:
+            raise SetupError("provider import closure file budget exceeded")
+        return site_root, tuple(sorted(paths, key=os.fsencode))
+    finally:
+        metadata.clear()
+
+
+def _snapshot_provider_import_closure(
+    interpreter_path, bound_tools, boundary, deadline=None
+):
+    boundary.require()
+    site_root, paths = _provider_distribution_closure(interpreter_path, deadline)
+    dependencies = []
+    total = 0
+    try:
+        for path in paths:
+            source = BoundFile.open(path, limit=MAX_RUNTIME_BYTES)
+            total += len(source.data)
+            if total > MAX_RUNTIME_BYTES:
+                raise SetupError("provider import closure exceeds the allowed size")
+            execution = BoundTool.sealed_bytes(path, source.data, source.executable)
+            bound_tools.append(execution)
+            source.verify()
+            execution.verify()
+            dependencies.append((source, execution))
+        return tuple(dependencies), (site_root,)
+    except BaseException:
+        # Execution descriptors were registered immediately in bound_tools;
+        # the caller's one ownership stack closes them on every failure path.
+        raise
+
+
+def _trusted_python_tool(bound_tools):
+    path = os.path.realpath(sys.executable)
+    try:
+        tool = BoundTool.open(path)
+    except SetupError as error:
+        raise SetupError(
+            "the active Python interpreter cannot execute the sealed provider"
+        ) from error
+    if tool.trusted_system_route() and not tool.read_prefix().startswith(b"#!"):
+        bound_tools.append(tool)
+        return tool
+    tool.close()
+    raise SetupError("no trusted Python interpreter can execute the sealed provider")
 
 
 def bind_executable(source, tree, name, bound_tools, boundary):
@@ -1145,11 +2858,26 @@ def bind_executable(source, tree, name, bound_tools, boundary):
     interpreter_path = os.path.realpath(parts[0])
     interpreter_source = BoundTool.open(interpreter_path)
     bound_tools.append(interpreter_source)
-    if not interpreter_source.trusted_system_route():
-        raise SetupError("a mutable interpreter/runtime closure is not supported")
     if interpreter_source.read_prefix().startswith(b"#!"):
         raise SetupError("nested executable interpreters are not supported")
-    execution, dependencies = execution_tool(source, tree, name, bound_tools, boundary)
+    python_paths = ()
+    if name == "pre-commit" or name.startswith("pre-commit-"):
+        provider_interpreter = interpreter_path
+        interpreter_source = _trusted_python_tool(bound_tools)
+        dependencies, python_paths = _snapshot_provider_import_closure(
+            provider_interpreter,
+            bound_tools,
+            boundary,
+            getattr(boundary, "budget", None) or getattr(boundary, "deadline", None),
+        )
+        execution = source.snapshot(_SnapshotTarget(tree), name)
+        bound_tools.append(execution)
+    else:
+        if not interpreter_source.trusted_system_route():
+            raise SetupError("a mutable interpreter/runtime closure is not supported")
+        execution, dependencies = execution_tool(
+            source, tree, name, bound_tools, boundary
+        )
     interpreter_execution, interpreter_dependencies = execution_tool(
         interpreter_source,
         tree,
@@ -1164,6 +2892,55 @@ def bind_executable(source, tree, name, bound_tools, boundary):
         interpreter_source,
         interpreter_execution,
         dependencies=dependencies + interpreter_dependencies,
+        python_paths=python_paths,
+    )
+
+
+def _executable_dependencies(command):
+    result = [(command.source, command.execution)]
+    result.extend(command.dependencies)
+    if command.interpreter_source is not None:
+        result.append((command.interpreter_source, command.interpreter_execution))
+    unique = []
+    seen = set()
+    for source, execution in result:
+        key = (id(source), execution.descriptor)
+        if key not in seen:
+            seen.add(key)
+            unique.append((source, execution))
+    return tuple(unique)
+
+
+def bind_generator_driver(pre_commit, git, boundary, bound_tools):
+    """Bind the fixed in-namespace discovery/install transaction."""
+
+    driver = BoundTool.sealed_bytes(
+        os.path.join(RUNTIME_ROOT, "generate-hooks"), GENERATOR_DRIVER
+    )
+    bound_tools.append(driver)
+    bash = BoundTool.open(os.path.realpath("/bin/bash"))
+    if not bash.trusted_system_route():
+        bash.close()
+        raise SetupError("the generator requires a trusted system Bash")
+    bound_tools.append(bash)
+    bash_execution, bash_dependencies = execution_tool(
+        bash,
+        boundary.tree,
+        "generate-hooks-interpreter",
+        bound_tools,
+        boundary,
+    )
+    return BoundExecutable(
+        driver,
+        driver,
+        boundary,
+        bash,
+        bash_execution,
+        dependencies=(
+            _executable_dependencies(pre_commit)
+            + _executable_dependencies(git)
+            + bash_dependencies
+        ),
     )
 
 
@@ -1175,17 +2952,75 @@ def hook_at(directory, name):
     return BoundFile.open(name, directory_fd=directory.descriptor)
 
 
-def canonical_generated_hook(data, hook_type, install_python):
-    """Replace generator-owned shell text with one installer-owned assignment."""
+def _runtime_value(runtime, name):
+    value = runtime.get(name) if isinstance(runtime, dict) else None
+    if not isinstance(value, str) or "\x00" in value or "\n" in value or "\r" in value:
+        raise SetupError("invalid managed-hook runtime metadata: {}".format(name))
+    return value
 
+
+def canonical_generated_hook(data, hook_type, runtime):
+    """Replace generator-owned shell text with one provenance-bound runtime."""
+
+    source = _runtime_value(runtime, "source")
+    source_digest = _runtime_value(runtime, "source_digest")
+    interpreter = _runtime_value(runtime, "interpreter")
+    interpreter_digest = _runtime_value(runtime, "interpreter_digest")
+    git = _runtime_value(runtime, "git")
+    git_digest = _runtime_value(runtime, "git_digest")
+    boundary = _runtime_value(runtime, "boundary")
+    boundary_digest = _runtime_value(runtime, "boundary_digest")
+    repository = _runtime_value(runtime, "repository")
+    git_directory = _runtime_value(runtime, "git_directory")
+    git_common = _runtime_value(runtime, "git_common")
+    home = _runtime_value(runtime, "home")
+    config_hex = _runtime_value(runtime, "config_hex")
+    config_digest = _runtime_value(runtime, "config_digest")
+    policy_hex = _runtime_value(runtime, "policy_hex")
+    policy_digest = _runtime_value(runtime, "policy_digest")
+    pyyaml_manifest_hex = _runtime_value(runtime, "pyyaml_manifest_hex")
+    closure_manifest_hex = _runtime_value(runtime, "closure_manifest_hex")
     if (
-        not isinstance(install_python, str)
-        or not os.path.isabs(install_python)
-        or "\x00" in install_python
-        or "\n" in install_python
-        or "\r" in install_python
+        not os.path.isabs(source)
+        or not os.path.isabs(interpreter)
+        or not os.path.isabs(git)
+        or not os.path.isabs(boundary)
+        or not os.path.isabs(repository)
+        or not os.path.isabs(git_directory)
+        or not os.path.isabs(git_common)
+        or not os.path.isabs(home)
     ):
-        raise SetupError("INSTALL_PYTHON must be one direct absolute path")
+        raise SetupError("managed-hook executable paths must be direct and absolute")
+    if not all(
+        re.fullmatch(r"[0-9a-f]{64}", value)
+        for value in (
+            source_digest,
+            interpreter_digest,
+            git_digest,
+            boundary_digest,
+            config_digest,
+            policy_digest,
+        )
+    ):
+        raise SetupError("managed-hook executable digests must be SHA-256")
+    for encoded, digest, label in (
+        (config_hex, config_digest, "configuration"),
+        (policy_hex, policy_digest, "policy"),
+    ):
+        try:
+            decoded = bytes.fromhex(encoded)
+        except ValueError as error:
+            raise SetupError("managed-hook {} payload is invalid".format(label)) from error
+        if hashlib.sha256(decoded).hexdigest() != digest:
+            raise SetupError("managed-hook {} payload digest differs".format(label))
+    try:
+        bytes.fromhex(pyyaml_manifest_hex).decode("utf-8", "strict")
+    except (ValueError, UnicodeError) as error:
+        raise SetupError("managed-hook PyYAML manifest is invalid") from error
+    try:
+        zlib.decompress(bytes.fromhex(closure_manifest_hex)).decode("utf-8", "strict")
+    except (ValueError, UnicodeError, zlib.error) as error:
+        raise SetupError("managed-hook provider closure manifest is invalid") from error
     try:
         lines = tuple(data.decode("utf-8").splitlines())
     except UnicodeDecodeError as error:
@@ -1199,49 +3034,159 @@ def canonical_generated_hook(data, hook_type, install_python):
         raise SetupError("pre-commit generated an invalid {} hook".format(hook_type))
     if lines[6] != expected_args:
         raise SetupError("pre-commit generated an invalid {} hook".format(hook_type))
-    canonical = (
-        *HEADER,
-        "INSTALL_PYTHON=" + shlex.quote(install_python),
-        expected_args,
-        *TAIL,
+    canonical = (*MANAGED_HEADER, MANAGED_RUNTIME_MARKER)
+    canonical += (
+        "PRE_COMMIT_SOURCE=" + shlex.quote(source),
+        "PRE_COMMIT_SHA256=" + source_digest,
+        "PRE_COMMIT_INTERPRETER=" + shlex.quote(interpreter),
+        "PRE_COMMIT_INTERPRETER_SHA256=" + interpreter_digest,
+        "TRUSTED_GIT=" + shlex.quote(git),
+        "TRUSTED_GIT_SHA256=" + git_digest,
+        "TRUSTED_BOUNDARY=" + shlex.quote(boundary),
+        "TRUSTED_BOUNDARY_SHA256=" + boundary_digest,
+        "TRUSTED_REPOSITORY=" + shlex.quote(repository),
+        "TRUSTED_GIT_DIRECTORY=" + shlex.quote(git_directory),
+        "TRUSTED_GIT_COMMON=" + shlex.quote(git_common),
+        "TRUSTED_HOME=" + shlex.quote(home),
+        "TRUSTED_CONFIG_HEX=" + config_hex,
+        "TRUSTED_CONFIG_SHA256=" + config_digest,
+        "TRUSTED_POLICY_HEX=" + policy_hex,
+        "TRUSTED_POLICY_SHA256=" + policy_digest,
+        "TRUSTED_PYYAML_MANIFEST_HEX=" + pyyaml_manifest_hex,
+        "TRUSTED_CLOSURE_MANIFEST_HEX=" + closure_manifest_hex,
+        "HOOK_TYPE=" + shlex.quote(hook_type),
+        MANAGED_RUNTIME_EXEC,
     )
     return ("\n".join(canonical) + "\n").encode("utf-8")
 
 
-def generated(data, hook_type, install_python=None):
+def _assignment(line, name):
+    try:
+        parsed = shlex.split(line, posix=True)
+    except ValueError:
+        return None
+    prefix = name + "="
+    if len(parsed) != 1 or not parsed[0].startswith(prefix):
+        return None
+    return parsed[0][len(prefix) :]
+
+
+def generated(data, hook_type, runtime=None):
     try:
         lines = tuple(data.decode("utf-8").splitlines())
-        assignment = shlex.split(lines[5], posix=True) if len(lines) == 20 else []
-    except (UnicodeDecodeError, ValueError):
+    except UnicodeDecodeError:
         return False
-    expected_assignment = (
-        "INSTALL_PYTHON=" + install_python if install_python is not None else None
-    )
-    return (
-        lines[:5] == HEADER
-        and lines[7:] == TAIL
-        and len(assignment) == 1
-        and assignment[0].startswith("INSTALL_PYTHON=/")
-        and (expected_assignment is None or assignment[0] == expected_assignment)
-        and lines[6]
-        == "ARGS=(hook-impl --config=.pre-commit-config.yaml --hook-type={})".format(
-            hook_type
+    if (
+        len(lines) != 26
+        or lines[:5] != MANAGED_HEADER
+        or lines[5] != MANAGED_RUNTIME_MARKER
+        or lines[25] != MANAGED_RUNTIME_EXEC
+    ):
+        return False
+    actual = {
+        "source": _assignment(lines[6], "PRE_COMMIT_SOURCE"),
+        "source_digest": _assignment(lines[7], "PRE_COMMIT_SHA256"),
+        "interpreter": _assignment(lines[8], "PRE_COMMIT_INTERPRETER"),
+        "interpreter_digest": _assignment(lines[9], "PRE_COMMIT_INTERPRETER_SHA256"),
+        "git": _assignment(lines[10], "TRUSTED_GIT"),
+        "git_digest": _assignment(lines[11], "TRUSTED_GIT_SHA256"),
+        "boundary": _assignment(lines[12], "TRUSTED_BOUNDARY"),
+        "boundary_digest": _assignment(lines[13], "TRUSTED_BOUNDARY_SHA256"),
+        "repository": _assignment(lines[14], "TRUSTED_REPOSITORY"),
+        "git_directory": _assignment(lines[15], "TRUSTED_GIT_DIRECTORY"),
+        "git_common": _assignment(lines[16], "TRUSTED_GIT_COMMON"),
+        "home": _assignment(lines[17], "TRUSTED_HOME"),
+        "config_hex": _assignment(lines[18], "TRUSTED_CONFIG_HEX"),
+        "config_digest": _assignment(lines[19], "TRUSTED_CONFIG_SHA256"),
+        "policy_hex": _assignment(lines[20], "TRUSTED_POLICY_HEX"),
+        "policy_digest": _assignment(lines[21], "TRUSTED_POLICY_SHA256"),
+        "pyyaml_manifest_hex": _assignment(
+            lines[22], "TRUSTED_PYYAML_MANIFEST_HEX"
+        ),
+        "closure_manifest_hex": _assignment(
+            lines[23], "TRUSTED_CLOSURE_MANIFEST_HEX"
+        ),
+    }
+    actual_hook_type = _assignment(lines[24], "HOOK_TYPE")
+    valid = (
+        actual_hook_type == hook_type
+        and actual["source"] is not None
+        and os.path.isabs(actual["source"])
+        and actual["interpreter"] is not None
+        and os.path.isabs(actual["interpreter"])
+        and actual["git"] is not None
+        and os.path.isabs(actual["git"])
+        and actual["boundary"] is not None
+        and os.path.isabs(actual["boundary"])
+        and re.fullmatch(r"[0-9a-f]{64}", actual["source_digest"] or "")
+        and re.fullmatch(r"[0-9a-f]{64}", actual["interpreter_digest"] or "")
+        and re.fullmatch(r"[0-9a-f]{64}", actual["git_digest"] or "")
+        and re.fullmatch(r"[0-9a-f]{64}", actual["boundary_digest"] or "")
+        and actual["repository"] is not None
+        and os.path.isabs(actual["repository"])
+        and all(
+            actual[name] is not None and os.path.isabs(actual[name])
+            for name in ("git_directory", "git_common", "home")
         )
+        and re.fullmatch(r"[0-9a-f]+", actual["config_hex"] or "")
+        and re.fullmatch(r"[0-9a-f]{64}", actual["config_digest"] or "")
+        and re.fullmatch(r"[0-9a-f]+", actual["policy_hex"] or "")
+        and re.fullmatch(r"[0-9a-f]{64}", actual["policy_digest"] or "")
+        and re.fullmatch(r"[0-9a-f]+", actual["pyyaml_manifest_hex"] or "")
+        and re.fullmatch(r"[0-9a-f]+", actual["closure_manifest_hex"] or "")
     )
+    if not valid or runtime is None:
+        return bool(valid)
+    try:
+        expected = {
+            key: _runtime_value(runtime, key)
+            for key in (
+                "source",
+                "source_digest",
+                "interpreter",
+                "interpreter_digest",
+                "git",
+                "git_digest",
+                "boundary",
+                "boundary_digest",
+                "repository",
+                "git_directory",
+                "git_common",
+                "home",
+                "config_hex",
+                "config_digest",
+                "policy_hex",
+                "policy_digest",
+                "pyyaml_manifest_hex",
+                "closure_manifest_hex",
+            )
+        }
+    except SetupError:
+        return False
+    return actual == expected
 
 
-def inventory(directory):
+def inventory(directory, deadline=None):
     result = {}
-    names = sorted(os.listdir(directory.descriptor))
+    budget = deadline if isinstance(deadline, OperationBudget) else None
+    names = _bounded_directory_names(
+        directory.descriptor, MAX_HOOK_ENTRIES, "hook inventory", deadline
+    )
+    total = 0
     for name in names:
+        if deadline is not None:
+            deadline.check("hook inventory")
         item = hook_at(directory, name)
         if item is None:
             raise SetupError("hook inventory changed while reading")
         if stat.S_IMODE(item.token[2]) & ~0o777:
             raise SetupError("hook entry has unsafe mode: {}".format(name))
+        total += len(item.data)
+        if total > MAX_HOOK_BYTES:
+            raise SetupError("hook inventory byte budget exceeded")
+        if budget is not None:
+            budget.charge_hook(directory.token, name, item.token, len(item.data))
         result[name] = item
-    if names != sorted(os.listdir(directory.descriptor)):
-        raise SetupError("hook inventory changed while reading")
     return result
 
 
@@ -1339,6 +3284,7 @@ class Candidate:
     path: str
     directory: BoundDir
     items: dict
+    deadline: object = None
 
     @property
     def token(self):
@@ -1346,7 +3292,42 @@ class Candidate:
 
     @property
     def receipt(self):
-        return route_receipt("candidate", self.path, self.token, content(self.items))
+        try:
+            token = dir_ident(os.fstat(self.directory.descriptor))
+        except OSError as error:
+            return "candidate-object last-route={} identity=unavailable ({})".format(
+                shlex.quote(self.path), error
+            )
+        route_bound = True
+        try:
+            self.directory.verify()
+        except (OSError, SetupError):
+            route_bound = False
+        try:
+            actual = content(inventory(self.directory, self.deadline))
+        except (OSError, SetupError) as error:
+            label = "candidate" if route_bound else "candidate-object last-route"
+            return "{} {} identity={}:{} digest=unavailable ({})".format(
+                label,
+                shlex.quote(self.path),
+                token[0],
+                token[1],
+                error,
+            )
+        if route_bound:
+            return route_receipt("candidate", self.path, token, actual)
+        return route_receipt("candidate-object last-route", self.path, token, actual)
+
+    def verify(self, desired, route=True):
+        opened = dir_ident(os.fstat(self.directory.descriptor))
+        if opened != self.token:
+            raise SetupError("hook candidate directory object changed")
+        if route:
+            self.directory.verify()
+        for item in self.items.values():
+            item.verify()
+        if content(inventory(self.directory, self.deadline)) != desired:
+            raise SetupError("hook candidate bytes changed")
 
     def close(self):
         self.directory.close()
@@ -1368,10 +3349,14 @@ def make_candidate(repo, desired):
         for entry_name, (data, mode) in sorted(desired.items()):
             write_entry(directory, entry_name, data, mode)
         os.fsync(directory.descriptor)
-        actual = inventory(directory)
+        directory.token = dir_ident(os.fstat(directory.descriptor))
+        directory.verify()
+        actual = inventory(directory, repo.budget or repo.deadline)
         if content(actual) != desired:
             raise SetupError("completed hook candidate does not match the plan")
-        candidate = Candidate(name, path, directory, actual)
+        candidate = Candidate(
+            name, path, directory, actual, repo.budget or repo.deadline
+        )
         directory = None
         return candidate
     except BaseException as error:
@@ -1379,7 +3364,7 @@ def make_candidate(repo, desired):
             try:
                 token = dir_ident(os.fstat(directory.descriptor))
                 try:
-                    items = content(inventory(directory))
+                    items = content(inventory(directory, repo.budget or repo.deadline))
                     receipt = route_receipt("candidate", path, token, items)
                 except BaseException:
                     receipt = "candidate {} identity={}:{}".format(
@@ -1401,30 +3386,158 @@ def make_candidate(repo, desired):
         raise
 
 
-def configs_under(root):
-    def reject_walk_error(error):
-        raise SetupError("cannot inventory pre-commit configurations: {}".format(error))
+class DiscoveryInventory(list):
+    """Configuration routes plus a receipt for the complete scanned graph."""
 
+    def __init__(self, configurations, directories, files, budget):
+        super().__init__(configurations)
+        self.directories = tuple(directories)
+        self.files = tuple(files)
+        self.budget = budget
+
+    @staticmethod
+    def _directory_state(path, budget):
+        if budget is not None:
+            budget.check("configuration discovery revalidation")
+        try:
+            before = os.stat(path, follow_symlinks=False)
+            iterator = os.scandir(path)
+        except OSError as error:
+            raise SetupError(
+                "configuration discovery changed before completion: {}".format(error)
+            ) from error
+        names = []
+        with iterator:
+            for entry in iterator:
+                if budget is not None:
+                    budget.check("configuration discovery revalidation")
+                    budget.charge_directory_entry(ident(before), entry.name)
+                names.append(entry.name)
+        try:
+            after = os.stat(path, follow_symlinks=False)
+        except OSError as error:
+            raise SetupError(
+                "configuration discovery changed before completion: {}".format(error)
+            ) from error
+        if ident(before) != ident(after):
+            raise SetupError("configuration discovery changed before completion")
+        return ident(after), tuple(sorted(names, key=os.fsencode))
+
+    def verify(self):
+        for path, token, names in self.directories:
+            actual_token, actual_names = self._directory_state(path, self.budget)
+            if actual_token != token or actual_names != names:
+                raise SetupError("configuration discovery changed before completion")
+        for path, token in self.files:
+            if self.budget is not None:
+                self.budget.check("configuration discovery revalidation")
+            try:
+                current = ident(os.stat(path, follow_symlinks=False))
+            except OSError as error:
+                raise SetupError(
+                    "configuration discovery changed before completion: {}".format(
+                        error
+                    )
+                ) from error
+            if current != token:
+                raise SetupError("configuration discovery changed before completion")
+            if self.budget is not None:
+                self.budget.charge_configuration(path, current)
+
+
+def configs_under(root, deadline=None):
+    """Stream the bounded depth-two configuration inventory."""
+
+    budget = deadline if isinstance(deadline, OperationBudget) else None
     result = []
-    for current, dirs, files in os.walk(
-        root, topdown=True, onerror=reject_walk_error, followlinks=False
-    ):
-        rel = os.path.relpath(current, root)
-        depth = 0 if rel == "." else rel.count(os.sep) + 1
-        dirs[:] = sorted(
-            name
-            for name in dirs
-            if name != ".git"
-            and depth < 2
-            and not os.path.islink(os.path.join(current, name))
+    directory_receipts = []
+    file_receipts = []
+    pending = [(root, 0)]
+    entries = 0
+    total_bytes = 0
+    while pending:
+        current, depth = pending.pop()
+        if deadline is not None:
+            deadline.check("configuration discovery")
+        try:
+            before = os.stat(current, follow_symlinks=False)
+            iterator = os.scandir(current)
+        except OSError as error:
+            raise SetupError(
+                "cannot inventory pre-commit configurations: {}".format(error)
+            ) from error
+        directories = []
+        names = []
+        config = None
+        config_token = None
+        with iterator:
+            for entry in iterator:
+                names.append(entry.name)
+                entries += 1
+                if entries > MAX_DIRECTORY_ENTRIES:
+                    raise SetupError("configuration discovery entry budget exceeded")
+                if deadline is not None:
+                    deadline.check("configuration discovery")
+                if budget is not None:
+                    budget.charge_directory_entry(ident(before), entry.name)
+                try:
+                    if entry.is_symlink():
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        if entry.name != ".git" and depth < 2:
+                            directories.append(entry.path)
+                        continue
+                    if (
+                        entry.name == ".pre-commit-config.yaml"
+                        and entry.is_file(follow_symlinks=False)
+                    ):
+                        if config is not None:
+                            raise SetupError(
+                                "duplicate configuration route in {}".format(current)
+                            )
+                        opened = entry.stat(follow_symlinks=False)
+                        config = entry.path
+                        config_token = ident(opened)
+                        total_bytes += opened.st_size
+                except OSError as error:
+                    raise SetupError(
+                        "configuration discovery changed while reading: {}".format(
+                            error
+                        )
+                    ) from error
+        after = os.stat(current, follow_symlinks=False)
+        if ident(before) != ident(after):
+            raise SetupError("configuration directory changed while reading")
+        directory_receipts.append(
+            (current, ident(after), tuple(sorted(names, key=os.fsencode)))
         )
-        if ".pre-commit-config.yaml" in files:
-            result.append(os.path.join(current, ".pre-commit-config.yaml"))
-    return sorted(result, key=os.fsencode)
+        if total_bytes > MAX_CONFIG_BYTES:
+            raise SetupError("configuration byte budget exceeded")
+        if config is not None:
+            result.append(config)
+            file_receipts.append((config, config_token))
+            if budget is not None:
+                budget.charge_configuration(config, config_token)
+            if len(result) > MAX_CONFIGS or len(result) > MAX_REPOSITORIES:
+                raise SetupError("configuration/repository count budget exceeded")
+        for path in reversed(sorted(directories, key=os.fsencode)):
+            pending.append((path, depth + 1))
+    return DiscoveryInventory(
+        sorted(result, key=os.fsencode),
+        directory_receipts,
+        file_receipts,
+        budget,
+    )
 
 
-def git_value(git, repo, args, env, timeout):
-    result = run([git, "-C", repo] + list(args), "/", env, timeout)
+def git_value(git, repo, args, env, timeout, readonly_paths=()):
+    result = run(
+        [git, "-C", repo] + list(args),
+        "/",
+        env,
+        timeout,
+        readonly_paths=readonly_paths,
+    )
     require_ok("git {}".format(" ".join(args)), result)
     return result[1].decode("utf-8", "strict").strip()
 
@@ -1498,6 +3611,8 @@ class Repo:
     common: BoundDir
     hooks: BoundDir
     before: dict
+    deadline: object = None
+    budget: object = None
 
     def close(self):
         for value in (self.hooks, self.common, self.git_dir, self.directory):
@@ -1507,6 +3622,9 @@ class Repo:
 
 def bind_repo(root, config_path, git, env, timeout):
     path = os.path.dirname(config_path)
+    budget = _operation_budget(timeout)
+    operation_deadline = budget.deadline
+    budget.charge_repository(path)
     opened = []
     try:
         directory = BoundDir.open(path)
@@ -1516,18 +3634,44 @@ def bind_repo(root, config_path, git, env, timeout):
         )
         git_dir, common = _bind_repository_metadata(directory, path)
         opened.extend((git_dir, common))
+        metadata_routes = []
+        seen_metadata_paths = set()
+        for route in (directory, git_dir, common):
+            if route.path not in seen_metadata_paths:
+                metadata_routes.append(route)
+                seen_metadata_paths.add(route.path)
+        metadata_routes = tuple(metadata_routes)
         top = os.path.realpath(
-            git_value(git, path, ["rev-parse", "--show-toplevel"], env, timeout)
+            git_value(
+                git,
+                path,
+                ["rev-parse", "--show-toplevel"],
+                env,
+                timeout,
+                metadata_routes,
+            )
         )
         if top != os.path.realpath(path) or not (
             top == root or top.startswith(root + os.sep)
         ):
             raise SetupError("configuration is not at a Git top level")
         reported_git_path = os.path.realpath(
-            git_value(git, path, ["rev-parse", "--absolute-git-dir"], env, timeout)
+            git_value(
+                git,
+                path,
+                ["rev-parse", "--absolute-git-dir"],
+                env,
+                timeout,
+                metadata_routes,
+            )
         )
         common_raw = git_value(
-            git, path, ["rev-parse", "--git-common-dir"], env, timeout
+            git,
+            path,
+            ["rev-parse", "--git-common-dir"],
+            env,
+            timeout,
+            metadata_routes,
         )
         reported_common_path = os.path.realpath(
             common_raw if os.path.isabs(common_raw) else os.path.join(path, common_raw)
@@ -1541,6 +3685,7 @@ def bind_repo(root, config_path, git, env, timeout):
             "/",
             env,
             timeout,
+            readonly_paths=metadata_routes,
         )
         if configured[0] == 0:
             raise SetupError("core.hooksPath is not supported")
@@ -1556,111 +3701,198 @@ def bind_repo(root, config_path, git, env, timeout):
         else:
             hooks = BoundDir.open_at(common.descriptor, "hooks", hooks_path)
             opened.append(hooks)
-            before = inventory(hooks)
+            before = inventory(hooks, budget)
         label = "." if path == root else os.path.relpath(path, root)
-        return Repo(path, label, config, directory, git_dir, common, hooks, before)
+        return Repo(
+            path,
+            label,
+            config,
+            directory,
+            git_dir,
+            common,
+            hooks,
+            before,
+            operation_deadline,
+            budget,
+        )
     except BaseException:
         for value in reversed(opened):
             value.close()
         raise
 
 
-def shadow_repo(tree, name, config, git, env, timeout):
-    path = tree.mkdir(name)
-    result = run(
-        [git, "-c", "init.templateDir=", "init", "-q", path], "/", env, timeout
-    )
-    require_ok("isolated git init", result)
-    target = os.path.join(path, ".pre-commit-config.yaml")
-    descriptor = os.open(
-        target,
-        os.O_RDWR
-        | os.O_CREAT
-        | os.O_EXCL
-        | os.O_CLOEXEC
-        | os.O_NOFOLLOW
-        | os.O_NONBLOCK,
-        0o600,
-    )
-    try:
-        write_all(descriptor, config.data)
-        os.fsync(descriptor)
-        if read_fd(descriptor) != config.data:
-            raise SetupError("private configuration readback failed")
-    finally:
-        os.close(descriptor)
-    return path, BoundFile.open(target)
+def _bound_tool_digest(tool, deadline=None):
+    tool.verify()
+    opened = os.fstat(tool.descriptor)
+    digest = hashlib.sha256()
+    offset = 0
+    while offset < opened.st_size:
+        if deadline is not None:
+            deadline.check("managed-hook provider hashing")
+        chunk = os.pread(
+            tool.descriptor,
+            min(64 * 1024, opened.st_size - offset),
+            offset,
+        )
+        if not chunk:
+            break
+        digest.update(chunk)
+        offset += len(chunk)
+    tool.verify()
+    if offset != opened.st_size:
+        raise SetupError("executable changed while hashing: {}".format(tool.path))
+    return digest.hexdigest()
 
 
-def generated_inventory(path, install_python=None):
-    directory = BoundDir.open(path, safe=True)
-    try:
-        result = {}
-        for hook_type in HOOK_TYPES:
-            item = hook_at(directory, hook_type)
-            if item is not None:
-                if not item.executable or not generated(item.data, hook_type):
-                    raise SetupError(
-                        "pre-commit generated an invalid {} hook".format(hook_type)
-                    )
-                result[hook_type] = (
-                    canonical_generated_hook(item.data, hook_type, install_python)
-                    if install_python is not None
-                    else item.data
-                )
-        unexpected = [
-            name
-            for name in os.listdir(directory.descriptor)
-            if not name.endswith(".sample") and name not in result
-        ]
-        if unexpected:
-            raise SetupError("pre-commit generated an unexpected hook entry")
-        return result
-    finally:
-        directory.close()
-
-
-def _hook_python_path(pre_commit):
+def _hook_runtime(pre_commit, git, repo, policy):
     interpreter = pre_commit.interpreter_source
-    if interpreter is None:
-        return "/__odysseus_no_install_python__"
-    basename = os.path.basename(interpreter.path)
-    if re.fullmatch(r"python(?:[0-9]+(?:\.[0-9]+)*)?", basename):
-        return interpreter.path
-    return "/__odysseus_no_install_python__"
+    if interpreter is None or not interpreter.trusted_system_route():
+        raise SetupError(
+            "managed hooks require one trusted direct interpreter for pre-commit"
+        )
+    requires_policy = bool(
+        re.search(
+            rb"(?m)^\s*-\s+id:\s*['\"]?forbid-or-true['\"]?\s*$",
+            repo.config.data,
+        )
+    )
+    closure = []
+    roots = tuple(getattr(pre_commit, "python_paths", ()))
+    for source_dependency, execution_dependency in pre_commit.dependencies:
+        if not any(
+            os.path.commonpath((source_dependency.path, root)) == root
+            for root in roots
+        ):
+            continue
+        source_dependency.verify()
+        execution_dependency.verify()
+        closure.append(
+            (source_dependency.path, hashlib.sha256(source_dependency.data).hexdigest())
+        )
+    if not closure:
+        raise SetupError("managed hook has no authenticated provider import closure")
+    closure.sort(key=lambda item: os.fsencode(item[0]))
+    closure_text = "".join("{}\t{}\n".format(*item) for item in closure).encode(
+        "utf-8"
+    )
+    if requires_policy and isinstance(policy, TrustedPayload):
+        raise SetupError("configured silent-failure policy source is unavailable")
+    yaml_entries = [
+        "{}={}".format(path, digest)
+        for path, digest in closure
+        if "/yaml/" in path.replace(os.sep, "/")
+        and path.endswith((".py", ".so"))
+    ]
+    if not yaml_entries:
+        raise SetupError("provider closure has no authenticated PyYAML package")
+    pyyaml_manifest = ("\n".join(yaml_entries) + "\n").encode("utf-8")
+    boundary = pre_commit.boundary
+    boundary.require()
+    if boundary.guard is None or not boundary.guard.trusted_system_route():
+        raise SetupError("managed hooks require a trusted containment provider")
+    home = os.path.realpath(pwd.getpwuid(os.geteuid()).pw_dir)
+    home_binding = BoundDir.open(home, safe=True)
+    home_binding.close()
+    runtime = {
+        "source": pre_commit.source.path,
+        "source_digest": _bound_tool_digest(pre_commit.source, repo.deadline),
+        "interpreter": interpreter.path,
+        "interpreter_digest": _bound_tool_digest(interpreter, repo.deadline),
+        "git": git.source.path,
+        "git_digest": _bound_tool_digest(git.source, repo.deadline),
+        "boundary": boundary.guard.path,
+        "boundary_digest": _bound_tool_digest(
+            boundary.guard, repo.deadline
+        ),
+        "repository": repo.path,
+        "git_directory": repo.git_dir.path,
+        "git_common": repo.common.path,
+        "home": home,
+        "config_hex": repo.config.data.hex(),
+        "config_digest": hashlib.sha256(repo.config.data).hexdigest(),
+        "policy_hex": policy.data.hex(),
+        "policy_digest": hashlib.sha256(policy.data).hexdigest(),
+        "pyyaml_manifest_hex": pyyaml_manifest.hex(),
+        "closure_manifest_hex": zlib.compress(closure_text, 9).hex(),
+    }
+    pre_commit.source.verify()
+    interpreter.verify()
+    git.source.verify()
+    repo.config.verify()
+    policy.verify()
+    return runtime
 
 
-def generate(repo, tree, index, pre_commit, git, env, timeout, install):
-    shadow, config = shadow_repo(
-        tree, "repo-{}".format(index), repo.config, git, env, timeout
-    )
-    result = run(
-        [pre_commit, "validate-config", ".pre-commit-config.yaml"], shadow, env, timeout
-    )
-    config.verify()
-    require_ok("pre-commit validate-config", result)
-    result = run([pre_commit, "install"], shadow, env, timeout)
-    config.verify()
-    require_ok("pre-commit hook discovery", result)
-    hooks_path = os.path.join(shadow, ".git", "hooks")
-    install_python = _hook_python_path(pre_commit)
-    discovered = generated_inventory(hooks_path, install_python)
-    if not discovered:
+def _generated_archive(data, runtime):
+    """Read, but never extract, the bounded archive returned by the namespace."""
+
+    result = {}
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
+            for member in archive:
+                name = member.name
+                if (
+                    name not in HOOK_TYPES
+                    or name in result
+                    or not member.isfile()
+                    or not member.mode & 0o111
+                    or member.size < 0
+                    or member.size > 256 * 1024
+                ):
+                    raise SetupError("generator returned an invalid hook archive")
+                stream = archive.extractfile(member)
+                if stream is None:
+                    raise SetupError("generator returned an unreadable hook")
+                payload = stream.read(256 * 1024 + 1)
+                if len(payload) != member.size or len(payload) > 256 * 1024:
+                    raise SetupError("generator returned an oversized hook")
+                result[name] = canonical_generated_hook(payload, name, runtime)
+    except (tarfile.TarError, OSError, EOFError) as error:
+        raise SetupError("generator returned an invalid hook archive") from error
+    if not result:
         raise SetupError("pre-commit discovered no install hook types")
-    if not install:
-        return set(discovered), discovered
-    for name in discovered:
-        os.unlink(os.path.join(hooks_path, name))
-    command = [pre_commit, "install", "--install-hooks"]
-    for name in sorted(discovered):
-        command.extend(("--hook-type", name))
-    result = run(command, shadow, env, timeout)
-    config.verify()
-    require_ok("pre-commit install", result)
-    actual = generated_inventory(hooks_path, install_python)
-    if set(actual) != set(discovered):
-        raise SetupError("actual hook inventory differs from discovery")
-    return set(discovered), actual
+    return result
+
+
+def generate(
+    repo,
+    driver,
+    pre_commit,
+    git,
+    env,
+    timeout,
+    install,
+    policy,
+):
+    config = BoundTool.sealed_bytes(
+        os.path.join(SCRATCH_REPO, ".pre-commit-config.yaml"),
+        repo.config.data,
+        executable=False,
+    )
+    try:
+        repo.config.verify()
+        result = run(
+            [
+                driver,
+                pre_commit.execution.path,
+                pre_commit.execution.path,
+                git.execution.path,
+                git.execution.path,
+                "install" if install else "check",
+            ],
+            "/",
+            env,
+            timeout,
+            input_files=(config,),
+        )
+        repo.config.verify()
+        require_ok("isolated pre-commit generation", result)
+        actual = _generated_archive(
+            result[1], _hook_runtime(pre_commit, git, repo, policy)
+        )
+        return set(actual), actual
+    finally:
+        config.close()
 
 
 def named_inventory(repo, name="hooks"):
@@ -1669,8 +3901,8 @@ def named_inventory(repo, name="hooks"):
     absolute = None
     try:
         absolute = BoundDir.open(path, safe=True)
-        left = inventory(relative)
-        right = inventory(absolute)
+        left = inventory(relative, repo.budget or repo.deadline)
+        right = inventory(absolute, repo.budget or repo.deadline)
         if relative.token != absolute.token or full_manifest(left) != full_manifest(
             right
         ):
@@ -1767,10 +3999,11 @@ def verify(repo, expected, payloads, native, root, desired=None):
 class DirectoryLock:
     """Hold a bounded advisory lock on an already bound directory."""
 
-    def __init__(self, descriptor, timeout=2.0):
+    def __init__(self, descriptor, deadline=None):
         self.descriptor = descriptor
         self.locked = False
-        deadline = time.monotonic() + timeout
+        if deadline is None:
+            deadline = OperationDeadline(2.0)
         while True:
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1781,11 +4014,13 @@ class DirectoryLock:
                     raise SetupError(
                         "cannot lock the Git common directory: {}".format(error)
                     ) from error
-                if time.monotonic() >= deadline:
+                try:
+                    remaining = deadline.remaining("Git common-directory lock")
+                except SetupError as deadline_error:
                     raise SetupError(
                         "timed out while locking the Git common directory"
-                    ) from error
-                time.sleep(0.02)
+                    ) from deadline_error
+                time.sleep(min(0.02, remaining))
 
     def close(self):
         if not self.locked:
@@ -1837,19 +4072,58 @@ def publication_receipts(repo, candidate, desired):
     return "; ".join(receipts)
 
 
-def best_effort_publication_receipts(repo, candidate, desired):
+def live_route_receipt(repo, name, label):
+    """Describe one named live route through matching relative and absolute binds."""
+
+    path = os.path.join(repo.common.path, name)
+    relative = BoundDir.open_at(repo.common.descriptor, name, path)
+    absolute = None
     try:
-        return publication_receipts(repo, candidate, desired)
-    except BaseException as error:
-        active_path = os.path.join(repo.common.path, "hooks")
-        owned = content(inventory(candidate.directory))
-        details = route_receipt("expected-active", active_path, candidate.token, owned)
-        if repo.hooks is not None:
-            recovered = content(inventory(repo.hooks))
-            details += "; " + route_receipt(
-                "expected-recovery", candidate.path, repo.hooks.token, recovered
+        absolute = BoundDir.open(path, safe=True)
+        left = inventory(relative, repo.deadline)
+        right = inventory(absolute, repo.deadline)
+        if relative.token != absolute.token or full_manifest(left) != full_manifest(
+            right
+        ):
+            raise SetupError("live receipt routes disagree: {}".format(path))
+        return route_receipt(label, path, relative.token, content(left))
+    finally:
+        relative.close()
+        if absolute is not None:
+            absolute.close()
+
+
+def unavailable_route_receipt(label, path, error):
+    detail = "{}: {}".format(type(error).__name__, error).replace("\n", " ")
+    return "{} {} identity=unavailable digest=unavailable ({})".format(
+        label, shlex.quote(path), detail[:512]
+    )
+
+
+def best_effort_publication_receipts(repo, candidate, desired):
+    details = [
+        route_receipt(
+            "expected-candidate", candidate.path, candidate.token, desired
+        )
+    ]
+    routes = [("hooks", "live-active")]
+    if repo.hooks is not None:
+        details.append(
+            route_receipt(
+                "expected-recovery",
+                candidate.path,
+                repo.hooks.token,
+                content(repo.before),
             )
-        return "{}; route verification error: {}".format(details, error)
+        )
+        routes.append((candidate.name, "live-recovery"))
+    for name, label in routes:
+        path = os.path.join(repo.common.path, name)
+        try:
+            details.append(live_route_receipt(repo, name, label))
+        except BaseException as error:
+            details.append(unavailable_route_receipt(label, path, error))
+    return "; ".join(details)
 
 
 def install(repo, expected, payloads, native, root, guard):
@@ -1858,14 +4132,11 @@ def install(repo, expected, payloads, native, root, guard):
     lock = None
     committed = False
     try:
-        lock = DirectoryLock(repo.common.descriptor)
+        lock = DirectoryLock(repo.common.descriptor, repo.deadline)
         guard()
         preflight(repo)
-        if (
-            dir_ident(os.fstat(candidate.directory.descriptor)) != candidate.token
-            or content(inventory(candidate.directory)) != desired
-            or route_token(repo, candidate.name) != candidate.token
-        ):
+        candidate.verify(desired)
+        if route_token(repo, candidate.name) != candidate.token:
             raise SetupError("hook candidate changed before publication")
 
         # Recheck all live inputs while the common-directory lock is held.  The
@@ -1873,6 +4144,8 @@ def install(repo, expected, payloads, native, root, guard):
         guard()
         preflight(repo)
         rename_error = None
+        active_before = route_token(repo, "hooks")
+        candidate_before = route_token(repo, candidate.name)
         try:
             atomic_rename(
                 repo.common.descriptor,
@@ -1880,10 +4153,15 @@ def install(repo, expected, payloads, native, root, guard):
                 "hooks",
                 exchange=repo.hooks is not None,
             )
+            committed = True
         except BaseException as error:
             rename_error = error
-
-        committed = route_token(repo, "hooks") == candidate.token
+            active_after = route_token(repo, "hooks")
+            candidate_after = route_token(repo, candidate.name)
+            committed = (
+                active_after != active_before
+                or candidate_after != candidate_before
+            )
         if not committed:
             if rename_error is not None:
                 raise rename_error
@@ -1892,6 +4170,7 @@ def install(repo, expected, payloads, native, root, guard):
             )
 
         os.fsync(repo.common.descriptor)
+        candidate.verify(desired, route=False)
         guard()
         receipts = publication_receipts(repo, candidate, desired)
         verify(repo, expected, payloads, native, root, desired)
@@ -1936,15 +4215,18 @@ def arguments(argv):
 def main(argv):
     args = arguments(argv)
     failures = 0
-    tree = None
     root_dir = None
-    execution_tree = None
+    policy = None
     bound_tools = []
+    deadline = None
+    budget = None
     try:
         if not math.isfinite(args.timeout):
             raise SetupError("timeout must be finite")
         if args.timeout <= 0 or args.timeout > 1800:
             raise SetupError("timeout must be in (0, 1800]")
+        deadline = OperationDeadline(args.timeout)
+        budget = OperationBudget(deadline)
         root = os.path.realpath(args.root)
         if root != os.path.abspath(args.root):
             raise SetupError("Odysseus root must be a direct absolute path")
@@ -1952,36 +4234,39 @@ def main(argv):
         native = BoundFile.open(
             os.path.join(root, ".githooks", "pre-push"), executable=True
         )
+        policy_path = os.path.join(root, "scripts", "check_silent_failures.py")
+        try:
+            os.stat(policy_path, follow_symlinks=False)
+        except FileNotFoundError:
+            policy = TrustedPayload(
+                b"raise SystemExit('trusted silent-failure policy unavailable')\n"
+            )
+        else:
+            policy = BoundFile.open(policy_path, executable=False)
         pre_commit_path = os.path.realpath(args.pre_commit)
         git_path = os.path.realpath(args.git)
         pre_commit_source = BoundTool.open(pre_commit_path)
         bound_tools.append(pre_commit_source)
         git_source = BoundTool.open(git_path)
         bound_tools.append(git_source)
-        tree = PrivateTree()
-        home = tree.mkdir("home")
-        cache = tree.mkdir("cache")
-        execution_tree = PrivateTree()
-        boundary = ReadOnlyExecutionBoundary(execution_tree, tree, bound_tools)
+        boundary = ReadOnlyExecutionBoundary(bound_tools, budget)
         boundary.require()
         pre_commit = bind_executable(
-            pre_commit_source,
-            execution_tree,
-            "pre-commit",
-            bound_tools,
-            boundary,
+            pre_commit_source, boundary.tree, "pre-commit", bound_tools, boundary
         )
-        git = bind_executable(git_source, execution_tree, "git", bound_tools, boundary)
-        env = clean_env(pre_commit, git, home, cache)
+        if pre_commit.interpreter_source is None:
+            raise SetupError("managed hooks require one explicit Python interpreter")
+        git = bind_executable(git_source, boundary.tree, "git", bound_tools, boundary)
+        driver = bind_generator_driver(pre_commit, git, boundary, bound_tools)
+        env = clean_env(pre_commit, git, SCRATCH_HOME, SCRATCH_CACHE)
 
         def verify_tools():
-            tree.verify()
             boundary.verify()
             for tool in bound_tools:
                 tool.verify()
 
         verify_tools()
-        result = run([pre_commit, "--version"], "/", env, args.timeout)
+        result = run([pre_commit, "--version"], "/", env, budget)
         verify_tools()
         require_ok("pre-commit version probe", result)
         match = VERSION.fullmatch(result[1].decode("utf-8", "replace").strip())
@@ -1995,28 +4280,29 @@ def main(argv):
                 )
             )
         emit("PASS", "pre-commit {}".format(version))
-        configs = configs_under(root)
+        configs = configs_under(root, budget)
         if not configs:
             emit("WARN", "No .pre-commit-config.yaml files found under {}".format(root))
-        for index, config_path in enumerate(configs):
+        for config_path in configs:
             repo = None
             terminal_error = None
             label = os.path.relpath(os.path.dirname(config_path), root)
             try:
                 root_dir.verify()
                 native.verify()
+                policy.verify()
                 verify_tools()
-                repo = bind_repo(root, config_path, git, env, args.timeout)
+                repo = bind_repo(root, config_path, git, env, budget)
                 label = repo.label
                 expected, payloads = generate(
                     repo,
-                    tree,
-                    index,
+                    driver,
                     pre_commit,
                     git,
                     env,
-                    args.timeout,
+                    budget,
                     args.mode == "install",
+                    policy,
                 )
                 if repo.path == root and "pre-push" not in expected:
                     raise SetupError("root configuration must install pre-push")
@@ -2056,6 +4342,7 @@ def main(argv):
                         if terminal_error is not None:
                             raise terminal_error from error
                         raise
+        configs.verify()
     except CancellationError as error:
         failures += 1
         emit("FAIL", error)
@@ -2067,16 +4354,6 @@ def main(argv):
             root_dir.close()
         for tool in reversed(bound_tools):
             tool.close()
-        if execution_tree is not None:
-            problem = execution_tree.close()
-            if problem:
-                failures += 1
-                emit("FAIL", problem)
-        if tree is not None:
-            problem = tree.close()
-            if problem:
-                failures += 1
-                emit("FAIL", problem)
     return 1 if failures else 0
 
 

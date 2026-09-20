@@ -59,8 +59,8 @@ cat > "$FAKE_BIN/bounded-command" <<'SH'
 SH
 chmod +x "$FAKE_BIN/bounded-command"
 
-info "run-bounded rejects noncanonical and oversized limits before execution"
-for value in -1 01 1+1 0x10 67108865 999999999999999999999 \
+info "run-bounded rejects unbounded, noncanonical, and oversized limits before execution"
+for value in 0 -1 01 1+1 0x10 67108865 999999999999999999999 \
     "x[\$(touch $INJECTION_MARKER)]"; do
     rm -f "$RUN_MARKER" "$INJECTION_MARKER"
     set +e
@@ -78,15 +78,294 @@ for value in -1 01 1+1 0x10 67108865 999999999999999999999 \
     fi
 done
 
-info "literal zero remains the explicit unbounded opt-out"
-rm -f "$RUN_MARKER"
-if RUN_MARKER="$RUN_MARKER" RUN_BOUNDED_VMEM_KB=0 \
-    PATH="$FAKE_BIN:/usr/bin:/bin" \
-    "$BASH" "$ROOT/scripts/run-bounded.sh" bounded-command \
-    && [ -e "$RUN_MARKER" ]; then
-    pass "literal zero executes without applying a virtual-memory cap"
+if [[ "$(uname -s)" == Linux ]]; then
+    delegated_parent=
+    current_cgroup=
+    while IFS=: read -r hierarchy controllers relative; do
+        if [[ "$hierarchy" == 0 && -z "$controllers" ]]; then
+            current_cgroup="/sys/fs/cgroup$relative"
+            break
+        fi
+    done < /proc/self/cgroup
+    candidate_parent=$current_cgroup
+    while [[ "$candidate_parent" == /sys/fs/cgroup* \
+        && "$candidate_parent" != /sys/fs ]]; do
+        candidate="$candidate_parent/odysseus-cgroup-probe.$$"
+        if /bin/mkdir "$candidate" 2>/dev/null; then
+            if [[ -f "$candidate/memory.max" \
+                && -f "$candidate/memory.swap.max" \
+                && -f "$candidate/cgroup.kill" ]]; then
+                delegated_parent=$candidate_parent
+            fi
+            if ! /bin/rmdir "$candidate"; then
+                fail "the cgroup capability probe could not clean its exact object"
+                delegated_parent=
+            fi
+            [[ -z "$delegated_parent" ]] || break
+        fi
+        candidate_parent=${candidate_parent%/*}
+        [[ -n "$candidate_parent" ]] || break
+    done
+
+    if [[ -n "$delegated_parent" ]]; then
+    info "run-bounded preserves argv and applies the limit to descendants"
+    cat > "$FAKE_BIN/bounded-argv" <<'SH'
+#!/usr/bin/env bash
+if [[ "$#" -eq 4 \
+    && "$1" == 'one two' \
+    && "$2" == '' \
+    && "$3" == '*' \
+    && "$4" == '$(not-code)' ]]; then
+    : > "${RUN_MARKER:?}"
 else
-    fail "literal zero no longer preserves the documented opt-out"
+    exit 64
+fi
+SH
+    cat > "$FAKE_BIN/bounded-limits" <<'SH'
+#!/usr/bin/env bash
+ulimit -v > "${LIMIT_LOG:?}"
+"${BASH:?}" -c 'ulimit -v' >> "${LIMIT_LOG:?}"
+SH
+    chmod +x "$FAKE_BIN/bounded-argv" "$FAKE_BIN/bounded-limits"
+    rm -f "$RUN_MARKER"
+    if RUN_MARKER="$RUN_MARKER" RUN_BOUNDED_VMEM_KB=262144 \
+        PATH="$FAKE_BIN:/usr/bin:/bin" \
+        "$BASH" "$ROOT/scripts/run-bounded.sh" bounded-argv \
+        'one two' '' '*' '$(not-code)' \
+        && [ -e "$RUN_MARKER" ]; then
+        pass "bounded execution preserves the selected argv"
+    else
+        fail "bounded execution reconstructed or lost selected argv"
+    fi
+    limit_log="$TMP/descendant-limits.log"
+    if LIMIT_LOG="$limit_log" RUN_BOUNDED_VMEM_KB=262144 \
+        PATH="$FAKE_BIN:/usr/bin:/bin" \
+        "$BASH" "$ROOT/scripts/run-bounded.sh" bounded-limits \
+        && [[ "$(sed -n '1p' "$limit_log")" =~ ^[0-9]+$ ]] \
+        && [ "$(sed -n '1p' "$limit_log")" -le 262144 ] \
+        && [[ "$(sed -n '2p' "$limit_log")" =~ ^[0-9]+$ ]] \
+        && [ "$(sed -n '2p' "$limit_log")" -le 262144 ]; then
+        pass "the memory ceiling is inherited by a descendant shell"
+    else
+        fail "a descendant escaped the inherited memory ceiling"
+    fi
+
+    info "run-bounded uses an aggregate cgroup-v2 ceiling when delegated"
+        cat > "$FAKE_BIN/bounded-cgroup-probe" <<'SH'
+#!/usr/bin/env bash
+relative=
+while IFS=: read -r hierarchy controllers candidate; do
+    if [[ "$hierarchy" == 0 && -z "$controllers" ]]; then
+        relative=$candidate
+        break
+    fi
+done < /proc/self/cgroup
+printf '%s\n' "$relative" > "${CGROUP_LOG:?}"
+cat "/sys/fs/cgroup$relative/memory.max" >> "${CGROUP_LOG:?}"
+cat "/sys/fs/cgroup$relative/memory.swap.max" >> "${CGROUP_LOG:?}"
+SH
+        chmod +x "$FAKE_BIN/bounded-cgroup-probe"
+        cgroup_log="$TMP/bounded-cgroup.log"
+        if CGROUP_LOG="$cgroup_log" RUN_BOUNDED_VMEM_KB=262144 \
+            PATH="$FAKE_BIN:/usr/bin:/bin" \
+            "$BASH" "$ROOT/scripts/run-bounded.sh" bounded-cgroup-probe \
+            && grep -q '/odysseus-run-bounded\.' "$cgroup_log" \
+            && [ "$(sed -n '2p' "$cgroup_log")" -eq 268435456 ] \
+            && [ "$(sed -n '3p' "$cgroup_log")" -eq 0 ]; then
+            pass "delegated cgroup-v2 enforces one aggregate memory ceiling"
+        else
+            fail "a delegated aggregate memory boundary was available but unused"
+        fi
+
+        cat > "$FAKE_BIN/bounded-aggregate" <<'SH'
+#!/usr/bin/env bash
+exec "${BOUNDED_PYTHON:?}" -I -S -c '
+import subprocess
+import sys
+
+program = "import time; payload = bytearray(128 * 1024 * 1024); time.sleep(3)"
+children = [subprocess.Popen([sys.executable, "-I", "-S", "-c", program]) for _ in range(2)]
+for child in children:
+    child.wait()
+raise SystemExit(0)
+'
+SH
+        chmod +x "$FAKE_BIN/bounded-aggregate"
+        set +e
+        BOUNDED_PYTHON="$(command -v python3)" \
+            RUN_BOUNDED_VMEM_KB=196608 PATH="$FAKE_BIN:/usr/bin:/bin" \
+            "$BASH" "$ROOT/scripts/run-bounded.sh" bounded-aggregate \
+            > "$TMP/bounded-aggregate.out" 2>&1
+        aggregate_status=$?
+        set -e
+        if [ "$aggregate_status" -ne 0 ] \
+            && grep -q 'exceeded its aggregate memory ceiling' \
+                "$TMP/bounded-aggregate.out"; then
+            pass "the aggregate ceiling terminates an over-budget descendant workload"
+        else
+            fail "separate descendants exceeded the aggregate ceiling without failure"
+        fi
+    info "run-bounded rejects and extinguishes a leaked cgroup member"
+    cat > "$FAKE_BIN/bounded-leaker" <<'SH'
+#!/usr/bin/env bash
+/bin/sleep 30 &
+printf '%s\n' "$!" > "${LEAK_PID_FILE:?}"
+exit 0
+SH
+    chmod +x "$FAKE_BIN/bounded-leaker"
+    leak_pid_file="$TMP/leaked-process.pid"
+    set +e
+    LEAK_PID_FILE="$leak_pid_file" RUN_BOUNDED_VMEM_KB=262144 \
+        PATH="$FAKE_BIN:/usr/bin:/bin" \
+        "$BASH" "$ROOT/scripts/run-bounded.sh" bounded-leaker \
+        > "$TMP/run-bounded-leak.out" 2>&1
+    leak_status=$?
+    set -e
+    leak_alive=false
+    if [ -s "$leak_pid_file" ]; then
+        leak_pid=$(cat "$leak_pid_file")
+        if kill -0 "$leak_pid" 2>/dev/null; then
+            leak_alive=true
+            kill -KILL "$leak_pid" 2>/dev/null
+        fi
+    fi
+    if [ "$leak_status" -ne 0 ] && ! $leak_alive \
+        && grep -q 'descendants were still running' "$TMP/run-bounded-leak.out"; then
+        pass "a leaked cgroup member is killed and cannot become success"
+    else
+        fail "a leaked cgroup member survived or became success"
+    fi
+
+    info "setsid and double-fork descendants remain inside aggregate containment"
+    cat > "$FAKE_BIN/bounded-detached" <<'SH'
+#!/usr/bin/env bash
+exec "${BOUNDED_PYTHON:?}" -I -S - "${DETACHED_PID_FILE:?}" <<'PY'
+import os
+import sys
+import time
+
+first = os.fork()
+if first:
+    os.waitpid(first, 0)
+    raise SystemExit(0)
+os.setsid()
+second = os.fork()
+if second:
+    os._exit(0)
+with open(sys.argv[1], "w", encoding="ascii") as stream:
+    stream.write(str(os.getpid()))
+time.sleep(30)
+PY
+SH
+    chmod +x "$FAKE_BIN/bounded-detached"
+    detached_pid_file="$TMP/detached.pid"
+    set +e
+    BOUNDED_PYTHON="$(command -v python3)" \
+        DETACHED_PID_FILE="$detached_pid_file" RUN_BOUNDED_VMEM_KB=262144 \
+        PATH="$FAKE_BIN:/usr/bin:/bin" \
+        "$BASH" "$ROOT/scripts/run-bounded.sh" bounded-detached \
+        > "$TMP/run-bounded-detached.out" 2>&1
+    detached_status=$?
+    set -e
+    detached_alive=false
+    if [ -s "$detached_pid_file" ]; then
+        detached_pid=$(cat "$detached_pid_file")
+        if kill -0 "$detached_pid" 2>/dev/null; then
+            detached_alive=true
+            kill -KILL "$detached_pid" 2>/dev/null
+        fi
+    fi
+    if [ "$detached_status" -ne 0 ] && ! $detached_alive \
+        && grep -q 'descendants were still running' \
+            "$TMP/run-bounded-detached.out"; then
+        pass "detached descendants are extinct before the wrapper returns"
+    else
+        fail "a detached descendant escaped the aggregate cgroup"
+    fi
+
+    info "prelaunch cancellation cannot start the selected command"
+    prelaunch_env="$TMP/prelaunch-cancel-env.sh"
+cat > "$prelaunch_env" <<'SH'
+trap 'if [[ "${BASH_COMMAND:-}" == run_bounded_checkpoint=prelaunch ]]; then \
+    trap - DEBUG; kill -TERM "$$"; fi' DEBUG
+SH
+    rm -f "$RUN_MARKER"
+    set +e
+    BASH_ENV="$prelaunch_env" RUN_MARKER="$RUN_MARKER" \
+        RUN_BOUNDED_VMEM_KB=262144 PATH="$FAKE_BIN:/usr/bin:/bin" \
+        "$BASH" "$ROOT/scripts/run-bounded.sh" bounded-command \
+        > "$TMP/run-bounded-prelaunch.out" 2>&1
+    prelaunch_status=$?
+    set -e
+    if [ "$prelaunch_status" -eq 143 ] && [ ! -e "$RUN_MARKER" ]; then
+        pass "a signal observed before launch is terminal without command effects"
+    else
+        sed 's/^/    /' "$TMP/run-bounded-prelaunch.out" >&2
+        fail "prelaunch cancellation still reached the selected command"
+    fi
+
+    info "run-bounded propagates cancellation after descendant extinction"
+    cat > "$FAKE_BIN/bounded-waiter" <<'SH'
+#!/usr/bin/env bash
+/bin/sleep 30 &
+printf '%s\n' "$!" > "${WAIT_CHILD_PID_FILE:?}"
+: > "${WAIT_READY:?}"
+wait
+SH
+    chmod +x "$FAKE_BIN/bounded-waiter"
+    wait_child_pid_file="$TMP/wait-child.pid"
+    wait_ready="$TMP/wait-ready"
+    WAIT_CHILD_PID_FILE="$wait_child_pid_file" WAIT_READY="$wait_ready" \
+        RUN_BOUNDED_VMEM_KB=262144 PATH="$FAKE_BIN:/usr/bin:/bin" \
+        "$BASH" "$ROOT/scripts/run-bounded.sh" bounded-waiter \
+        > "$TMP/run-bounded-cancel.out" 2>&1 &
+    bounded_pid=$!
+    for _attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        [ -e "$wait_ready" ] && break
+        /bin/sleep 0.05
+    done
+    if [ -e "$wait_ready" ]; then
+        kill -TERM "$bounded_pid"
+    fi
+    set +e
+    wait "$bounded_pid"
+    cancel_status=$?
+    set -e
+    wait_child_alive=false
+    if [ -s "$wait_child_pid_file" ]; then
+        wait_child_pid=$(cat "$wait_child_pid_file")
+        for _attempt in 1 2 3 4 5 6 7 8 9 10; do
+            kill -0 "$wait_child_pid" 2>/dev/null || break
+            /bin/sleep 0.05
+        done
+        if kill -0 "$wait_child_pid" 2>/dev/null; then
+            wait_child_alive=true
+            kill -KILL "$wait_child_pid" 2>/dev/null
+        fi
+    fi
+    if [ "$cancel_status" -eq 143 ] && ! $wait_child_alive; then
+        pass "SIGTERM remains terminal after every cgroup member exits"
+    else
+        fail "cancellation status or cgroup extinction was lost"
+    fi
+    else
+        info "run-bounded fails closed without delegated aggregate containment"
+        rm -f "$RUN_MARKER"
+        set +e
+        RUN_MARKER="$RUN_MARKER" RUN_BOUNDED_VMEM_KB=262144 \
+            PATH="$FAKE_BIN:/usr/bin:/bin" \
+            "$BASH" "$ROOT/scripts/run-bounded.sh" bounded-command \
+            > "$TMP/run-bounded-unavailable.out" 2>&1
+        unavailable_status=$?
+        set -e
+        if [ "$unavailable_status" -ne 0 ] && [ ! -e "$RUN_MARKER" ] \
+            && grep -q 'aggregate cgroup-v2 containment is unavailable' \
+                "$TMP/run-bounded-unavailable.out"; then
+            pass "no selected command starts without aggregate containment"
+        else
+            fail "an unavailable aggregate boundary fell back to partial containment"
+        fi
+    fi
 fi
 
 info "C++ build bounds fail before filesystem or tool effects"
@@ -95,13 +374,55 @@ mkdir -p "$INSTALL_ROOT/scripts/install"
 cp "$ROOT/scripts/install/50-cpp-builds.sh" \
     "$INSTALL_ROOT/scripts/install/50-cpp-builds.sh"
 cp "$ROOT/scripts/install/lib.sh" "$INSTALL_ROOT/scripts/install/lib.sh"
+cat > "$INSTALL_ROOT/scripts/run-bounded.sh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+printf '%s :: %s\n' "${RUN_BOUNDED_VMEM_KB:?}" "$*" \
+    >> "${CPP_BOUND_LOG:-/dev/null}"
+if [ "${CPP_FAIL_STAGE:-}" = boundary ] \
+    && [[ "$*" == 'pixi run -- conan install '* ]]; then
+    exit 59
+fi
+exec "$@"
+SH
+chmod +x "$INSTALL_ROOT/scripts/run-bounded.sh"
 for cpp_repo in \
     control/Agamemnon \
     control/Nestor \
     provisioning/Keystone \
     testing/Charybdis; do
-    mkdir -p "$INSTALL_ROOT/$cpp_repo"
-    : > "$INSTALL_ROOT/$cpp_repo/CMakeLists.txt"
+    mkdir -p \
+        "$INSTALL_ROOT/$cpp_repo/src" \
+        "$INSTALL_ROOT/$cpp_repo/cmake" \
+        "$INSTALL_ROOT/$cpp_repo/conan/profiles"
+    printf '%s\n' 'cmake_minimum_required(VERSION 3.20)' \
+        > "$INSTALL_ROOT/$cpp_repo/CMakeLists.txt"
+    printf '%s\n' '{"version": 3}' \
+        > "$INSTALL_ROOT/$cpp_repo/CMakePresets.json"
+    printf '%s\n' 'int main() { return 0; }' \
+        > "$INSTALL_ROOT/$cpp_repo/src/main.cpp"
+    printf '%s\n' '# approved toolchain' \
+        > "$INSTALL_ROOT/$cpp_repo/cmake/toolchain.cmake"
+    ln -s toolchain.cmake \
+        "$INSTALL_ROOT/$cpp_repo/cmake/linked-toolchain.cmake"
+    printf '%s\n' 'from conan import ConanFile' \
+        > "$INSTALL_ROOT/$cpp_repo/conanfile.py"
+    printf '%s\n' '[settings]' \
+        > "$INSTALL_ROOT/$cpp_repo/conan/profiles/default"
+    git -C "$INSTALL_ROOT/$cpp_repo" init -q
+    git -C "$INSTALL_ROOT/$cpp_repo" add \
+        CMakeLists.txt \
+        CMakePresets.json \
+        src/main.cpp \
+        cmake/toolchain.cmake \
+        cmake/linked-toolchain.cmake \
+        conanfile.py \
+        conan/profiles/default
+    git -C "$INSTALL_ROOT/$cpp_repo" \
+        -c user.name='Odysseus fixture' \
+        -c user.email='fixture@example.invalid' \
+        -c commit.gpgsign=false \
+        commit -qm 'Create C++ input fixture'
 done
 cat > "$FAKE_BIN/pixi" <<'SH'
 #!/usr/bin/env bash
@@ -191,6 +512,7 @@ for assignment in \
     'ODYSSEUS_BUILD_JOBS=1+1' \
     "ODYSSEUS_BUILD_JOBS=x[\$(touch $INJECTION_MARKER)]" \
     'ODYSSEUS_BUILD_VMEM_KB=-1' \
+    'ODYSSEUS_BUILD_VMEM_KB=0' \
     'ODYSSEUS_BUILD_VMEM_KB=01' \
     'ODYSSEUS_BUILD_VMEM_KB=67108865' \
     'ODYSSEUS_BUILD_VMEM_KB=1+1' \
@@ -317,48 +639,164 @@ for boundary_case in root project cmake; do
     fi
 done
 
-info "C++ descriptor replacement is revalidated before the next tool launch"
+info "C++ executes the selected resource-bound helper after pathname replacement"
+cp "$INSTALL_ROOT/scripts/run-bounded.sh" \
+    "$TMP/run-bounded-fixture-approved.sh"
+cat > "$INSTALL_ROOT/scripts/run-bounded.sh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+printf '%s :: %s\n' "${RUN_BOUNDED_VMEM_KB:?}" "$*" \
+    >> "${CPP_BOUND_LOG:-/dev/null}"
+if [ "${CPP_REPLACE_BOUND_HELPER:-}" = true ] \
+    && [ ! -e "${CPP_HELPER_REPLACED_MARKER:?}" ]; then
+    : > "$CPP_HELPER_REPLACED_MARKER"
+    mv "${CPP_BOUND_HELPER_PATH:?}" "$CPP_BOUND_HELPER_PATH.approved"
+    cat > "$CPP_BOUND_HELPER_PATH" <<'HOSTILE'
+#!/usr/bin/env bash
+: > "${CPP_HOSTILE_HELPER_SENTINEL:?}"
+exit 86
+HOSTILE
+    chmod +x "$CPP_BOUND_HELPER_PATH"
+fi
+exec "$@"
+SH
+chmod +x "$INSTALL_ROOT/scripts/run-bounded.sh"
 cat > "$FAKE_BIN/pixi" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$PWD :: $*" >> "${PIXI_LOG:?}"
-if [[ "$PWD" == */control/Agamemnon ]] \
-    && [[ "$*" == 'run -- conan install '* ]]; then
-    mv CMakeLists.txt CMakeLists.txt.approved
-    printf '%s\n' 'hostile replacement' > CMakeLists.txt
-    exit 0
+if [[ "$*" == 'run -- cmake --build --preset release '* ]]; then
+    mkdir -p build/release
 fi
-if [[ "$PWD" == */control/Agamemnon ]] \
-    && [[ "$*" == 'run -- cmake --preset release'* ]] \
-    && grep -q 'hostile replacement' CMakeLists.txt; then
-    : > "${CPP_SWAP_SENTINEL:?}"
+if [[ "$*" == 'run -- cmake --install build/release --prefix '* ]]; then
+    prefix=${*: -1}
+    artifact="$prefix/bin/${PWD##*/}-helper-fixture"
+    mkdir -p build/release "$prefix/bin"
+    printf '%s\n' 'verified helper fixture' > "$artifact"
+    printf '%s\n' "$artifact" > build/release/install_manifest.txt
 fi
 exit 0
 SH
 chmod +x "$FAKE_BIN/pixi"
-swap_log="$TMP/cpp-swap.log"
-swap_sentinel="$TMP/cpp-swap.sentinel"
-: > "$swap_log"
+helper_log="$TMP/cpp-helper-replacement.log"
+helper_replaced="$TMP/cpp-helper-replaced.marker"
+helper_sentinel="$TMP/cpp-hostile-helper.sentinel"
+: > "$helper_log"
 set +e
 ROLE=control INSTALL=true \
     ODYSSEUS_ROOT="$INSTALL_ROOT" \
-    ODYSSEUS_RUNTIME_PREFIX="$TMP/runtime-swap" \
-    ODYSSEUS_BUILD_VMEM_KB=0 \
-    PIXI_LOG="$swap_log" CPP_SWAP_SENTINEL="$swap_sentinel" \
-    PATH="$FAKE_BIN:/usr/bin:/bin" \
+    ODYSSEUS_RUNTIME_PREFIX="$TMP/runtime-helper-replacement" \
+    ODYSSEUS_BUILD_VMEM_KB=262144 \
+    CPP_REPLACE_BOUND_HELPER=true \
+    CPP_BOUND_HELPER_PATH="$INSTALL_ROOT/scripts/run-bounded.sh" \
+    CPP_HELPER_REPLACED_MARKER="$helper_replaced" \
+    CPP_HOSTILE_HELPER_SENTINEL="$helper_sentinel" \
+    PIXI_LOG="$helper_log" PATH="$FAKE_BIN:/usr/bin:/bin" \
     "$BASH" "$INSTALL_ROOT/scripts/install/50-cpp-builds.sh" \
-    > "$TMP/cpp-swap.out" 2>&1
-swap_status=$?
+    > "$TMP/cpp-helper-replacement.out" 2>&1
+helper_status=$?
 set -e
-if [ "$swap_status" -ne 0 ] \
-    && [ ! -e "$swap_sentinel" ] \
-    && ! grep -q 'control/Agamemnon :: run -- cmake --preset release' \
-        "$swap_log"; then
-    pass "descriptor replacement stops before CMake observes hostile bytes"
+if [ "$helper_status" -eq 0 ] \
+    && [ -e "$helper_replaced" ] \
+    && [ ! -e "$helper_sentinel" ] \
+    && [ "$(grep -c 'built and installed' \
+        "$TMP/cpp-helper-replacement.out")" -eq 4 ]; then
+    pass "the selected helper bytes survive a same-UID pathname replacement"
 else
-    fail "descriptor replacement reached CMake or became install success"
+    sed 's/^/    /' "$TMP/cpp-helper-replacement.out" >&2
+    fail "a replacement helper executed or stopped the selected helper bytes"
 fi
-mv "$INSTALL_ROOT/control/Agamemnon/CMakeLists.txt.approved" \
-    "$INSTALL_ROOT/control/Agamemnon/CMakeLists.txt"
+rm -f "$INSTALL_ROOT/scripts/run-bounded.sh"
+rm -f "$INSTALL_ROOT/scripts/run-bounded.sh.approved"
+cp "$TMP/run-bounded-fixture-approved.sh" \
+    "$INSTALL_ROOT/scripts/run-bounded.sh"
+chmod +x "$INSTALL_ROOT/scripts/run-bounded.sh"
+
+info "C++ build stages use one private snapshot of every tracked input"
+cat > "$FAKE_BIN/pixi" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$PWD :: $*" >> "${PIXI_LOG:?}"
+if [[ "$PWD" == */control/Agamemnon ]] \
+    && [[ "$*" == 'run -- conan install '* ]] \
+    && [ ! -e "${CPP_INPUT_REPLACED_MARKER:?}" ]; then
+    : > "$CPP_INPUT_REPLACED_MARKER"
+    mv "${CPP_SWAP_INPUT:?}" "$CPP_SWAP_INPUT.approved"
+    printf '%s\n' 'hostile replacement' > "$CPP_SWAP_INPUT"
+fi
+if [[ "$PWD" == */control/Agamemnon ]] \
+    && [[ "$*" == 'run -- cmake --preset release'* ]]; then
+    case "${CPP_SWAP_EXPECTED_TYPE:?}" in
+        regular)
+            if grep -q 'hostile replacement' "${CPP_SWAP_RELATIVE:?}"; then
+                : > "${CPP_SWAP_SENTINEL:?}"
+            fi
+            ;;
+        symlink)
+            if [[ ! -L "${CPP_SWAP_RELATIVE:?}" ]]; then
+                : > "${CPP_SWAP_SENTINEL:?}"
+            fi
+            ;;
+    esac
+fi
+if [[ "$*" == 'run -- cmake --build --preset release '* ]]; then
+    mkdir -p build/release
+fi
+if [[ "$*" == 'run -- cmake --install build/release --prefix '* ]]; then
+    prefix=${*: -1}
+    artifact="$prefix/bin/${PWD##*/}-input-fixture"
+    mkdir -p build/release "$prefix/bin"
+    printf '%s\n' 'verified input fixture' > "$artifact"
+    printf '%s\n' "$artifact" > build/release/install_manifest.txt
+fi
+exit 0
+SH
+chmod +x "$FAKE_BIN/pixi"
+for input_case in \
+    'cmake-root|CMakeLists.txt|regular' \
+    'source|src/main.cpp|regular' \
+    'preset|CMakePresets.json|regular' \
+    'toolchain|cmake/toolchain.cmake|regular' \
+    'toolchain-symlink|cmake/linked-toolchain.cmake|symlink' \
+    'conan-recipe|conanfile.py|regular' \
+    'conan-profile|conan/profiles/default|regular'; do
+    input_label=${input_case%%|*}
+    input_tail=${input_case#*|}
+    input_relative=${input_tail%%|*}
+    input_type=${input_tail##*|}
+    input_path="$INSTALL_ROOT/control/Agamemnon/$input_relative"
+    input_log="$TMP/cpp-input-$input_label.log"
+    input_replaced="$TMP/cpp-input-$input_label.marker"
+    input_sentinel="$TMP/cpp-input-$input_label.sentinel"
+    : > "$input_log"
+    set +e
+    ROLE=control INSTALL=true \
+        ODYSSEUS_ROOT="$INSTALL_ROOT" \
+        ODYSSEUS_RUNTIME_PREFIX="$TMP/runtime-input-$input_label" \
+        ODYSSEUS_BUILD_VMEM_KB=262144 \
+        CPP_SWAP_INPUT="$input_path" \
+        CPP_SWAP_RELATIVE="$input_relative" \
+        CPP_SWAP_EXPECTED_TYPE="$input_type" \
+        CPP_INPUT_REPLACED_MARKER="$input_replaced" \
+        CPP_SWAP_SENTINEL="$input_sentinel" \
+        PIXI_LOG="$input_log" PATH="$FAKE_BIN:/usr/bin:/bin" \
+        "$BASH" "$INSTALL_ROOT/scripts/install/50-cpp-builds.sh" \
+        > "$TMP/cpp-input-$input_label.out" 2>&1
+    input_status=$?
+    set -e
+    if [ "$input_status" -eq 0 ] \
+        && [ -e "$input_replaced" ] \
+        && [ ! -e "$input_sentinel" ] \
+        && [ "$(grep -c 'built and installed' \
+            "$TMP/cpp-input-$input_label.out")" -eq 4 ]; then
+        pass "$input_label replacement cannot change selected build input bytes"
+    else
+        sed 's/^/    /' "$TMP/cpp-input-$input_label.out" >&2
+        fail "$input_label replacement reached a later build stage"
+    fi
+    if [ -e "$input_path.approved" ] || [ -L "$input_path.approved" ]; then
+        rm -f "$input_path"
+        mv "$input_path.approved" "$input_path"
+    fi
+done
 
 info "C++ build stages stop at the first failed required operation"
 cat > "$FAKE_BIN/pixi" <<'SH'
@@ -368,32 +806,23 @@ case "${CPP_FAIL_STAGE:-}:$*" in
     conan:'run -- conan install '*) exit 60 ;;
     configure:'run -- cmake --preset release'*) exit 61 ;;
     build:'run -- cmake --build --preset release'*) exit 62 ;;
+    install:'run -- cmake --install '*) exit 63 ;;
 esac
+if [[ "$*" == 'run -- cmake --build --preset release '* ]]; then
+    mkdir -p build/release
+fi
 exit 0
 SH
 chmod +x "$FAKE_BIN/pixi"
-ULIMIT_ENV="$TMP/ulimit-env.sh"
-cat > "$ULIMIT_ENV" <<'SH'
-if [ "${CPP_FAIL_STAGE:-}" = ulimit ]; then
-    ulimit() {
-        if [ "$#" -eq 1 ] && [ "$1" = -v ]; then
-            printf '%s\n' ulimit-inspect >> "${CPP_SEAM_LOG:?}"
-            printf '%s\n' unlimited
-            return 0
-        fi
-        if [ "$#" -eq 2 ] && [ "$1" = -v ]; then
-            printf '%s\n' ulimit-apply >> "${CPP_SEAM_LOG:?}"
-        fi
-        return 63
-    }
-fi
+CD_ENV="$TMP/cd-env.sh"
+cat > "$CD_ENV" <<'SH'
 if [ "${CPP_FAIL_STAGE:-}" = cd ]; then
     cd() {
         case "$1" in
-            "${CPP_FAIL_CD_ROOT:?}"/control/Agamemnon|\
-            "${CPP_FAIL_CD_ROOT:?}"/control/Nestor|\
-            "${CPP_FAIL_CD_ROOT:?}"/provisioning/Keystone|\
-            "${CPP_FAIL_CD_ROOT:?}"/testing/Charybdis)
+            */odysseus-cpp-build.*/sources/control/Agamemnon|\
+            */odysseus-cpp-build.*/sources/control/Nestor|\
+            */odysseus-cpp-build.*/sources/provisioning/Keystone|\
+            */odysseus-cpp-build.*/sources/testing/Charybdis)
                 printf '%s\n' cd-target >> "${CPP_SEAM_LOG:?}"
                 return 64
                 ;;
@@ -403,21 +832,20 @@ if [ "${CPP_FAIL_STAGE:-}" = cd ]; then
 fi
 SH
 
-for failure_stage in ulimit cd conan configure build; do
+for failure_stage in boundary cd conan configure build install verify; do
     pixi_log="$TMP/pixi-$failure_stage.log"
     seam_log="$TMP/seam-$failure_stage.log"
     output="$TMP/cpp-$failure_stage.out"
     : > "$pixi_log"
     : > "$seam_log"
-    failure_vmem=0
-    [ "$failure_stage" = ulimit ] && failure_vmem=1024
+    failure_vmem=262144
     for cpp_role in control all worker; do
         : > "$pixi_log"
         : > "$seam_log"
         set +e
-        BASH_ENV="$ULIMIT_ENV" CPP_FAIL_STAGE="$failure_stage" \
+        BASH_ENV="$CD_ENV" CPP_FAIL_STAGE="$failure_stage" \
             CPP_SEAM_LOG="$seam_log" \
-            CPP_FAIL_CD_ROOT="$INSTALL_ROOT" \
+            CPP_BOUND_LOG="$seam_log" \
             PIXI_LOG="$pixi_log" ODYSSEUS_ROOT="$INSTALL_ROOT" \
             ODYSSEUS_RUNTIME_PREFIX="$TMP/runtime-$failure_stage-$cpp_role" \
             ODYSSEUS_BUILD_VMEM_KB="$failure_vmem" INSTALL=true \
@@ -428,7 +856,7 @@ for failure_stage in ulimit cd conan configure build; do
         set -e
 
     case "$failure_stage" in
-        ulimit)
+        boundary)
             later_effect='run -- conan install|run -- cmake --preset|run -- cmake --build|run -- cmake --install'
             ;;
         cd)
@@ -443,12 +871,15 @@ for failure_stage in ulimit cd conan configure build; do
         build)
             later_effect='run -- cmake --install'
             ;;
+        install|verify)
+            later_effect='a^'
+            ;;
     esac
     target_reached=0
     case "$failure_stage" in
-        ulimit)
-            if [ "$(grep -c '^ulimit-inspect$' "$seam_log")" -ge 1 ] \
-                && [ "$(grep -c '^ulimit-apply$' "$seam_log")" -ge 1 ]; then
+        boundary)
+            if grep -q '^262144 :: pixi run -- conan install ' \
+                "$seam_log"; then
                 target_reached=1
             fi
             ;;
@@ -475,16 +906,17 @@ for failure_stage in ulimit cd conan configure build; do
                 target_reached=1
             fi
             ;;
+        install|verify)
+            if grep -q '^run -- conan install \. --build=missing ' "$pixi_log" \
+                && grep -q '^run -- cmake --preset release ' "$pixi_log" \
+                && grep -q '^run -- cmake --build --preset release ' "$pixi_log" \
+                && grep -q '^run -- cmake --install build/release --prefix ' "$pixi_log"; then
+                target_reached=1
+            fi
+            ;;
     esac
-        role_policy_ok=false
-        if [ "$cpp_role" = worker ]; then
-            [ "$status" -eq 0 ] && grep -q '⚠.*build failed' "$output" \
-                && role_policy_ok=true
-        else
-            [ "$status" -ne 0 ] && grep -q '✗.*build failed' "$output" \
-                && role_policy_ok=true
-        fi
-        if $role_policy_ok \
+        if [ "$status" -ne 0 ] \
+            && grep -q '✗.*build failed' "$output" \
             && [ "$target_reached" -eq 1 ] \
             && grep -qx 'run -- conan profile detect --exist-ok' "$pixi_log" \
             && grep -q 'build failed' "$output" \
@@ -496,6 +928,45 @@ for failure_stage in ulimit cd conan configure build; do
         fi
     done
 done
+
+info "C++ success is reported only after installed objects are verified"
+cat > "$FAKE_BIN/pixi" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$PWD :: $*" >> "${PIXI_LOG:?}"
+if [[ "$*" == 'run -- cmake --build --preset release '* ]]; then
+    mkdir -p build/release
+fi
+if [[ "$*" == 'run -- cmake --install build/release --prefix '* ]]; then
+    prefix=${*: -1}
+    artifact="$prefix/bin/${PWD##*/}-fixture"
+    mkdir -p build/release "$prefix/bin"
+    printf '%s\n' "verified fixture" > "$artifact"
+    printf '%s\n' "$artifact" > build/release/install_manifest.txt
+fi
+exit 0
+SH
+chmod +x "$FAKE_BIN/pixi"
+verified_prefix="$TMP/runtime-verified"
+verified_log="$TMP/pixi-verified.log"
+: > "$verified_log"
+set +e
+ROLE=control INSTALL=true \
+    ODYSSEUS_ROOT="$INSTALL_ROOT" \
+    ODYSSEUS_RUNTIME_PREFIX="$verified_prefix" \
+    ODYSSEUS_BUILD_VMEM_KB=262144 \
+    PIXI_LOG="$verified_log" PATH="$FAKE_BIN:/usr/bin:/bin" \
+    "$BASH" "$INSTALL_ROOT/scripts/install/50-cpp-builds.sh" \
+    > "$TMP/cpp-verified.out" 2>&1
+verified_status=$?
+set -e
+verified_count=$(find "$verified_prefix/bin" -type f -name '*-fixture' 2>/dev/null | wc -l | tr -d ' ')
+if [ "$verified_status" -eq 0 ] \
+    && [ "$verified_count" -eq 4 ] \
+    && [ "$(grep -c 'built and installed' "$TMP/cpp-verified.out")" -eq 4 ]; then
+    pass "successful installs verify every selected repository artifact"
+else
+    fail "a selected repository became success without a verified installed artifact"
+fi
 
 summary
 exit_code

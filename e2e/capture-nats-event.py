@@ -4,12 +4,16 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import ipaddress
 import json
 import os
 import re
+import signal
 import socket
 import stat
 import sys
+import threading
 import time
 
 
@@ -165,6 +169,50 @@ def _remaining(deadline: float) -> float:
     return value
 
 
+@contextmanager
+def _absolute_deadline(seconds: float):
+    """Interrupt connect, protocol, and evidence publication at one deadline."""
+    if (
+        threading.current_thread() is not threading.main_thread()
+        or not hasattr(signal, "setitimer")
+        or not hasattr(signal, "ITIMER_REAL")
+    ):
+        raise RuntimeError("NATS evidence deadline enforcement is unavailable")
+    if signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0):
+        raise RuntimeError("another process deadline is already active")
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+
+    def deadline_expired(_signum, _frame):  # noqa: ANN001
+        raise TimeoutError("NATS evidence capture timed out")
+
+    signal.signal(signal.SIGALRM, deadline_expired)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    deadline = time.monotonic() + seconds
+    try:
+        yield deadline
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+
+
+def _connect_numeric(host: str, port: int, deadline: float) -> socket.socket:
+    """Connect to one literal address without DNS or multi-address fallback."""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError as error:
+        raise RuntimeError("NATS evidence host must be a numeric IP address") from error
+    family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+    client = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        client.settimeout(_remaining(deadline))
+        client.connect((address.compressed, port))
+        return client
+    except BaseException:
+        client.close()
+        raise
+
+
 class _DeadlineReader:
     def __init__(self, client: socket.socket, deadline: float) -> None:
         self.client = client
@@ -199,8 +247,7 @@ class _DeadlineReader:
         return value
 
 
-def main() -> int:
-    args = _parse_args()
+def _capture(args: argparse.Namespace, deadline: float) -> int:
     descriptor_mode = args.ready_fd is not None
     if descriptor_mode:
         assert args.ready_fd is not None
@@ -214,10 +261,7 @@ def main() -> int:
             args.evidence_dir_fd, args.output_name
         ):
             raise RuntimeError("evidence destination already exists")
-    deadline = time.monotonic() + args.timeout
-    with socket.create_connection(
-        (args.host, args.port), timeout=_remaining(deadline)
-    ) as client:
+    with _connect_numeric(args.host, args.port, deadline) as client:
         reader = _DeadlineReader(client, deadline)
         first = reader.read_line()
         if not first.startswith(b"INFO "):
@@ -299,6 +343,12 @@ def main() -> int:
                     encoded_result,
                 )
             return 0
+
+
+def main() -> int:
+    args = _parse_args()
+    with _absolute_deadline(args.timeout) as deadline:
+        return _capture(args, deadline)
 
 
 if __name__ == "__main__":

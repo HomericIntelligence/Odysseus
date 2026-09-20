@@ -194,6 +194,33 @@ class ConsoleAvailabilityTests(unittest.TestCase):
 
             build_opener.assert_not_called()
 
+    def test_plaintext_localhost_name_is_rejected_before_bearer_network_use(
+        self,
+    ) -> None:
+        self.console.NESTOR_URL = "http://localhost:8081"
+
+        with (
+            mock.patch.dict(
+                self.console.os.environ,
+                {"NESTOR_API_KEY": "credential-must-not-leave"},
+                clear=True,
+            ),
+            mock.patch.object(
+                self.console.urllib.request,
+                "build_opener",
+                side_effect=AssertionError("network path must not be prepared"),
+            ) as build_opener,
+            self.assertRaisesRegex(ValueError, "numeric loopback"),
+        ):
+            self.console.submit_research("idea")
+
+        build_opener.assert_not_called()
+
+    def test_plaintext_numeric_loopback_literals_are_accepted(self) -> None:
+        for url in ("http://127.0.0.1:8081", "http://[::1]:8081"):
+            with self.subTest(url=url):
+                self.assertEqual(url, self.console.validated_nestor_url(url))
+
     def test_submit_uses_an_opener_that_refuses_redirects(self) -> None:
         self.console.NESTOR_URL = "https://nestor.example.test"
         response = response_stream(b'{"id":"research-1"}')
@@ -230,6 +257,8 @@ class ConsoleAvailabilityTests(unittest.TestCase):
         response = response_stream(b'{"id":"research-1"}')
         opener = mock.MagicMock()
         opener.open.return_value = response
+        ca_bundle = b"exact test trust bundle\n"
+        tls_context = mock.MagicMock(spec=self.console.ssl.SSLContext)
 
         with (
             mock.patch.dict(
@@ -244,6 +273,16 @@ class ConsoleAvailabilityTests(unittest.TestCase):
                 "build_opener",
                 return_value=opener,
             ) as build_opener,
+            mock.patch.object(
+                self.console,
+                "_read_bound_ca_bundle",
+                return_value=ca_bundle,
+            ) as read_ca,
+            mock.patch.object(
+                self.console.ssl,
+                "SSLContext",
+                return_value=tls_context,
+            ) as context_factory,
         ):
             result = self.console.submit_research("idea")
 
@@ -255,7 +294,37 @@ class ConsoleAvailabilityTests(unittest.TestCase):
             if isinstance(handler, self.console.urllib.request.HTTPSHandler)
         ]
         self.assertEqual(1, len(https_handlers))
-        self.assertIsNotNone(https_handlers[0]._context)
+        self.assertIs(https_handlers[0]._context, tls_context)
+        read_ca.assert_called_once()
+        context_factory.assert_called_once_with(self.console.ssl.PROTOCOL_TLS_CLIENT)
+        tls_context.load_verify_locations.assert_called_once_with(
+            cadata=ca_bundle.decode("ascii")
+        )
+
+    def test_unavailable_default_ca_trust_fails_before_network_use(self) -> None:
+        self.console.NESTOR_URL = "https://nestor.example.test"
+        with (
+            mock.patch.dict(self.console.os.environ, {}, clear=True),
+            mock.patch.object(
+                self.console.ssl,
+                "get_default_verify_paths",
+                return_value=mock.Mock(openssl_cafile="/trusted/missing-ca.pem"),
+            ),
+            mock.patch.object(
+                self.console,
+                "_read_bound_ca_bundle",
+                side_effect=ValueError("unavailable"),
+            ),
+            mock.patch.object(
+                self.console.urllib.request,
+                "build_opener",
+                side_effect=AssertionError("network must not be prepared"),
+            ) as build_opener,
+            self.assertRaisesRegex(ValueError, "system CA bundle"),
+        ):
+            self.console.submit_research("idea")
+
+        build_opener.assert_not_called()
 
     def test_submit_enforces_one_absolute_read_deadline(self) -> None:
         self.console.NESTOR_URL = "https://nestor.example.test"
@@ -495,6 +564,35 @@ class ConsoleAvailabilityTests(unittest.TestCase):
         self.assertEqual("", stdout.getvalue())
         self.assertIn("invalid console configuration", stderr.getvalue().lower())
         build_opener.assert_not_called()
+
+    def test_main_bounds_and_escapes_untrusted_network_error_details(self) -> None:
+        hostile_reason = "forged\nline\r\x1b]0;title\x07" + ("💥" * 8192)
+
+        with (
+            mock.patch.object(
+                sys,
+                "argv",
+                [str(CONSOLE_PATH), "submit", "idea", "--no-watch"],
+            ),
+            mock.patch.object(
+                self.console,
+                "submit_research",
+                side_effect=self.console.urllib.error.URLError(hostile_reason),
+            ),
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+            mock.patch("sys.stderr", new_callable=io.StringIO) as stderr,
+            self.assertRaises(SystemExit) as stopped,
+        ):
+            self.console.main()
+
+        rendered = stderr.getvalue()
+        self.assertEqual(1, stopped.exception.code)
+        self.assertEqual("", stdout.getvalue())
+        self.assertLessEqual(len(rendered), 1024)
+        self.assertNotIn("forged\nline", rendered)
+        self.assertNotIn("\x1b]0;title", rendered)
+        self.assertNotIn("\x07", rendered.replace(self.console.RED, ""))
+        self.assertIn(r"forged\nline\r\x1b", rendered)
 
     def test_main_rejects_invalid_url_ports_before_network_use(self) -> None:
         invalid_urls = {

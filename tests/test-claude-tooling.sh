@@ -9,7 +9,11 @@ ROOT="$(dirname "$SCRIPT_DIR")"
 source "$ROOT/e2e/lib/common.sh"
 
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+if [ "${ODYSSEUS_KEEP_TEST_TMP:-false}" = true ]; then
+    trap 'printf "retained test directory: %s\n" "$TMP"' EXIT
+else
+    trap 'rm -rf "$TMP"' EXIT
+fi
 
 TEST_HOME="$TMP/home"
 FAKE_ROOT="$TMP/odysseus"
@@ -18,6 +22,63 @@ SETTINGS="$TEST_HOME/.claude/settings.json"
 GIT_LOG="$TMP/git.log"
 SKILL_MARKER="$TMP/hephaestus-skill-installer-ran"
 SETTINGS_BYTE_LIMIT=1048576
+
+run_with_wall_deadline() {
+    local seconds="$1"
+    shift
+    python3 -I -S - "$seconds" "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+seconds = float(sys.argv[1])
+process = subprocess.Popen(sys.argv[2:], start_new_session=True)
+try:
+    raise SystemExit(process.wait(timeout=seconds))
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=0.25)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=1.0)
+    raise SystemExit(124)
+PY
+}
+
+process_is_live() {
+    local process_id="$1" state process_record
+    kill -0 "$process_id" 2>/dev/null || return 1
+    if [ -r "/proc/$process_id/stat" ]; then
+        IFS= read -r process_record < "/proc/$process_id/stat" || return 0
+        process_record=${process_record##*) }
+        state=${process_record%% *}
+        [[ "$state" != Z ]]
+        return
+    fi
+    # A sandbox may deny process-table inspection even though signalling the
+    # exact PID is permitted. Treat that uncertainty as live; otherwise a
+    # denied `ps` creates a false-green descendant-extinction assertion.
+    state=$(ps -o stat= -p "$process_id" 2>/dev/null) || return 0
+    [[ "$state" != Z* ]]
+}
+
+wait_for_test_process_exit() {
+    local process_id="$1" attempt=0
+    while [ "$attempt" -lt 60 ]; do
+        process_is_live "$process_id" || return 0
+        sleep 0.02
+        attempt=$((attempt + 1))
+    done
+    return 1
+}
 
 settings_write_fingerprint() {
     python3 - "$1" <<'PY'
@@ -179,6 +240,18 @@ for path in sorted(settings_directory.glob("settings.json.bak.*")):
 PY
 }
 
+tool_snapshot_inventory() {
+    python3 -I -S - <<'PY'
+import os
+from pathlib import Path
+
+root = Path(os.path.realpath("/tmp"))
+for path in sorted(root.glob(".odysseus-tooling-*")):
+    state = os.lstat(path)
+    print(f"{path.name}:{state.st_dev}:{state.st_ino}:{state.st_mode}")
+PY
+}
+
 write_canonical_settings() {
     local path="$1"
     mkdir -p "$(dirname "$path")"
@@ -289,6 +362,92 @@ write_fake_mnemosyne_checkout() {
         > "$checkout/.git/config"
 }
 
+write_security_probe_git() {
+    local path="$1" environment_marker="$2" escaped_pid="$3"
+    python3 -I -S - "$path" "$environment_marker" "$escaped_pid" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+path = Path(sys.argv[1])
+environment_marker = sys.argv[2]
+escaped_pid = sys.argv[3]
+python = str(Path(sys.executable).resolve())
+path.write_text(
+    """#!/bin/bash
+set -eu
+environment_marker={environment_marker}
+escaped_pid={escaped_pid}
+if [ -n \"$environment_marker\" ] \\
+    && {{ [ -n \"${{AWS_ACCESS_KEY_ID:-}}\" ] \\
+        || [ -n \"${{KRB5CCNAME:-}}\" ] \\
+        || [ -n \"${{NETRC:-}}\" ] \\
+        || [ -n \"${{GIT_LOG:-}}\" ] \\
+        || [ \"${{HOME:-}}\" != /nonexistent ]; }}; then
+    : > \"$environment_marker\"
+fi
+if [ -n \"$escaped_pid\" ] && [ ! -e \"$escaped_pid\" ]; then
+    {python} -I -S -c '
+import os
+from pathlib import Path
+import signal
+import sys
+import time
+os.setsid()
+signal.signal(signal.SIGHUP, signal.SIG_IGN)
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+Path(sys.argv[1]).write_text(str(os.getpid()), encoding="ascii")
+time.sleep(5)
+' \"$escaped_pid\" </dev/null >/dev/null 2>&1 &
+fi
+if [ -n \"$escaped_pid\" ]; then
+    attempt=0
+    while [ ! -s \"$escaped_pid\" ] && [ \"$attempt\" -lt 100 ]; do
+        /bin/sleep 0.01
+        attempt=$((attempt + 1))
+    done
+    /bin/sleep 0.1
+fi
+while :; do
+    case \"${{1:-}}\" in
+        -c) shift 2 ;;
+        --git-dir=*|--work-tree=*) shift ;;
+        *) break ;;
+    esac
+done
+case \"${{1:-}} ${{2:-}}\" in
+    'rev-parse --show-toplevel')
+        if [ \"$(basename \"$PWD\")\" = .git ]; then
+            (cd .. && pwd -P)
+        else
+            pwd -P
+        fi
+        ;;
+    'config --file')
+        case \"${{5:-}}\" in
+            --get-all)
+                printf '%s\\n' \\
+                    https://github.com/HomericIntelligence/Mnemosyne.git
+                ;;
+            --get-regexp) exit 1 ;;
+            *) exit 96 ;;
+        esac
+        ;;
+    'symbolic-ref --quiet') printf '%s\\n' main ;;
+    *) exit 93 ;;
+esac
+""".format(
+    environment_marker=shlex.quote(environment_marker),
+    escaped_pid=shlex.quote(escaped_pid),
+    python=shlex.quote(python),
+    ),
+    encoding="utf-8",
+)
+path.chmod(0o700)
+PY
+}
+
 mkdir -p "$TEST_HOME/.claude" "$FAKE_BIN" \
     "$FAKE_ROOT/shared/Hephaestus/skills/.system/skill-installer/scripts"
 
@@ -324,7 +483,7 @@ cat > "$SETTINGS" <<'JSON'
 JSON
 
 cat > "$FAKE_BIN/claude" <<'SH'
-#!/usr/bin/env bash
+#!/bin/bash
 printf 'claude 1.2.3\n'
 SH
 
@@ -334,8 +493,15 @@ exit 0
 SH
 
 cat > "$FAKE_BIN/git" <<'SH'
-#!/usr/bin/env bash
+#!/bin/bash
 set -eu
+if [ -r '__ODYSSEUS_TEST_GIT_CONTROL__' ]; then
+    # Test-only fixture state. Production must not forward these variables.
+    # The absolute path is baked into this disposable fake, not read from the
+    # supervised Git environment.
+    . '__ODYSSEUS_TEST_GIT_CONTROL__'
+fi
+test_python='__ODYSSEUS_TEST_PYTHON__'
 printf '%s\n' "$*" >> "$GIT_LOG"
 if [ -n "${MNEMOSYNE_GIT_ENV_MARKER:-}" ]; then
     unsafe_environment=false
@@ -344,7 +510,15 @@ if [ -n "${MNEMOSYNE_GIT_ENV_MARKER:-}" ]; then
         GIT_CONFIG_PARAMETERS GIT_EXEC_PATH GIT_NAMESPACE GIT_TEMPLATE_DIR \
         GIT_ASKPASS SSH_ASKPASS GIT_SSH GIT_SSH_COMMAND GIT_PROXY_COMMAND \
         GIT_PROTOCOL_FROM_USER GIT_ALLOW_PROTOCOL GIT_SSL_NO_VERIFY \
-        GIT_SSL_CAINFO GIT_SSL_CAPATH GIT_ATTR_SOURCE GIT_REPLACE_REF_BASE; do
+        GIT_SSL_CAINFO GIT_SSL_CAPATH GIT_ATTR_SOURCE GIT_REPLACE_REF_BASE \
+        HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY \
+        http_proxy https_proxy all_proxy no_proxy \
+        SSL_CERT_FILE SSL_CERT_DIR CURL_CA_BUNDLE REQUESTS_CA_BUNDLE \
+        AWS_CA_BUNDLE NODE_EXTRA_CA_CERTS SSLKEYLOGFILE \
+        GIT_CURL_VERBOSE GIT_TRACE_CURL GIT_TRACE_CURL_NO_DATA \
+        GIT_HTTP_PROXY_AUTHMETHOD GIT_HTTP_LOW_SPEED_LIMIT \
+        GIT_HTTP_LOW_SPEED_TIME GIT_HTTP_MAX_REQUESTS GIT_HTTP_USER_AGENT \
+        GIT_SSL_CIPHER GIT_SSL_VERSION GIT_SSL_BACKEND; do
         eval 'variable_value=${'"$variable_name"':-}'
         if [ "$variable_name" = GIT_CONFIG ] \
             && [ "$variable_value" = /dev/null ]; then
@@ -359,16 +533,6 @@ if [ -n "${MNEMOSYNE_GIT_ENV_MARKER:-}" ]; then
     if [ "${GIT_CONFIG_COUNT:-0}" != 0 ]; then
         printf 'GIT_CONFIG_COUNT=%s\n' "$GIT_CONFIG_COUNT" \
             >> "$MNEMOSYNE_GIT_ENV_MARKER"
-        unsafe_environment=true
-    fi
-    if [ -n "${MNEMOSYNE_EXPECT_HTTP_PROXY:-}" ] \
-        && [ "${HTTP_PROXY:-}" != "$MNEMOSYNE_EXPECT_HTTP_PROXY" ]; then
-        printf 'HTTP_PROXY was not preserved\n' >> "$MNEMOSYNE_GIT_ENV_MARKER"
-        unsafe_environment=true
-    fi
-    if [ -n "${MNEMOSYNE_EXPECT_HTTPS_PROXY:-}" ] \
-        && [ "${HTTPS_PROXY:-}" != "$MNEMOSYNE_EXPECT_HTTPS_PROXY" ]; then
-        printf 'HTTPS_PROXY was not preserved\n' >> "$MNEMOSYNE_GIT_ENV_MARKER"
         unsafe_environment=true
     fi
     $unsafe_environment || :
@@ -387,7 +551,11 @@ protocol_default_disabled=false
 protocol_file_disabled=false
 protocol_https_enabled=false
 http_ssl_verify_enabled=false
+http_canonical_ssl_verify_enabled=false
+http_ssl_ca_info_cleared=false
 http_ssl_ca_path_cleared=false
+http_proxy_cleared=false
+http_canonical_proxy_cleared=false
 http_curl_resolve_cleared=false
 while :; do
     case "${1:-}" in
@@ -424,8 +592,20 @@ while :; do
                 http.sslVerify=true)
                     http_ssl_verify_enabled=true
                     ;;
+                http.https://github.com/HomericIntelligence/Mnemosyne.git.sslVerify=true)
+                    http_canonical_ssl_verify_enabled=true
+                    ;;
+                http.sslCAInfo=)
+                    http_ssl_ca_info_cleared=true
+                    ;;
                 http.sslCAPath=)
                     http_ssl_ca_path_cleared=true
+                    ;;
+                http.proxy=)
+                    http_proxy_cleared=true
+                    ;;
+                http.https://github.com/HomericIntelligence/Mnemosyne.git.proxy=)
+                    http_canonical_proxy_cleared=true
                     ;;
                 http.curloptResolve=)
                     http_curl_resolve_cleared=true
@@ -535,8 +715,36 @@ case "${1:-} ${2:-}" in
                 fi
                 ;;
             --get-regexp)
-                /usr/bin/git config --file "${3:-}" --no-includes \
-                    --get-regexp "${6:-}"
+                "$test_python" -I -S - "${3:-}" "${6:-}" <<'PY'
+import re
+import sys
+
+path, pattern = sys.argv[1:]
+section = ""
+matched = False
+with open(path, encoding="utf-8") as stream:
+    for raw_line in stream:
+        line = raw_line.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            heading = line[1:-1].strip()
+            if " " in heading:
+                name, subsection = heading.split(None, 1)
+                subsection = subsection.strip().strip('"')
+                section = f"{name}.{subsection}".lower()
+            else:
+                section = heading.lower()
+            continue
+        if "=" not in line:
+            continue
+        key, value = (item.strip() for item in line.split("=", 1))
+        full_key = f"{section}.{key}".lower()
+        if re.fullmatch(pattern, full_key):
+            print(f"{full_key} {value}")
+            matched = True
+raise SystemExit(0 if matched else 1)
+PY
                 ;;
             *) exit 96 ;;
         esac
@@ -566,7 +774,11 @@ case "${1:-} ${2:-}" in
                 || ! $protocol_file_disabled \
                 || ! $protocol_https_enabled \
                 || ! $http_ssl_verify_enabled \
+                || ! $http_canonical_ssl_verify_enabled \
+                || ! $http_ssl_ca_info_cleared \
                 || ! $http_ssl_ca_path_cleared \
+                || ! $http_proxy_cleared \
+                || ! $http_canonical_proxy_cleared \
                 || ! $http_curl_resolve_cleared; }; then
             printf 'pull command controls incomplete\n' \
                 > "$MNEMOSYNE_PULL_CONTROL_EFFECT"
@@ -647,6 +859,907 @@ PY
 
 chmod +x "$FAKE_BIN/claude" "$FAKE_BIN/codex" "$FAKE_BIN/git"
 
+TEST_GIT_CONTROL="$TMP/fake-git-control"
+TOOLING_RUNNER="$TMP/run-claude-tooling"
+python3 -I -S - \
+    "$FAKE_BIN/git" "$TEST_GIT_CONTROL" "$TOOLING_RUNNER" \
+    "$ROOT/scripts/install/60-claude-tooling.sh" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+git_path = Path(sys.argv[1])
+control_path = sys.argv[2]
+runner_path = Path(sys.argv[3])
+installer_path = sys.argv[4]
+source = git_path.read_text(encoding="utf-8")
+placeholder = "'__ODYSSEUS_TEST_GIT_CONTROL__'"
+if source.count(placeholder) != 2:
+    raise SystemExit("fake Git control placeholder count changed")
+python_placeholder = "'__ODYSSEUS_TEST_PYTHON__'"
+if source.count(python_placeholder) != 1:
+    raise SystemExit("fake Git Python placeholder count changed")
+git_path.write_text(
+    source.replace(placeholder, shlex.quote(control_path)).replace(
+        python_placeholder, shlex.quote(str(Path(sys.executable).resolve()))
+    ),
+    encoding="utf-8",
+)
+runner_path.write_text(
+    """#!/bin/bash
+set -uo pipefail
+control={control}
+: > "$control"
+while IFS= read -r variable; do
+    case "$variable" in
+        GIT_LOG|MNEMOSYNE_*|BOUNDED_GIT_BACKING|ESCAPED_GIT_*|TOOL_GIT_BIND_*)
+            declare -p "$variable" >> "$control"
+            ;;
+    esac
+done < <(compgen -e)
+chmod 600 "$control"
+exec /bin/bash {installer} "$@"
+""".format(
+        control=shlex.quote(control_path),
+        installer=shlex.quote(installer_path),
+    ),
+    encoding="utf-8",
+)
+runner_path.chmod(0o700)
+PY
+
+prepare_test_git_control() {
+    local variable value
+    : > "$TEST_GIT_CONTROL"
+    for variable in "$@"; do
+        value=${!variable-}
+        printf 'declare -x %s=%q\n' "$variable" "$value" \
+            >> "$TEST_GIT_CONTROL"
+    done
+    chmod 600 "$TEST_GIT_CONTROL"
+}
+
+info "security regressions fail before unsafe tooling effects"
+
+SECURITY_BIND_FAILURE_HOME="$TMP/security-bind-failure-home"
+SECURITY_BIND_FAILURE_BIN="$TMP/security-bind-failure-bin"
+mkdir -p "$SECURITY_BIND_FAILURE_BIN"
+write_canonical_settings \
+    "$SECURITY_BIND_FAILURE_HOME/.claude/settings.json"
+cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" "$SECURITY_BIND_FAILURE_BIN/"
+cat > "$SECURITY_BIND_FAILURE_BIN/git" <<'SH'
+#!/bin/sh
+exit 0
+SH
+chmod 700 "$SECURITY_BIND_FAILURE_BIN/git"
+tool_snapshot_inventory > "$TMP/tool-snapshots-before-bind-failure"
+HOME="$SECURITY_BIND_FAILURE_HOME" \
+PATH="$SECURITY_BIND_FAILURE_BIN:/usr/bin:/bin" \
+INSTALL=false \
+    /bin/bash "$ROOT/scripts/install/60-claude-tooling.sh" \
+    >"$TMP/security-bind-failure-output" 2>&1
+security_bind_failure_status=$?
+tool_snapshot_inventory > "$TMP/tool-snapshots-after-bind-failure"
+if [ "$security_bind_failure_status" -ne 0 ] \
+    && cmp -s "$TMP/tool-snapshots-before-bind-failure" \
+        "$TMP/tool-snapshots-after-bind-failure"; then
+    pass "failed tool binding retires its private snapshots"
+else
+    fail "failed tool binding leaked a private executable snapshot"
+fi
+
+SECURITY_BIND_REPLACEMENT_HOME="$TMP/security-bind-replacement-home"
+SECURITY_BIND_REPLACEMENT_BIN="$TMP/security-bind-replacement-bin"
+SECURITY_BIND_REPLACEMENT_ROOT="$TMP/security-bind-replacement-installer"
+SECURITY_BIND_REPLACEMENT_RECOVERY="/tmp/.odysseus-tooling-recovery-${TMP##*/}"
+SECURITY_BIND_REPLACEMENT_PAYLOAD='preserve failed-bootstrap replacement'
+mkdir -p "$SECURITY_BIND_REPLACEMENT_BIN" \
+    "$SECURITY_BIND_REPLACEMENT_ROOT"
+write_canonical_settings \
+    "$SECURITY_BIND_REPLACEMENT_HOME/.claude/settings.json"
+cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" \
+    "$SECURITY_BIND_REPLACEMENT_BIN/"
+cat > "$SECURITY_BIND_REPLACEMENT_BIN/git" <<'SH'
+#!/bin/sh
+exit 0
+SH
+chmod 700 "$SECURITY_BIND_REPLACEMENT_BIN/git"
+cp "$ROOT/scripts/install/60-claude-tooling.sh" \
+    "$SECURITY_BIND_REPLACEMENT_ROOT/60-claude-tooling.sh"
+cp "$ROOT/scripts/install/lib.sh" \
+    "$SECURITY_BIND_REPLACEMENT_ROOT/lib.sh"
+python3 -I -S - \
+    "$SECURITY_BIND_REPLACEMENT_ROOT/60-claude-tooling.sh" \
+    "$SECURITY_BIND_REPLACEMENT_RECOVERY" \
+    "$SECURITY_BIND_REPLACEMENT_PAYLOAD" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+recovery = sys.argv[2]
+payload = (sys.argv[3] + "\n").encode("utf-8")
+source = path.read_text(encoding="utf-8")
+failure_needle = '''except BaseException:
+    cleanup_error = None
+    try:
+'''
+failure_replacement = '''except BaseException:
+    os.rename(
+        "git",
+        "git-original",
+        src_dir_fd=directory_descriptor,
+        dst_dir_fd=directory_descriptor,
+    )
+    replacement_descriptor = os.open(
+        "git",
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o500,
+        dir_fd=directory_descriptor,
+    )
+    os.write(replacement_descriptor, {payload!r})
+    os.fsync(replacement_descriptor)
+    os.close(replacement_descriptor)
+    cleanup_error = None
+    try:
+'''.format(payload=payload)
+raise_needle = '''    if cleanup_error is not None:
+        raise ToolBindingError(
+            "failed tool snapshot could not be retired exactly"
+        ) from cleanup_error
+    raise
+finally:
+'''
+raise_replacement = raise_needle.replace(
+    "    raise\nfinally:\n",
+    "    os.rename(snapshot_directory, {recovery!r})\n"
+    "    raise\n"
+    "finally:\n".format(recovery=recovery),
+)
+if source.count(failure_needle) != 1:
+    raise SystemExit("tool cleanup replacement injection point is unavailable")
+if source.count(raise_needle) != 1:
+    raise SystemExit("tool cleanup recovery injection point is unavailable")
+source = source.replace(failure_needle, failure_replacement, 1)
+source = source.replace(raise_needle, raise_replacement, 1)
+path.write_text(source, encoding="utf-8")
+PY
+HOME="$SECURITY_BIND_REPLACEMENT_HOME" \
+PATH="$SECURITY_BIND_REPLACEMENT_BIN:/usr/bin:/bin" \
+INSTALL=false \
+    /bin/bash "$SECURITY_BIND_REPLACEMENT_ROOT/60-claude-tooling.sh" \
+    >"$TMP/security-bind-replacement-output" 2>&1
+security_bind_replacement_status=$?
+if [ "$security_bind_replacement_status" -ne 0 ] \
+    && grep -qx "$SECURITY_BIND_REPLACEMENT_PAYLOAD" \
+        "$SECURITY_BIND_REPLACEMENT_RECOVERY/git" \
+    && [ -s "$SECURITY_BIND_REPLACEMENT_RECOVERY/git-original" ]; then
+    pass "failed tool binding preserves a replacement entry"
+else
+    fail "failed tool binding deleted or changed a replacement entry"
+fi
+python3 -I -S - "$SECURITY_BIND_REPLACEMENT_RECOVERY" <<'PY'
+import os
+import stat
+import sys
+
+directory = sys.argv[1]
+descriptor = os.open(
+    directory,
+    os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+)
+try:
+    for name in ("git", "git-original"):
+        state = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+        if not stat.S_ISREG(state.st_mode) or state.st_uid != os.geteuid():
+            raise SystemExit("unexpected tool snapshot recovery object")
+        os.unlink(name, dir_fd=descriptor)
+finally:
+    os.close(descriptor)
+os.rmdir(directory)
+PY
+
+SECURITY_BOOTSTRAP_HOME="$TMP/security-bootstrap-home"
+SECURITY_BOOTSTRAP_BIN="$TMP/security-bootstrap-bin"
+SECURITY_BOOTSTRAP_PYTHON_MARKER="$TMP/security-bootstrap-python"
+SECURITY_BOOTSTRAP_BASH_MARKER="$TMP/security-bootstrap-bash"
+SECURITY_BOOTSTRAP_GIT="$SECURITY_BOOTSTRAP_BIN/git"
+SYSTEM_PYTHON3="$(command -v python3)"
+mkdir -p "$SECURITY_BOOTSTRAP_BIN"
+write_canonical_settings \
+    "$SECURITY_BOOTSTRAP_HOME/.claude/settings.json"
+cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" "$SECURITY_BOOTSTRAP_BIN/"
+write_security_probe_git "$SECURITY_BOOTSTRAP_GIT" "" ""
+cat > "$SECURITY_BOOTSTRAP_BIN/bash" <<'SH'
+#!/bin/bash
+: > "$SECURITY_BOOTSTRAP_BASH_MARKER"
+exec /bin/bash "$@"
+SH
+cat > "$SECURITY_BOOTSTRAP_BIN/python3" <<'SH'
+#!/usr/bin/env bash
+: > "$SECURITY_BOOTSTRAP_PYTHON_MARKER"
+exec "$SYSTEM_PYTHON3" "$@"
+SH
+chmod 700 "$SECURITY_BOOTSTRAP_BIN/bash" \
+    "$SECURITY_BOOTSTRAP_BIN/python3"
+HOME="$SECURITY_BOOTSTRAP_HOME" \
+PATH="$SECURITY_BOOTSTRAP_BIN:/usr/bin:/bin" \
+INSTALL=false \
+SECURITY_BOOTSTRAP_BASH_MARKER="$SECURITY_BOOTSTRAP_BASH_MARKER" \
+SECURITY_BOOTSTRAP_PYTHON_MARKER="$SECURITY_BOOTSTRAP_PYTHON_MARKER" \
+SYSTEM_PYTHON3="$SYSTEM_PYTHON3" \
+    /bin/bash "$ROOT/scripts/install/60-claude-tooling.sh" \
+    >"$TMP/security-bootstrap-output" 2>&1
+security_bootstrap_status=$?
+if [ ! -e "$SECURITY_BOOTSTRAP_PYTHON_MARKER" ] \
+    && [ ! -e "$SECURITY_BOOTSTRAP_BASH_MARKER" ] \
+    && ! grep -q 'executable identities could not be bound' \
+        "$TMP/security-bootstrap-output" \
+    && { [ "$security_bootstrap_status" -eq 0 ] \
+        || grep -q 'exact Git process containment is unavailable on Darwin' \
+            "$TMP/security-bootstrap-output"; }; then
+    pass "tool bootstrap ignores ambient Python and shebang interpreters"
+else
+    fail "ambient PATH code ran before the tooling trust root was established"
+fi
+
+SECURITY_INTERPRETER_HOME="$TMP/security-interpreter-home"
+SECURITY_INTERPRETER_BIN="$TMP/security-interpreter-bin"
+SECURITY_INTERPRETER="$SECURITY_INTERPRETER_BIN/git-interpreter"
+SECURITY_INTERPRETER_MARKER="$TMP/security-interpreter-swapped"
+SECURITY_INTERPRETER_POISON="$TMP/security-interpreter-poison"
+mkdir -p "$SECURITY_INTERPRETER_BIN"
+write_canonical_settings \
+    "$SECURITY_INTERPRETER_HOME/.claude/settings.json"
+write_fake_mnemosyne_checkout \
+    "$SECURITY_INTERPRETER_HOME/.agent_brain/knowledge"
+cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" \
+    "$SECURITY_INTERPRETER_BIN/"
+cp /bin/bash "$SECURITY_INTERPRETER"
+python3 -I -S - \
+    "$SECURITY_INTERPRETER_BIN/git" \
+    "$SECURITY_INTERPRETER" \
+    "$SECURITY_INTERPRETER_MARKER" \
+    "$SECURITY_INTERPRETER_POISON" \
+    "$FAKE_BIN/git" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+path, interpreter, marker, poison, backing = map(Path, sys.argv[1:])
+path.write_text(
+    "#!{interpreter}\n"
+    "set -eu\n"
+    "if [ ! -e {marker} ]; then\n"
+    "    : > {marker}\n"
+    "    mv {interpreter} {interpreter_original}\n"
+    "    cat > {interpreter} <<'POISON'\n"
+    "#!/bin/bash\n"
+    ": > {poison}\n"
+    "exec /bin/bash \"$@\"\n"
+    "POISON\n"
+    "    chmod 700 {interpreter}\n"
+    "fi\n"
+    "exec {backing} \"$@\"\n".format(
+        interpreter=shlex.quote(str(interpreter)),
+        interpreter_original=shlex.quote(str(interpreter) + ".original"),
+        marker=shlex.quote(str(marker)),
+        poison=shlex.quote(str(poison)),
+        backing=shlex.quote(str(backing)),
+    ),
+    encoding="utf-8",
+)
+path.chmod(0o700)
+PY
+HOME="$SECURITY_INTERPRETER_HOME" \
+PATH="$SECURITY_INTERPRETER_BIN:/usr/bin:/bin" \
+INSTALL=false \
+GIT_LOG="$TMP/security-interpreter-git.log" \
+    /bin/bash "$ROOT/scripts/install/60-claude-tooling.sh" \
+    >"$TMP/security-interpreter-output" 2>&1
+security_interpreter_status=$?
+if [ ! -e "$SECURITY_INTERPRETER_POISON" ] \
+    && { [ "$security_interpreter_status" -eq 0 ] \
+        || grep -q 'identit\|interpreter\|containment\|bound' \
+            "$TMP/security-interpreter-output"; }; then
+    pass "Git execution binds or rejects every shebang interpreter"
+else
+    fail "a late shebang-interpreter replacement redirected Git"
+fi
+
+SECURITY_ENV_HOME="$TMP/security-env-home"
+SECURITY_ENV_BIN="$TMP/security-env-bin"
+SECURITY_ENV_MARKER="$TMP/security-env-leak"
+mkdir -p "$SECURITY_ENV_BIN"
+write_canonical_settings "$SECURITY_ENV_HOME/.claude/settings.json"
+write_fake_mnemosyne_checkout \
+    "$SECURITY_ENV_HOME/.agent_brain/knowledge"
+cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" "$SECURITY_ENV_BIN/"
+write_security_probe_git \
+    "$SECURITY_ENV_BIN/git" "$SECURITY_ENV_MARKER" ""
+HOME="$SECURITY_ENV_HOME" \
+PATH="$SECURITY_ENV_BIN:/usr/bin:/bin" \
+INSTALL=false \
+AWS_ACCESS_KEY_ID=must-not-reach-git \
+KRB5CCNAME="$TMP/host-krb-cache" \
+NETRC="$TMP/host-netrc" \
+GIT_LOG="$TMP/host-git-log" \
+    /bin/bash "$ROOT/scripts/install/60-claude-tooling.sh" \
+    >"$TMP/security-env-output" 2>&1
+security_env_status=$?
+if [ ! -e "$SECURITY_ENV_MARKER" ] \
+    && ! grep -q 'executable identities could not be bound' \
+        "$TMP/security-env-output" \
+    && { [ "$security_env_status" -eq 0 ] \
+        || grep -q \
+            'containment is unavailable\|canonical Mnemosyne.*unavailable' \
+            "$TMP/security-env-output"; }; then
+    pass "Mnemosyne Git receives only its from-empty allowlisted environment"
+else
+    fail "ambient credentials, home, or test logging reached Mnemosyne Git"
+fi
+
+SECURITY_READONLY_HOME="$TMP/security-readonly-home"
+SECURITY_READONLY_BIN="$TMP/security-readonly-bin"
+SECURITY_READONLY_ROOT="$TMP/security-readonly-installer"
+SECURITY_READONLY_MARKER="$TMP/security-readonly-environment"
+mkdir -p "$SECURITY_READONLY_BIN" "$SECURITY_READONLY_ROOT"
+write_canonical_settings \
+    "$SECURITY_READONLY_HOME/.claude/settings.json"
+write_fake_mnemosyne_checkout \
+    "$SECURITY_READONLY_HOME/.agent_brain/knowledge"
+cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" "$FAKE_BIN/git" \
+    "$SECURITY_READONLY_BIN/"
+cp "$ROOT/scripts/install/60-claude-tooling.sh" \
+    "$SECURITY_READONLY_ROOT/60-claude-tooling.sh"
+cp "$ROOT/scripts/install/lib.sh" "$SECURITY_READONLY_ROOT/lib.sh"
+python3 -I -S - \
+    "$SECURITY_READONLY_ROOT/60-claude-tooling.sh" \
+    "$SECURITY_READONLY_MARKER" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+marker = sys.argv[2]
+source = path.read_text(encoding="utf-8")
+needle = '''class GitSupervisorError(RuntimeError):
+    pass
+
+
+git_path = sys.argv[1]
+'''
+replacement = '''class GitSupervisorError(RuntimeError):
+    pass
+
+
+if "AWS_ACCESS_KEY_ID" in os.environ:
+    with open({marker!r}, "w", encoding="ascii") as stream:
+        stream.write("leaked\\n")
+
+git_path = sys.argv[1]
+'''.format(marker=marker)
+if source.count(needle) != 1:
+    raise SystemExit("Git supervisor environment injection point is unavailable")
+path.write_text(source.replace(needle, replacement, 1), encoding="utf-8")
+PY
+HOME="$SECURITY_READONLY_HOME" \
+PATH="$SECURITY_READONLY_BIN:/usr/bin:/bin" \
+INSTALL=false \
+    /bin/bash -c \
+    'export AWS_ACCESS_KEY_ID=must-not-reach-supervisor; readonly AWS_ACCESS_KEY_ID; source "$1"' \
+    _ "$SECURITY_READONLY_ROOT/60-claude-tooling.sh" \
+    >"$TMP/security-readonly-output" 2>&1
+security_readonly_status=$?
+if [ ! -e "$SECURITY_READONLY_MARKER" ] \
+    && ! grep -q 'executable identities could not be bound' \
+        "$TMP/security-readonly-output" \
+    && { [ "$security_readonly_status" -eq 0 ] \
+        || grep -q 'exact Git process containment is unavailable on Darwin' \
+            "$TMP/security-readonly-output"; }; then
+    pass "trusted Python starts from an empty environment"
+else
+    fail "a readonly exported credential reached trusted Python"
+fi
+
+SECURITY_ESCAPE_HOME="$TMP/security-escape-home"
+SECURITY_ESCAPE_BIN="$TMP/security-escape-bin"
+SECURITY_ESCAPE_PID="$TMP/security-escape.pid"
+mkdir -p "$SECURITY_ESCAPE_BIN"
+write_canonical_settings "$SECURITY_ESCAPE_HOME/.claude/settings.json"
+write_fake_mnemosyne_checkout \
+    "$SECURITY_ESCAPE_HOME/.agent_brain/knowledge"
+cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" "$SECURITY_ESCAPE_BIN/"
+write_security_probe_git \
+    "$SECURITY_ESCAPE_BIN/git" "" "$SECURITY_ESCAPE_PID"
+HOME="$SECURITY_ESCAPE_HOME" \
+PATH="$SECURITY_ESCAPE_BIN:/usr/bin:/bin" \
+INSTALL=false \
+    /bin/bash "$ROOT/scripts/install/60-claude-tooling.sh" \
+    >"$TMP/security-escape-output" 2>&1
+security_escape_status=$?
+security_escape_process=""
+if [ -s "$SECURITY_ESCAPE_PID" ]; then
+    read -r security_escape_process < "$SECURITY_ESCAPE_PID"
+fi
+security_escape_extinct=false
+if [ -z "$security_escape_process" ]; then
+    security_escape_extinct=true
+elif wait_for_test_process_exit "$security_escape_process"; then
+    security_escape_extinct=true
+fi
+if [ "$security_escape_status" -ne 0 ] && $security_escape_extinct; then
+    pass "unsupported or escaped Git descendants fail closed and are extinct"
+else
+    fail "Mnemosyne Git returned without proving descendant extinction"
+fi
+if [ -n "$security_escape_process" ] \
+    && process_is_live "$security_escape_process"; then
+    if ! kill -KILL "$security_escape_process" 2>/dev/null; then :; fi
+fi
+if [ "$(uname -s)" = Darwin ]; then
+    if [ ! -e "$SECURITY_ESCAPE_PID" ] \
+        && grep -Eq \
+            'exact Git process containment is unavailable on Darwin|canonical Mnemosyne.*unavailable' \
+            "$TMP/security-escape-output"; then
+        pass "Darwin rejects Mnemosyne Git before process creation"
+    else
+        fail "Darwin attempted Mnemosyne Git without exact containment"
+    fi
+else
+    pass "Darwin host validation owns its pre-execution Git rejection"
+fi
+
+SECURITY_INTERRUPT_HOME="$TMP/security-interrupt-home"
+SECURITY_INTERRUPT_BIN="$TMP/security-interrupt-bin"
+SECURITY_INTERRUPT_PID="$TMP/security-interrupt-child.pid"
+SECURITY_INTERRUPT_STARTED="$TMP/security-interrupt-started"
+mkdir -p "$SECURITY_INTERRUPT_BIN"
+write_canonical_settings \
+    "$SECURITY_INTERRUPT_HOME/.claude/settings.json"
+write_fake_mnemosyne_checkout \
+    "$SECURITY_INTERRUPT_HOME/.agent_brain/knowledge"
+cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" "$SECURITY_INTERRUPT_BIN/"
+python3 -I -S - \
+    "$SECURITY_INTERRUPT_BIN/git" \
+    "$SECURITY_INTERRUPT_PID" \
+    "$SECURITY_INTERRUPT_STARTED" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+path = Path(sys.argv[1])
+pid_path = sys.argv[2]
+started_path = sys.argv[3]
+python = str(Path(sys.executable).resolve())
+path.write_text(
+    """#!/bin/bash
+set -eu
+{python} -I -S -c '
+import os
+from pathlib import Path
+import signal
+import sys
+import time
+os.setsid()
+signal.signal(signal.SIGHUP, signal.SIG_IGN)
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+Path(sys.argv[1]).write_text(str(os.getpid()), encoding="ascii")
+time.sleep(30)
+' {pid_path} </dev/null >/dev/null 2>&1 &
+: > {started_path}
+sleep 30
+    """.format(
+        pid_path=shlex.quote(pid_path),
+        started_path=shlex.quote(started_path),
+        python=shlex.quote(python),
+    ),
+    encoding="utf-8",
+)
+path.chmod(0o700)
+PY
+if [ "$(uname -s)" = Linux ] && [ -x /usr/bin/setsid ]; then
+    HOME="$SECURITY_INTERRUPT_HOME" \
+    PATH="$SECURITY_INTERRUPT_BIN:/usr/bin:/bin" \
+    INSTALL=false \
+        /usr/bin/setsid /bin/bash \
+        "$ROOT/scripts/install/60-claude-tooling.sh" \
+        >"$TMP/security-interrupt-output" 2>&1 &
+    security_interrupt_supervisor=$!
+    security_interrupt_target="-$security_interrupt_supervisor"
+else
+    HOME="$SECURITY_INTERRUPT_HOME" \
+    PATH="$SECURITY_INTERRUPT_BIN:/usr/bin:/bin" \
+    INSTALL=false \
+        /bin/bash "$ROOT/scripts/install/60-claude-tooling.sh" \
+        >"$TMP/security-interrupt-output" 2>&1 &
+    security_interrupt_supervisor=$!
+    security_interrupt_target="$security_interrupt_supervisor"
+fi
+security_interrupt_attempt=0
+while [ "$security_interrupt_attempt" -lt 100 ] \
+    && [ ! -e "$SECURITY_INTERRUPT_STARTED" ]; do
+    sleep 0.02
+    security_interrupt_attempt=$((security_interrupt_attempt + 1))
+done
+if ! kill -TERM -- "$security_interrupt_target" 2>/dev/null; then :; fi
+security_interrupt_wait=0
+while [ "$security_interrupt_wait" -lt 100 ] \
+    && process_is_live "$security_interrupt_supervisor"; do
+    sleep 0.02
+    security_interrupt_wait=$((security_interrupt_wait + 1))
+done
+if process_is_live "$security_interrupt_supervisor"; then
+    if ! kill -KILL "$security_interrupt_supervisor" 2>/dev/null; then :; fi
+fi
+if ! wait "$security_interrupt_supervisor" 2>/dev/null; then :; fi
+security_interrupt_child=""
+if [ -s "$SECURITY_INTERRUPT_PID" ]; then
+    read -r security_interrupt_child < "$SECURITY_INTERRUPT_PID"
+fi
+if [ ! -e "$SECURITY_INTERRUPT_STARTED" ] \
+    || [ -z "$security_interrupt_child" ] \
+    || wait_for_test_process_exit "$security_interrupt_child"; then
+    pass "Git interruption fails before execution or extinguishes descendants"
+else
+    fail "interrupting Git supervision left an escaped descendant alive"
+    if ! kill -KILL "$security_interrupt_child" 2>/dev/null; then :; fi
+fi
+
+SECURITY_TRANSACTION_HOME="$TMP/security-transaction-home"
+SECURITY_TRANSACTION_SETTINGS="$SECURITY_TRANSACTION_HOME/.claude/settings.json"
+SECURITY_TRANSACTION_ROOT="$TMP/security-transaction-installer"
+SECURITY_TRANSACTION_SAVED="$SECURITY_TRANSACTION_HOME/.claude/.source-saved"
+SECURITY_TRANSACTION_FOREIGN='preserve post-exchange foreign object'
+mkdir -p "$SECURITY_TRANSACTION_HOME/.claude" \
+    "$SECURITY_TRANSACTION_HOME/.agent_brain/knowledge/.git" \
+    "$SECURITY_TRANSACTION_ROOT"
+cat > "$SECURITY_TRANSACTION_SETTINGS" <<'JSON'
+{
+  "extraKnownMarketplaces": {},
+  "enabledPlugins": {},
+  "preserve": "original settings"
+}
+JSON
+cp "$SECURITY_TRANSACTION_SETTINGS" \
+    "$TMP/security-transaction-original.json"
+cp "$ROOT/scripts/install/60-claude-tooling.sh" \
+    "$SECURITY_TRANSACTION_ROOT/60-claude-tooling.sh"
+cp "$ROOT/scripts/install/lib.sh" "$SECURITY_TRANSACTION_ROOT/lib.sh"
+python3 -I -S - \
+    "$SECURITY_TRANSACTION_ROOT/60-claude-tooling.sh" \
+    "$SECURITY_TRANSACTION_FOREIGN" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+foreign = sys.argv[2]
+source = path.read_text(encoding="utf-8")
+needle = """        verify_named_payload(
+            parent_descriptor,
+            output_name,
+            source_state,
+            source_payload,
+            stat.S_IMODE(source_state.st_mode),
+        )
+"""
+replacement = """        os.rename(
+            output_name,
+            ".source-saved",
+            src_dir_fd=parent_descriptor,
+            dst_dir_fd=parent_descriptor,
+        )
+        foreign_descriptor = os.open(
+            output_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=parent_descriptor,
+        )
+        os.write(foreign_descriptor, {payload!r})
+        os.fsync(foreign_descriptor)
+        os.close(foreign_descriptor)
+""".format(payload=(foreign + "\n").encode("utf-8")) + needle
+if source.count(needle) < 1:
+    raise SystemExit("settings transaction injection point is unavailable")
+path.write_text(source.replace(needle, replacement, 1), encoding="utf-8")
+PY
+HOME="$SECURITY_TRANSACTION_HOME" \
+PATH="$FAKE_BIN:/usr/bin:/bin" \
+INSTALL=true \
+GIT_LOG="$TMP/security-transaction-git.log" \
+    /bin/bash "$SECURITY_TRANSACTION_ROOT/60-claude-tooling.sh" \
+    >"$TMP/security-transaction-output" 2>&1
+security_transaction_status=$?
+security_transaction_foreign_count=$(
+    grep -rlx "$SECURITY_TRANSACTION_FOREIGN" \
+        "$SECURITY_TRANSACTION_HOME/.claude" 2>/dev/null | wc -l | tr -d ' '
+)
+if [ "$security_transaction_status" -ne 0 ] \
+    && ! grep -qx "$SECURITY_TRANSACTION_FOREIGN" \
+        "$SECURITY_TRANSACTION_SETTINGS" \
+    && cmp -s "$SECURITY_TRANSACTION_SAVED" \
+        "$TMP/security-transaction-original.json" \
+    && [ "$security_transaction_foreign_count" -eq 1 ]; then
+    pass "settings rollback never promotes or deletes a late foreign object"
+else
+    fail "settings rollback promoted or lost a post-exchange replacement"
+fi
+
+SECURITY_EARLY_TRANSACTION_HOME="$TMP/security-early-transaction-home"
+SECURITY_EARLY_TRANSACTION_SETTINGS="$SECURITY_EARLY_TRANSACTION_HOME/.claude/settings.json"
+SECURITY_EARLY_TRANSACTION_ROOT="$TMP/security-early-transaction-installer"
+SECURITY_EARLY_TRANSACTION_SAVED="$SECURITY_EARLY_TRANSACTION_HOME/.claude/.source-saved-early"
+SECURITY_EARLY_TRANSACTION_FOREIGN='preserve unbound exchange object'
+mkdir -p "$SECURITY_EARLY_TRANSACTION_HOME/.claude" \
+    "$SECURITY_EARLY_TRANSACTION_HOME/.agent_brain/knowledge/.git" \
+    "$SECURITY_EARLY_TRANSACTION_ROOT"
+cat > "$SECURITY_EARLY_TRANSACTION_SETTINGS" <<'JSON'
+{
+  "extraKnownMarketplaces": {},
+  "enabledPlugins": {},
+  "preserve": "original early transaction settings"
+}
+JSON
+cp "$SECURITY_EARLY_TRANSACTION_SETTINGS" \
+    "$TMP/security-early-transaction-original.json"
+cp "$ROOT/scripts/install/60-claude-tooling.sh" \
+    "$SECURITY_EARLY_TRANSACTION_ROOT/60-claude-tooling.sh"
+cp "$ROOT/scripts/install/lib.sh" "$SECURITY_EARLY_TRANSACTION_ROOT/lib.sh"
+python3 -I -S - \
+    "$SECURITY_EARLY_TRANSACTION_ROOT/60-claude-tooling.sh" \
+    "$SECURITY_EARLY_TRANSACTION_FOREIGN" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+foreign = sys.argv[2]
+source = path.read_text(encoding="utf-8")
+needle = '''        rename_with_flags(
+            parent_descriptor,
+            output_name,
+            parent_descriptor,
+            settings_name,
+            "exchange",
+        )
+        exchanged = True
+        displaced_state = named_state(parent_descriptor, output_name)
+'''
+replacement = needle.replace(
+    "        displaced_state = named_state(parent_descriptor, output_name)\n",
+    '''        os.rename(
+            output_name,
+            ".source-saved-early",
+            src_dir_fd=parent_descriptor,
+            dst_dir_fd=parent_descriptor,
+        )
+        foreign_descriptor = os.open(
+            output_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=parent_descriptor,
+        )
+        os.write(foreign_descriptor, {payload!r})
+        os.fsync(foreign_descriptor)
+        os.close(foreign_descriptor)
+        displaced_state = named_state(parent_descriptor, output_name)
+'''.format(payload=(foreign + "\n").encode("utf-8")),
+)
+if source.count(needle) != 1:
+    raise SystemExit("early settings transaction injection point is unavailable")
+path.write_text(source.replace(needle, replacement, 1), encoding="utf-8")
+PY
+HOME="$SECURITY_EARLY_TRANSACTION_HOME" \
+PATH="$FAKE_BIN:/usr/bin:/bin" \
+INSTALL=true \
+GIT_LOG="$TMP/security-early-transaction-git.log" \
+    /bin/bash "$SECURITY_EARLY_TRANSACTION_ROOT/60-claude-tooling.sh" \
+    >"$TMP/security-early-transaction-output" 2>&1
+security_early_transaction_status=$?
+security_early_transaction_foreign_count=$(
+    grep -rlx "$SECURITY_EARLY_TRANSACTION_FOREIGN" \
+        "$SECURITY_EARLY_TRANSACTION_HOME/.claude" 2>/dev/null \
+        | wc -l | tr -d ' '
+)
+if [ "$security_early_transaction_status" -ne 0 ] \
+    && ! grep -qx "$SECURITY_EARLY_TRANSACTION_FOREIGN" \
+        "$SECURITY_EARLY_TRANSACTION_SETTINGS" \
+    && cmp -s "$SECURITY_EARLY_TRANSACTION_SAVED" \
+        "$TMP/security-early-transaction-original.json" \
+    && [ "$security_early_transaction_foreign_count" -eq 1 ]; then
+    pass "settings rollback never promotes an unbound exchanged object"
+else
+    fail "settings rollback promoted or lost an unbound exchanged object"
+fi
+
+SECURITY_COLLISION_HOME="$TMP/security-collision-home"
+SECURITY_COLLISION_SETTINGS="$SECURITY_COLLISION_HOME/.claude/settings.json"
+SECURITY_COLLISION_ROOT="$TMP/security-collision-installer"
+SECURITY_COLLISION_PAYLOAD='preserve quarantine collision'
+mkdir -p "$SECURITY_COLLISION_HOME/.claude" \
+    "$SECURITY_COLLISION_HOME/.agent_brain/knowledge/.git" \
+    "$SECURITY_COLLISION_ROOT"
+cat > "$SECURITY_COLLISION_SETTINGS" <<'JSON'
+{
+  "extraKnownMarketplaces": {},
+  "enabledPlugins": {},
+  "preserve": "original collision settings"
+}
+JSON
+cp "$SECURITY_COLLISION_SETTINGS" \
+    "$TMP/security-collision-original.json"
+cp "$ROOT/scripts/install/60-claude-tooling.sh" \
+    "$SECURITY_COLLISION_ROOT/60-claude-tooling.sh"
+cp "$ROOT/scripts/install/lib.sh" "$SECURITY_COLLISION_ROOT/lib.sh"
+python3 -I -S - \
+    "$SECURITY_COLLISION_ROOT/60-claude-tooling.sh" \
+    "$SECURITY_COLLISION_PAYLOAD" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+payload = (sys.argv[2] + "\n").encode("utf-8")
+source = path.read_text(encoding="utf-8")
+needle = '''        quarantine_name = "settings.json.replaced." + secrets.token_hex(16)
+        rename_with_flags(
+'''
+replacement = '''        quarantine_name = "settings.json.replaced." + secrets.token_hex(16)
+        collision_descriptor = os.open(
+            quarantine_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=parent_descriptor,
+        )
+        os.write(collision_descriptor, {payload!r})
+        os.fsync(collision_descriptor)
+        os.close(collision_descriptor)
+        rename_with_flags(
+'''.format(payload=payload)
+if source.count(needle) != 1:
+    raise SystemExit("settings quarantine injection point is unavailable")
+path.write_text(source.replace(needle, replacement, 1), encoding="utf-8")
+PY
+HOME="$SECURITY_COLLISION_HOME" \
+PATH="$FAKE_BIN:/usr/bin:/bin" \
+INSTALL=true \
+GIT_LOG="$TMP/security-collision-git.log" \
+    /bin/bash "$SECURITY_COLLISION_ROOT/60-claude-tooling.sh" \
+    >"$TMP/security-collision-output" 2>&1
+security_collision_status=$?
+security_collision_count=$(
+    grep -rlx "$SECURITY_COLLISION_PAYLOAD" \
+        "$SECURITY_COLLISION_HOME/.claude" 2>/dev/null | wc -l | tr -d ' '
+)
+if [ "$security_collision_status" -ne 0 ] \
+    && cmp -s "$SECURITY_COLLISION_SETTINGS" \
+        "$TMP/security-collision-original.json" \
+    && [ "$security_collision_count" -eq 1 ]; then
+    pass "quarantine collision rolls back without losing either object"
+else
+    fail "quarantine collision escaped the settings transaction"
+fi
+
+SECURITY_DURABILITY_HOME="$TMP/security-durability-home"
+SECURITY_DURABILITY_SETTINGS="$SECURITY_DURABILITY_HOME/.claude/settings.json"
+SECURITY_DURABILITY_ROOT="$TMP/security-durability-installer"
+mkdir -p "$SECURITY_DURABILITY_HOME/.claude" \
+    "$SECURITY_DURABILITY_HOME/.agent_brain/knowledge/.git" \
+    "$SECURITY_DURABILITY_ROOT"
+cat > "$SECURITY_DURABILITY_SETTINGS" <<'JSON'
+{
+  "extraKnownMarketplaces": {},
+  "enabledPlugins": {},
+  "preserve": "original durable settings"
+}
+JSON
+cp "$SECURITY_DURABILITY_SETTINGS" \
+    "$TMP/security-durability-original.json"
+cp "$ROOT/scripts/install/60-claude-tooling.sh" \
+    "$SECURITY_DURABILITY_ROOT/60-claude-tooling.sh"
+cp "$ROOT/scripts/install/lib.sh" "$SECURITY_DURABILITY_ROOT/lib.sh"
+python3 -I -S - \
+    "$SECURITY_DURABILITY_ROOT/60-claude-tooling.sh" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+source = path.read_text(encoding="utf-8")
+needle = '''        verify_named_payload(
+            parent_descriptor,
+            settings_name,
+            output_state,
+            output_payload,
+            output_mode,
+        )
+        return quarantine_name
+'''
+replacement = needle.replace(
+    "        return quarantine_name\n",
+    '        os.fsync(parent_descriptor)\n'
+    '        raise OSError("injected post-publication durability failure")\n'
+    '        return quarantine_name\n',
+)
+if source.count(needle) != 1:
+    raise SystemExit("settings durability injection point is unavailable")
+path.write_text(source.replace(needle, replacement, 1), encoding="utf-8")
+PY
+HOME="$SECURITY_DURABILITY_HOME" \
+PATH="$FAKE_BIN:/usr/bin:/bin" \
+INSTALL=true \
+GIT_LOG="$TMP/security-durability-git.log" \
+    /bin/bash "$SECURITY_DURABILITY_ROOT/60-claude-tooling.sh" \
+    >"$TMP/security-durability-output" 2>&1
+security_durability_status=$?
+security_durability_outputs=$(
+    grep -rl '"athena@Athena": true' \
+        "$SECURITY_DURABILITY_HOME/.claude" 2>/dev/null | wc -l | tr -d ' '
+)
+if [ "$security_durability_status" -ne 0 ] \
+    && cmp -s "$SECURITY_DURABILITY_SETTINGS" \
+        "$TMP/security-durability-original.json" \
+    && [ "$security_durability_outputs" -eq 1 ]; then
+    pass "durability failure rolls back while preserving the prepared output"
+else
+    fail "post-publication durability failure escaped the settings transaction"
+fi
+
+SECURITY_CHECK_HOME="$TMP/security-check-home"
+SECURITY_CHECK_BIN="$TMP/security-check-bin"
+SECURITY_CHECK_MARKER="$SECURITY_CHECK_HOME/claude-version-mutated-home"
+mkdir -p "$SECURITY_CHECK_BIN"
+write_canonical_settings "$SECURITY_CHECK_HOME/.claude/settings.json"
+cp "$FAKE_BIN/git" "$FAKE_BIN/codex" "$SECURITY_CHECK_BIN/"
+cat > "$SECURITY_CHECK_BIN/claude" <<'SH'
+#!/bin/bash
+: > "$HOME/claude-version-mutated-home"
+printf 'claude 1.2.3\n'
+SH
+chmod 700 "$SECURITY_CHECK_BIN/claude"
+HOME="$SECURITY_CHECK_HOME" \
+PATH="$SECURITY_CHECK_BIN:/usr/bin:/bin" \
+INSTALL=false \
+    /bin/bash "$ROOT/scripts/install/60-claude-tooling.sh" \
+    >"$TMP/security-check-output" 2>&1
+security_check_status=$?
+if [ ! -e "$SECURITY_CHECK_MARKER" ] \
+    && ! grep -q 'executable identities could not be bound' \
+        "$TMP/security-check-output" \
+    && { [ "$security_check_status" -eq 0 ] \
+        || grep -q 'exact Git process containment is unavailable on Darwin' \
+            "$TMP/security-check-output"; }; then
+    pass "check-only tooling does not execute Claude against the user home"
+else
+    fail "check-only Claude probing mutated the real user home"
+fi
+
+if [ "${ODYSSEUS_SECURITY_RED_ONLY:-false}" = true ]; then
+    summary
+    if exit_code; then
+        exit 0
+    fi
+    exit 1
+fi
+
+if [ "$(uname -s)" != Linux ]; then
+    pass "Linux fixture owns sealed Git and full descendant-containment coverage"
+    summary
+    if exit_code; then
+        exit 0
+    fi
+    exit 1
+fi
+
+# Legacy behavioral fixtures need per-invocation observability and race
+# controls, but production now constructs Git's environment from empty. Route
+# only the exact installer-under-test through a disposable fixture runner that
+# bakes those controls into the fake Git executable's private control file.
+bash() {
+    if [ "${1:-}" = "$ROOT/scripts/install/60-claude-tooling.sh" ]; then
+        shift
+        "$TOOLING_RUNNER" "$@"
+        return
+    fi
+    /bin/bash "$@"
+}
+
 info "check-only tooling inspection performs no filesystem or network writes"
 CHECK_ONLY_HOME="$TMP/check-only-empty-home"
 CHECK_ONLY_GIT_LOG="$TMP/check-only-git.log"
@@ -711,6 +1824,9 @@ else
 fi
 
 info "check-only validates a real main-branch checkout without mutation"
+if [ ! -x /usr/bin/git ]; then
+    pass "cached Linux fixture has no real Git; CI owns the real-checkout case"
+else
 REAL_GIT_HOME="$TMP/real-git-home"
 REAL_GIT_CHECKOUT="$REAL_GIT_HOME/.agent_brain/knowledge"
 REAL_GIT_BIN="$TMP/real-git-bin"
@@ -736,6 +1852,7 @@ if [ "$real_git_status" -eq 0 ] \
     pass "real Git checkout validation is read-only and accepts exact main"
 else
     fail "real Git checkout validation rejected or changed canonical state"
+fi
 fi
 
 info "embedded Python ignores ambient startup customization"
@@ -804,12 +1921,496 @@ REAL_PYTHON3="$REAL_PYTHON3" \
 strict_python_status=$?
 if [ "$strict_python_status" -eq 0 ] \
     && grep -q 'Mnemosyne .* up to date' "$TMP/strict-python-output" \
-    && [ -s "$STRICT_PYTHON_LOG" ] \
-    && ! grep -Fvx -- '-I|-S|-' "$STRICT_PYTHON_LOG" >/dev/null; then
-    pass "successful Mnemosyne refresh uses exact -I -S - Python entry points"
+    && [ ! -e "$STRICT_PYTHON_LOG" ]; then
+    pass "successful refresh bypasses ambient Python and uses the fixed bootstrap"
 else
-    fail "a successful Mnemosyne refresh used a non-isolated Python entry point"
+    fail "a successful refresh reached the ambient Python entry point"
 fi
+
+info "tool executable bindings survive later ambient PATH replacement"
+PYTHON_BIND_HOME="$TMP/python-binding-home"
+PYTHON_BIND_BIN="$TMP/python-binding-bin"
+PYTHON_BIND_COUNT="$TMP/python-binding-count"
+PYTHON_BIND_POISON_EFFECT="$TMP/python-binding-poison-effect"
+PYTHON_BIND_GIT_LOG="$TMP/python-binding-git.log"
+REAL_PYTHON3="$(command -v python3)"
+write_fake_mnemosyne_checkout \
+    "$PYTHON_BIND_HOME/.agent_brain/knowledge"
+write_canonical_settings "$PYTHON_BIND_HOME/.claude/settings.json"
+mkdir -p "$PYTHON_BIND_BIN"
+cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" "$FAKE_BIN/git" \
+    "$PYTHON_BIND_BIN/"
+cat > "$PYTHON_BIND_BIN/python3" <<'SH'
+#!/usr/bin/env bash
+set -eu
+count=0
+if [ -f "$PYTHON_BIND_COUNT" ]; then
+    read -r count < "$PYTHON_BIND_COUNT"
+fi
+count=$((count + 1))
+printf '%s\n' "$count" > "$PYTHON_BIND_COUNT"
+if [ "$count" -eq 2 ]; then
+    mv "$PYTHON_BIND_ORIGINAL" "$PYTHON_BIND_ORIGINAL.initial"
+    cat > "$PYTHON_BIND_ORIGINAL" <<'POISON'
+#!/usr/bin/env bash
+: > "$PYTHON_BIND_POISON_EFFECT"
+exec "$REAL_PYTHON3" "$@"
+POISON
+    chmod 700 "$PYTHON_BIND_ORIGINAL"
+fi
+exec "$REAL_PYTHON3" "$@"
+SH
+chmod 700 "$PYTHON_BIND_BIN/python3"
+HOME="$PYTHON_BIND_HOME" \
+PATH="$PYTHON_BIND_BIN:/usr/bin:/bin" \
+INSTALL=true \
+ODYSSEUS_ROOT="$FAKE_ROOT" \
+GIT_LOG="$PYTHON_BIND_GIT_LOG" \
+SKILL_MARKER="$SKILL_MARKER" \
+PYTHON_BIND_COUNT="$PYTHON_BIND_COUNT" \
+PYTHON_BIND_ORIGINAL="$PYTHON_BIND_BIN/python3" \
+PYTHON_BIND_POISON_EFFECT="$PYTHON_BIND_POISON_EFFECT" \
+REAL_PYTHON3="$REAL_PYTHON3" \
+    bash "$ROOT/scripts/install/60-claude-tooling.sh" \
+    >"$TMP/python-binding-output" 2>&1
+python_binding_status=$?
+if [ "$python_binding_status" -eq 0 ] \
+    && [ ! -e "$PYTHON_BIND_COUNT" ] \
+    && [ ! -e "$PYTHON_BIND_POISON_EFFECT" ]; then
+    pass "embedded Python never enters the mutable PATH bootstrap"
+else
+    fail "the mutable PATH Python participated in bootstrap or execution"
+fi
+
+GIT_BIND_HOME="$TMP/git-binding-home"
+GIT_BIND_BIN="$TMP/git-binding-bin"
+TOOL_GIT_BIND_SWAP_MARKER="$TMP/git-binding-swap-marker"
+TOOL_GIT_BIND_POISON_EFFECT="$TMP/git-binding-poison-effect"
+GIT_BIND_LOG="$TMP/git-binding.log"
+write_fake_mnemosyne_checkout "$GIT_BIND_HOME/.agent_brain/knowledge"
+write_canonical_settings "$GIT_BIND_HOME/.claude/settings.json"
+mkdir -p "$GIT_BIND_BIN"
+cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" "$GIT_BIND_BIN/"
+cp "$FAKE_BIN/git" "$GIT_BIND_BIN/git.backing"
+cat > "$GIT_BIND_BIN/git" <<'SH'
+#!/bin/bash
+set -eu
+if [ ! -e "$TOOL_GIT_BIND_SWAP_MARKER" ]; then
+    : > "$TOOL_GIT_BIND_SWAP_MARKER"
+    mv "$TOOL_GIT_BIND_ORIGINAL" "$TOOL_GIT_BIND_ORIGINAL.initial"
+    cat > "$TOOL_GIT_BIND_ORIGINAL" <<'POISON'
+#!/usr/bin/env bash
+: > "$TOOL_GIT_BIND_POISON_EFFECT"
+exec "$TOOL_GIT_BIND_BACKING" "$@"
+POISON
+    chmod 700 "$TOOL_GIT_BIND_ORIGINAL"
+fi
+exec "$TOOL_GIT_BIND_BACKING" "$@"
+SH
+chmod 700 "$GIT_BIND_BIN/git" "$GIT_BIND_BIN/git.backing"
+HOME="$GIT_BIND_HOME" \
+PATH="$GIT_BIND_BIN:/usr/bin:/bin" \
+INSTALL=true \
+ODYSSEUS_ROOT="$FAKE_ROOT" \
+GIT_LOG="$GIT_BIND_LOG" \
+SKILL_MARKER="$SKILL_MARKER" \
+TOOL_GIT_BIND_SWAP_MARKER="$TOOL_GIT_BIND_SWAP_MARKER" \
+TOOL_GIT_BIND_ORIGINAL="$GIT_BIND_BIN/git" \
+TOOL_GIT_BIND_BACKING="$GIT_BIND_BIN/git.backing" \
+TOOL_GIT_BIND_POISON_EFFECT="$TOOL_GIT_BIND_POISON_EFFECT" \
+    bash "$ROOT/scripts/install/60-claude-tooling.sh" \
+    >"$TMP/git-binding-output" 2>&1
+git_binding_status=$?
+if [ ! -e "$TOOL_GIT_BIND_POISON_EFFECT" ] \
+    && { [ "$git_binding_status" -eq 0 ] \
+        || grep -q 'bound\|unavailable\|failed' \
+            "$TMP/git-binding-output"; }; then
+    pass "Mnemosyne Git binds or rejects a late executable replacement"
+else
+    fail "a later PATH replacement redirected Mnemosyne Git"
+fi
+
+info "Mnemosyne Git output and elapsed time have one bounded supervisor"
+BOUNDED_GIT_HOME="$TMP/bounded-git-home"
+BOUNDED_GIT_BIN="$TMP/bounded-git-bin"
+BOUNDED_GIT_LOG="$TMP/bounded-git.log"
+write_fake_mnemosyne_checkout "$BOUNDED_GIT_HOME/.agent_brain/knowledge"
+write_canonical_settings "$BOUNDED_GIT_HOME/.claude/settings.json"
+mkdir -p "$BOUNDED_GIT_BIN"
+cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" "$BOUNDED_GIT_BIN/"
+cp "$FAKE_BIN/git" "$BOUNDED_GIT_BIN/git.backing"
+cat > "$BOUNDED_GIT_BIN/git" <<'SH'
+#!/bin/bash
+set -eu
+case " $* " in
+    *' rev-parse --show-toplevel '*)
+        count=0
+        while [ "$count" -lt 4096 ]; do
+            printf '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n'
+            count=$((count + 1))
+        done
+        sleep 30
+        ;;
+    *) exec "$BOUNDED_GIT_BACKING" "$@" ;;
+esac
+SH
+chmod 700 "$BOUNDED_GIT_BIN/git" "$BOUNDED_GIT_BIN/git.backing"
+run_with_wall_deadline 8 \
+    /usr/bin/env \
+    HOME="$BOUNDED_GIT_HOME" \
+    PATH="$BOUNDED_GIT_BIN:/usr/bin:/bin" \
+    INSTALL=false \
+    ODYSSEUS_ROOT="$FAKE_ROOT" \
+    GIT_LOG="$BOUNDED_GIT_LOG" \
+    SKILL_MARKER="$SKILL_MARKER" \
+    BOUNDED_GIT_BACKING="$BOUNDED_GIT_BIN/git.backing" \
+    "$TOOLING_RUNNER" \
+    >"$TMP/bounded-git-output" 2>&1
+bounded_git_status=$?
+if [ "$bounded_git_status" -ne 0 ] \
+    && [ "$bounded_git_status" -ne 124 ]; then
+    pass "Mnemosyne Git rejects flood and hang behavior within its own bound"
+else
+    fail "Mnemosyne Git relied on the outer test deadline for flood or hang cleanup"
+fi
+
+if [ "$(uname -s)" = Linux ]; then
+    ESCAPED_GIT_HOME="$TMP/escaped-git-home"
+    ESCAPED_GIT_BIN="$TMP/escaped-git-bin"
+    ESCAPED_GIT_LOG="$TMP/escaped-git.log"
+    ESCAPED_GIT_PID="$TMP/escaped-git.pid"
+    write_fake_mnemosyne_checkout \
+        "$ESCAPED_GIT_HOME/.agent_brain/knowledge"
+    write_canonical_settings "$ESCAPED_GIT_HOME/.claude/settings.json"
+    mkdir -p "$ESCAPED_GIT_BIN"
+    cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" "$ESCAPED_GIT_BIN/"
+    cp "$FAKE_BIN/git" "$ESCAPED_GIT_BIN/git.backing"
+    cat > "$ESCAPED_GIT_BIN/git" <<'SH'
+#!/bin/bash
+set -eu
+case " $* " in
+    *' pull --ff-only '*)
+        __ODYSSEUS_TEST_PYTHON__ -I -S - \
+            __ODYSSEUS_TEST_PID__ <<'PY'
+import os
+import sys
+import time
+
+first = os.fork()
+if first:
+    raise SystemExit(0)
+os.setsid()
+second = os.fork()
+if second:
+    os._exit(0)
+with open(sys.argv[1], "w", encoding="ascii") as stream:
+    stream.write(str(os.getpid()))
+time.sleep(30)
+PY
+        ;;
+esac
+exec __ODYSSEUS_TEST_BACKING__ "$@"
+SH
+    python3 -I -S - "$ESCAPED_GIT_BIN/git" \
+        "$(command -v python3)" "$ESCAPED_GIT_PID" \
+        "$ESCAPED_GIT_BIN/git.backing" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+path = Path(sys.argv[1])
+source = path.read_text(encoding="utf-8")
+replacements = {
+    "__ODYSSEUS_TEST_PYTHON__": shlex.quote(sys.argv[2]),
+    "__ODYSSEUS_TEST_PID__": shlex.quote(sys.argv[3]),
+    "__ODYSSEUS_TEST_BACKING__": shlex.quote(sys.argv[4]),
+}
+for old, new in replacements.items():
+    if source.count(old) != 1:
+        raise SystemExit(f"escaped Git placeholder count changed: {old}")
+    source = source.replace(old, new)
+path.write_text(source, encoding="utf-8")
+PY
+    chmod 700 "$ESCAPED_GIT_BIN/git" "$ESCAPED_GIT_BIN/git.backing"
+    HOME="$ESCAPED_GIT_HOME" \
+    PATH="$ESCAPED_GIT_BIN:/usr/bin:/bin" \
+    INSTALL=true \
+    ODYSSEUS_ROOT="$FAKE_ROOT" \
+    GIT_LOG="$ESCAPED_GIT_LOG" \
+    SKILL_MARKER="$SKILL_MARKER" \
+        bash "$ROOT/scripts/install/60-claude-tooling.sh" \
+        >"$TMP/escaped-git-output" 2>&1
+    escaped_git_status=$?
+    escaped_git_process=""
+    if [ -f "$ESCAPED_GIT_PID" ]; then
+        read -r escaped_git_process < "$ESCAPED_GIT_PID"
+    fi
+    if [ -n "$escaped_git_process" ] \
+        && wait_for_test_process_exit "$escaped_git_process"; then
+        pass "Mnemosyne Git proves escaped descendants are extinct"
+    else
+        fail "Mnemosyne Git left an escaped descendant alive"
+        if [ -n "$escaped_git_process" ]; then
+            if ! kill -KILL "$escaped_git_process" 2>/dev/null; then :; fi
+        fi
+    fi
+    if [ "$escaped_git_status" -ne 0 ]; then
+        pass "escaped Mnemosyne Git descendants make the operation fail closed"
+    else
+        fail "an escaped Mnemosyne Git descendant produced success"
+    fi
+
+    CLEANUP_ERROR_GIT_HOME="$TMP/cleanup-error-git-home"
+    CLEANUP_ERROR_GIT_BIN="$TMP/cleanup-error-git-bin"
+    CLEANUP_ERROR_GIT_PID="$TMP/cleanup-error-git.pid"
+    CLEANUP_ERROR_GIT_ROOT="$TMP/cleanup-error-git-installer"
+    mkdir -p "$CLEANUP_ERROR_GIT_BIN" "$CLEANUP_ERROR_GIT_ROOT"
+    write_fake_mnemosyne_checkout \
+        "$CLEANUP_ERROR_GIT_HOME/.agent_brain/knowledge"
+    write_canonical_settings \
+        "$CLEANUP_ERROR_GIT_HOME/.claude/settings.json"
+    cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" "$CLEANUP_ERROR_GIT_BIN/"
+    write_security_probe_git \
+        "$CLEANUP_ERROR_GIT_BIN/git" "" "$CLEANUP_ERROR_GIT_PID"
+    cp "$ROOT/scripts/install/60-claude-tooling.sh" \
+        "$CLEANUP_ERROR_GIT_ROOT/60-claude-tooling.sh"
+    cp "$ROOT/scripts/install/lib.sh" "$CLEANUP_ERROR_GIT_ROOT/lib.sh"
+    python3 -I -S - \
+        "$CLEANUP_ERROR_GIT_ROOT/60-claude-tooling.sh" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+source = path.read_text(encoding="utf-8")
+needle = '''    def descendants(self):
+        return tuple(item for item in self.live() if item[0] != self.root)
+'''
+replacement = '''    def descendants(self):
+        active = tuple(item for item in self.live() if item[0] != self.root)
+        if active:
+            raise GitSupervisorError("injected descendant inventory failure")
+        return active
+'''
+if source.count(needle) != 1:
+    raise SystemExit("Git cleanup injection point is unavailable")
+path.write_text(source.replace(needle, replacement, 1), encoding="utf-8")
+PY
+    HOME="$CLEANUP_ERROR_GIT_HOME" \
+    PATH="$CLEANUP_ERROR_GIT_BIN:/usr/bin:/bin" \
+    INSTALL=false \
+        /bin/bash "$CLEANUP_ERROR_GIT_ROOT/60-claude-tooling.sh" \
+        >"$TMP/cleanup-error-git-output" 2>&1
+    cleanup_error_git_status=$?
+    cleanup_error_git_process=""
+    if [ -s "$CLEANUP_ERROR_GIT_PID" ]; then
+        read -r cleanup_error_git_process < "$CLEANUP_ERROR_GIT_PID"
+    fi
+    if [ "$cleanup_error_git_status" -ne 0 ] \
+        && [ -n "$cleanup_error_git_process" ] \
+        && wait_for_test_process_exit "$cleanup_error_git_process"; then
+        pass "Git cleanup inventory failure still extinguishes descendants"
+    else
+        fail "Git cleanup inventory failure left a descendant alive"
+        if [ -n "$cleanup_error_git_process" ]; then
+            if ! kill -KILL "$cleanup_error_git_process" 2>/dev/null; then :; fi
+        fi
+    fi
+else
+    pass "Linux CI owns exact escaped-descendant proof for Mnemosyne Git"
+    pass "Linux CI owns Git cleanup-error descendant proof"
+fi
+
+info "settings publication preserves a target replaced at the commit boundary"
+SETTINGS_TARGET_HOME="$TMP/settings-target-race-home"
+SETTINGS_TARGET_PARENT="$SETTINGS_TARGET_HOME/.claude"
+SETTINGS_TARGET="$SETTINGS_TARGET_PARENT/settings.json"
+SETTINGS_TARGET_ORIGINAL="$SETTINGS_TARGET_PARENT/.settings-target-original"
+SETTINGS_TARGET_MARKER="$TMP/settings-target-race-marker"
+SETTINGS_TARGET_BIN="$TMP/settings-target-race-bin"
+SETTINGS_TARGET_GIT_LOG="$TMP/settings-target-race-git.log"
+SETTINGS_TARGET_ROOT="$TMP/settings-target-race-installer"
+mkdir -p "$SETTINGS_TARGET_PARENT" \
+    "$SETTINGS_TARGET_HOME/.agent_brain/knowledge/.git" \
+    "$SETTINGS_TARGET_BIN" "$SETTINGS_TARGET_ROOT"
+cat > "$SETTINGS_TARGET" <<'JSON'
+{
+  "extraKnownMarketplaces": {},
+  "enabledPlugins": {},
+  "preserve": "original settings"
+}
+JSON
+cp "$SETTINGS_TARGET" "$TMP/settings-target-expected.json"
+cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" "$FAKE_BIN/git" \
+    "$SETTINGS_TARGET_BIN/"
+cp "$ROOT/scripts/install/60-claude-tooling.sh" \
+    "$SETTINGS_TARGET_ROOT/60-claude-tooling.sh"
+cp "$ROOT/scripts/install/lib.sh" "$SETTINGS_TARGET_ROOT/lib.sh"
+python3 -I -S - \
+    "$SETTINGS_TARGET_ROOT/60-claude-tooling.sh" \
+    "$SETTINGS_TARGET_MARKER" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+marker = sys.argv[2]
+source = path.read_text(encoding="utf-8")
+needle = '''    exchanged = False
+    displaced_state = None
+    quarantine_name = None
+    try:
+        current_source = named_state(parent_descriptor, settings_name)
+'''
+replacement = '''    exchanged = False
+    displaced_state = None
+    quarantine_name = None
+    try:
+        os.rename(
+            settings_name,
+            ".settings-target-original",
+            src_dir_fd=parent_descriptor,
+            dst_dir_fd=parent_descriptor,
+        )
+        victim = os.open(
+            settings_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=parent_descriptor,
+        )
+        os.write(victim, b"preserve late settings target\\n")
+        os.fsync(victim)
+        os.close(victim)
+        with open({marker!r}, "w", encoding="ascii") as stream:
+            stream.write("replaced\\n")
+        current_source = named_state(parent_descriptor, settings_name)
+'''.format(marker=marker)
+if source.count(needle) != 1:
+    raise SystemExit("settings target injection point is unavailable")
+path.write_text(source.replace(needle, replacement, 1), encoding="utf-8")
+PY
+HOME="$SETTINGS_TARGET_HOME" \
+PATH="$SETTINGS_TARGET_BIN:/usr/bin:/bin" \
+INSTALL=true \
+ODYSSEUS_ROOT="$FAKE_ROOT" \
+    /bin/bash "$SETTINGS_TARGET_ROOT/60-claude-tooling.sh" \
+    >"$TMP/settings-target-race-output" 2>&1
+settings_target_status=$?
+if [ "$settings_target_status" -ne 0 ] \
+    && [ -e "$SETTINGS_TARGET_MARKER" ] \
+    && grep -qx 'preserve late settings target' "$SETTINGS_TARGET" \
+    && cmp -s "$SETTINGS_TARGET_ORIGINAL" \
+        "$TMP/settings-target-expected.json" \
+    && [ ! -s "$SETTINGS_TARGET_GIT_LOG" ]; then
+    pass "settings publication rejects a late target without overwriting it"
+else
+    fail "settings publication overwrote or lost a late target replacement"
+fi
+
+info "failed-clone retirement uses no-replace publication and recovery"
+for failed_clone_race in target source; do
+    FAILED_CLONE_HOME="$TMP/failed-clone-$failed_clone_race-home"
+    FAILED_CLONE_PARENT="$FAILED_CLONE_HOME/.agent_brain"
+    FAILED_CLONE_CHECKOUT="$FAILED_CLONE_PARENT/knowledge"
+    FAILED_CLONE_BIN="$TMP/failed-clone-$failed_clone_race-bin"
+    FAILED_CLONE_GIT_LOG="$TMP/failed-clone-$failed_clone_race-git.log"
+    FAILED_CLONE_FAIL_MARKER="$TMP/failed-clone-$failed_clone_race-fail"
+    FAILED_CLONE_RACE_MARKER="$TMP/failed-clone-$failed_clone_race-race"
+    FAILED_CLONE_RETIRED="$FAILED_CLONE_PARENT/.knowledge.clone-failed.late"
+    FAILED_CLONE_ORIGINAL="$FAILED_CLONE_PARENT/.knowledge.clone-original"
+    FAILED_CLONE_ROOT="$TMP/failed-clone-$failed_clone_race-installer"
+    mkdir -p "$FAILED_CLONE_BIN" "$FAILED_CLONE_ROOT"
+    write_canonical_settings "$FAILED_CLONE_HOME/.claude/settings.json"
+    cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" "$FAKE_BIN/git" \
+        "$FAILED_CLONE_BIN/"
+    cp "$ROOT/scripts/install/60-claude-tooling.sh" \
+        "$FAILED_CLONE_ROOT/60-claude-tooling.sh"
+    cp "$ROOT/scripts/install/lib.sh" "$FAILED_CLONE_ROOT/lib.sh"
+    python3 -I -S - \
+        "$FAILED_CLONE_ROOT/60-claude-tooling.sh" \
+        "$failed_clone_race" "$FAILED_CLONE_RACE_MARKER" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+race = sys.argv[2]
+marker = sys.argv[3]
+source = path.read_text(encoding="utf-8")
+random_name = '''                retired_name = ".knowledge.clone-failed." + secrets.token_hex(16)'''
+fixed_name = '''                retired_name = ".knowledge.clone-failed.late"'''
+if source.count(random_name) != 1:
+    raise SystemExit("failed-clone name injection point is unavailable")
+source = source.replace(random_name, fixed_name, 1)
+needle = '''def retire_failed_checkout(parent_descriptor, retired_name, expected_identity):
+    rename_noreplace(parent_descriptor, "knowledge", retired_name)
+'''
+replacement = '''def retire_failed_checkout(parent_descriptor, retired_name, expected_identity):
+    if {race!r} == "target":
+        os.mkdir(retired_name, 0o700, dir_fd=parent_descriptor)
+        race_state = os.stat(
+            retired_name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+    else:
+        os.rename(
+            "knowledge",
+            ".knowledge.clone-original",
+            src_dir_fd=parent_descriptor,
+            dst_dir_fd=parent_descriptor,
+        )
+        os.mkdir("knowledge", 0o700, dir_fd=parent_descriptor)
+        race_state = os.stat(
+            "knowledge",
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+    with open({marker!r}, "w", encoding="ascii") as stream:
+        stream.write(
+            f"{{race_state.st_dev}}:{{race_state.st_ino}}:"
+            f"{{race_state.st_uid}}:{{stat.S_IMODE(race_state.st_mode):o}}\\n"
+        )
+    rename_noreplace(parent_descriptor, "knowledge", retired_name)
+'''.format(race=race, marker=marker)
+if source.count(needle) != 1:
+    raise SystemExit("failed-clone race injection point is unavailable")
+path.write_text(source.replace(needle, replacement, 1), encoding="utf-8")
+PY
+    GIT_LOG="$FAILED_CLONE_GIT_LOG" \
+    MNEMOSYNE_FAKE_CLONE_FAIL_ONCE_MARKER="$FAILED_CLONE_FAIL_MARKER" \
+        prepare_test_git_control \
+            GIT_LOG MNEMOSYNE_FAKE_CLONE_FAIL_ONCE_MARKER
+    HOME="$FAILED_CLONE_HOME" \
+    PATH="$FAILED_CLONE_BIN:/usr/bin:/bin" \
+    INSTALL=true \
+    ODYSSEUS_ROOT="$FAKE_ROOT" \
+        /bin/bash "$FAILED_CLONE_ROOT/60-claude-tooling.sh" \
+        >"$TMP/failed-clone-$failed_clone_race-output" 2>&1
+    failed_clone_status=$?
+    failed_clone_receipt=""
+    if [ -f "$FAILED_CLONE_RACE_MARKER" ]; then
+        read -r failed_clone_receipt < "$FAILED_CLONE_RACE_MARKER"
+    fi
+    if [ "$failed_clone_race" = target ]; then
+        if [ "$failed_clone_status" -ne 0 ] \
+            && [ -n "$failed_clone_receipt" ] \
+            && [ -d "$FAILED_CLONE_RETIRED" ] \
+            && [ "$(settings_directory_receipt "$FAILED_CLONE_RETIRED")" = \
+                "$failed_clone_receipt" ] \
+            && [ -d "$FAILED_CLONE_CHECKOUT/.git" ]; then
+            pass "failed-clone retirement preserves a late target"
+        else
+            fail "failed-clone retirement overwrote a late target"
+        fi
+    elif [ "$failed_clone_status" -ne 0 ] \
+        && [ -n "$failed_clone_receipt" ] \
+        && [ -d "$FAILED_CLONE_CHECKOUT" ] \
+        && [ "$(settings_directory_receipt "$FAILED_CLONE_CHECKOUT")" = \
+            "$failed_clone_receipt" ] \
+        && [ -d "$FAILED_CLONE_ORIGINAL/.git" ]; then
+        pass "failed-clone retirement restores a late source replacement"
+    else
+        fail "failed-clone retirement moved a late source replacement"
+    fi
+done
 
 info "Mnemosyne reuse is bound to the direct canonical checkout"
 WRONG_REMOTE_HOME="$TMP/wrong-remote-home"
@@ -944,10 +2545,32 @@ GIT_ATTR_SOURCE=hostile-attributes \
 GIT_REPLACE_REF_BASE=hostile-replace-base \
 HTTP_PROXY=http://enterprise-proxy.invalid:8080 \
 HTTPS_PROXY=http://enterprise-proxy.invalid:8443 \
+ALL_PROXY=socks5://enterprise-proxy.invalid:1080 \
+NO_PROXY=github.com \
+http_proxy=http://lower-proxy.invalid:8080 \
+https_proxy=http://lower-proxy.invalid:8443 \
+all_proxy=socks5://lower-proxy.invalid:1080 \
+no_proxy=api.github.com \
+SSL_CERT_FILE="$ROUTING_DECOY/hostile-cert.pem" \
+SSL_CERT_DIR="$ROUTING_DECOY/hostile-cert-dir" \
+CURL_CA_BUNDLE="$ROUTING_DECOY/hostile-curl-ca.pem" \
+REQUESTS_CA_BUNDLE="$ROUTING_DECOY/hostile-requests-ca.pem" \
+AWS_CA_BUNDLE="$ROUTING_DECOY/hostile-aws-ca.pem" \
+NODE_EXTRA_CA_CERTS="$ROUTING_DECOY/hostile-node-ca.pem" \
+SSLKEYLOGFILE="$ROUTING_DECOY/tls-keys.log" \
+GIT_CURL_VERBOSE=1 \
+GIT_TRACE_CURL="$ROUTING_DECOY/git-curl.trace" \
+GIT_TRACE_CURL_NO_DATA=0 \
+GIT_HTTP_PROXY_AUTHMETHOD=basic \
+GIT_HTTP_LOW_SPEED_LIMIT=1 \
+GIT_HTTP_LOW_SPEED_TIME=1 \
+GIT_HTTP_MAX_REQUESTS=99 \
+GIT_HTTP_USER_AGENT=hostile-agent \
+GIT_SSL_CIPHER=hostile-cipher \
+GIT_SSL_VERSION=tlsv1.0 \
+GIT_SSL_BACKEND=hostile-backend \
 MNEMOSYNE_GIT_ENV_MARKER="$ROUTING_ENV_MARKER" \
 MNEMOSYNE_PARAMETERS_EFFECT="$ROUTING_PARAMETERS_EFFECT" \
-MNEMOSYNE_EXPECT_HTTP_PROXY=http://enterprise-proxy.invalid:8080 \
-MNEMOSYNE_EXPECT_HTTPS_PROXY=http://enterprise-proxy.invalid:8443 \
     bash "$ROOT/scripts/install/60-claude-tooling.sh" \
     >"$TMP/routing-output" 2>&1
 routing_status=$?
@@ -956,9 +2579,9 @@ if [ "$routing_status" -eq 0 ] \
     && [ ! -e "$ROUTING_PARAMETERS_EFFECT" ] \
     && [ "$(settings_write_fingerprint "$ROUTING_DECOY/sentinel")" = \
         "$routing_decoy_before" ]; then
-    pass "Mnemosyne Git ignores ambient repository and config routing"
+    pass "Mnemosyne Git ignores ambient repository, network, and TLS routing"
 else
-    fail "ambient Git routing reached the Mnemosyne operation"
+    fail "ambient Git, network, or TLS routing reached the Mnemosyne operation"
 fi
 
 info "Mnemosyne pull applies bounded config and execution controls"
@@ -1356,8 +2979,10 @@ ENTER_GITDIR_VICTIM="$TMP/enter-gitdir-swap-victim"
 ENTER_GITDIR_MARKER="$TMP/enter-gitdir-swap-marker"
 ENTER_GITDIR_BIN="$TMP/enter-gitdir-swap-bin"
 ENTER_GITDIR_GIT_LOG="$TMP/enter-gitdir-swap-git.log"
+ENTER_GITDIR_ROOT="$TMP/enter-gitdir-swap-installer"
 write_fake_mnemosyne_checkout "$ENTER_GITDIR_CHECKOUT"
-mkdir -p "$ENTER_GITDIR_VICTIM" "$ENTER_GITDIR_BIN"
+mkdir -p "$ENTER_GITDIR_VICTIM" "$ENTER_GITDIR_BIN" \
+    "$ENTER_GITDIR_ROOT"
 printf '%s\n' \
     '[remote "origin"]' \
     '    url = https://github.com/HomericIntelligence/Mnemosyne.git' \
@@ -1366,51 +2991,57 @@ printf 'preserve entered replacement\n' > "$ENTER_GITDIR_VICTIM/sentinel"
 write_canonical_settings "$ENTER_GITDIR_HOME/.claude/settings.json"
 cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" "$FAKE_BIN/git" \
     "$ENTER_GITDIR_BIN/"
-cat > "$ENTER_GITDIR_BIN/python3" <<'SH'
-#!/usr/bin/env bash
-set -eu
-[ "${1:-}" = -I ] && [ "${2:-}" = -S ] && [ "${3:-}" = - ] \
-    || exit 97
-mode=${4:-}
-script_file=$(mktemp "${TMPDIR:-/tmp}/enter-gitdir-python.XXXXXX")
-trap 'rm -f "$script_file"' EXIT
-cat > "$script_file"
-if [ "$mode" = verify-git ] \
-    && [ "$(cat "$ENTER_GITDIR_MARKER" 2>/dev/null || :)" = 1 ]; then
-    mv "$ENTER_GITDIR_NAMED" "$ENTER_GITDIR_VICTIM"
-    mv "$ENTER_GITDIR_ORIGINAL" "$ENTER_GITDIR_NAMED"
-    printf '2\n' > "$ENTER_GITDIR_MARKER"
-fi
-shift 3
-set +e
-output=$("$REAL_PYTHON3" -I -S "$script_file" "$@")
-python_status=$?
-set -e
-if [ "$python_status" -eq 0 ] && [ "$mode" = bind ]; then
-    mv "$ENTER_GITDIR_NAMED" "$ENTER_GITDIR_ORIGINAL"
-    mv "$ENTER_GITDIR_VICTIM" "$ENTER_GITDIR_NAMED"
-    printf '1\n' > "$ENTER_GITDIR_MARKER"
-fi
-if [ -n "$output" ]; then
-    printf '%s\n' "$output"
-fi
-exit "$python_status"
-SH
-chmod +x "$ENTER_GITDIR_BIN/python3"
+cp "$ROOT/scripts/install/60-claude-tooling.sh" \
+    "$ENTER_GITDIR_ROOT/60-claude-tooling.sh"
+cp "$ROOT/scripts/install/lib.sh" "$ENTER_GITDIR_ROOT/lib.sh"
+python3 -I -S - \
+    "$ENTER_GITDIR_ROOT/60-claude-tooling.sh" \
+    "$ENTER_GITDIR_NAMED" "$ENTER_GITDIR_ORIGINAL" \
+    "$ENTER_GITDIR_VICTIM" "$ENTER_GITDIR_MARKER" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+named, original, victim, marker = sys.argv[2:]
+source = path.read_text(encoding="utf-8")
+bind_needle = '''if mode == "bind":
+    print(encode(record(parent, checkout, True)))
+'''
+bind_replacement = '''if mode == "bind":
+    binding = encode(record(parent, checkout, True))
+    os.rename({named!r}, {original!r})
+    os.rename({victim!r}, {named!r})
+    with open({marker!r}, "w", encoding="ascii") as stream:
+        stream.write("1\\n")
+    print(binding)
+'''.format(named=named, original=original, victim=victim, marker=marker)
+verify_needle = '''elif mode in {"verify", "verify-container", "verify-git"}:
+    expected = decode(sys.argv[4])
+'''
+verify_replacement = '''elif mode in {{"verify", "verify-container", "verify-git"}}:
+    if mode == "verify-git" and os.path.exists({marker!r}):
+        with open({marker!r}, encoding="ascii") as stream:
+            marker_value = stream.read().strip()
+        if marker_value == "1":
+            os.rename({named!r}, {victim!r})
+            os.rename({original!r}, {named!r})
+            with open({marker!r}, "w", encoding="ascii") as stream:
+                stream.write("2\\n")
+    expected = decode(sys.argv[4])
+'''.format(marker=marker, named=named, victim=victim, original=original)
+if source.count(bind_needle) != 1 or source.count(verify_needle) != 1:
+    raise SystemExit("Git-directory race injection point is unavailable")
+source = source.replace(bind_needle, bind_replacement, 1)
+path.write_text(source.replace(verify_needle, verify_replacement, 1), encoding="utf-8")
+PY
 enter_gitdir_victim_before="$(settings_write_fingerprint \
     "$ENTER_GITDIR_VICTIM/sentinel")"
+GIT_LOG="$ENTER_GITDIR_GIT_LOG" prepare_test_git_control GIT_LOG
 HOME="$ENTER_GITDIR_HOME" \
 PATH="$ENTER_GITDIR_BIN:/usr/bin:/bin" \
 INSTALL=true \
 ODYSSEUS_ROOT="$FAKE_ROOT" \
-GIT_LOG="$ENTER_GITDIR_GIT_LOG" \
-SKILL_MARKER="$SKILL_MARKER" \
-ENTER_GITDIR_NAMED="$ENTER_GITDIR_NAMED" \
-ENTER_GITDIR_ORIGINAL="$ENTER_GITDIR_ORIGINAL" \
-ENTER_GITDIR_VICTIM="$ENTER_GITDIR_VICTIM" \
-ENTER_GITDIR_MARKER="$ENTER_GITDIR_MARKER" \
-REAL_PYTHON3="$REAL_PYTHON3" \
-    bash "$ROOT/scripts/install/60-claude-tooling.sh" \
+    /bin/bash "$ENTER_GITDIR_ROOT/60-claude-tooling.sh" \
     >"$TMP/enter-gitdir-swap-output" 2>&1
 enter_gitdir_status=$?
 if [ "$enter_gitdir_status" -ne 0 ] \
@@ -1768,9 +3399,10 @@ ANCESTOR_VICTIM_SETTINGS="$ANCESTOR_VICTIM_PARENT/settings.json"
 ANCESTOR_GIT_LOG="$TMP/ancestor-swap-git.log"
 ANCESTOR_SWAP_MARKER="$TMP/ancestor-swap-marker"
 ANCESTOR_BIN="$TMP/ancestor-swap-bin"
-REAL_PYTHON3="$(command -v python3)"
+ANCESTOR_ROOT="$TMP/ancestor-swap-installer"
 mkdir -p "$ANCESTOR_PARENT" "$ANCESTOR_VICTIM_PARENT" \
-    "$ANCESTOR_HOME/.agent_brain/knowledge/.git" "$ANCESTOR_BIN"
+    "$ANCESTOR_HOME/.agent_brain/knowledge/.git" "$ANCESTOR_BIN" \
+    "$ANCESTOR_ROOT"
 cat > "$ANCESTOR_PARENT/settings.json" <<'JSON'
 {
   "extraKnownMarketplaces": {},
@@ -1779,22 +3411,35 @@ cat > "$ANCESTOR_PARENT/settings.json" <<'JSON'
 JSON
 cp "$ANCESTOR_PARENT/settings.json" "$ANCESTOR_VICTIM_SETTINGS"
 cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" "$FAKE_BIN/git" "$ANCESTOR_BIN/"
-cat > "$ANCESTOR_BIN/python3" <<'SH'
-#!/usr/bin/env bash
-set -eu
-invocation=0
-if [ -f "$ANCESTOR_SWAP_MARKER" ]; then
-    read -r invocation < "$ANCESTOR_SWAP_MARKER"
-fi
-invocation=$((invocation + 1))
-printf '%s\n' "$invocation" > "$ANCESTOR_SWAP_MARKER"
-if [ "$invocation" -eq 2 ]; then
-    mv "$ANCESTOR_PARENT" "$ANCESTOR_ORIGINAL_PARENT"
-    mv "$ANCESTOR_VICTIM_PARENT" "$ANCESTOR_PARENT"
-fi
-exec "$REAL_PYTHON3" "$@"
-SH
-chmod +x "$ANCESTOR_BIN/python3"
+cp "$ROOT/scripts/install/60-claude-tooling.sh" \
+    "$ANCESTOR_ROOT/60-claude-tooling.sh"
+cp "$ROOT/scripts/install/lib.sh" "$ANCESTOR_ROOT/lib.sh"
+python3 -I -S - \
+    "$ANCESTOR_ROOT/60-claude-tooling.sh" \
+    "$ANCESTOR_PARENT" "$ANCESTOR_ORIGINAL_PARENT" \
+    "$ANCESTOR_VICTIM_PARENT" "$ANCESTOR_SWAP_MARKER" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+parent, original, victim, marker = sys.argv[2:]
+source = path.read_text(encoding="utf-8")
+needle = '''def reconcile():
+    expected_binding = parse_expected_binding(expected_binding_text)
+    (
+'''
+replacement = '''def reconcile():
+    expected_binding = parse_expected_binding(expected_binding_text)
+    os.rename({parent!r}, {original!r})
+    os.rename({victim!r}, {parent!r})
+    with open({marker!r}, "w", encoding="ascii") as stream:
+        stream.write("swapped\\n")
+    (
+'''.format(parent=parent, original=original, victim=victim, marker=marker)
+if source.count(needle) != 1:
+    raise SystemExit("settings-parent injection point is unavailable")
+path.write_text(source.replace(needle, replacement, 1), encoding="utf-8")
+PY
 ancestor_original_before="$(
     settings_write_fingerprint "$ANCESTOR_PARENT/settings.json"
 )"
@@ -1806,14 +3451,7 @@ HOME="$ANCESTOR_HOME" \
 PATH="$ANCESTOR_BIN:/usr/bin:/bin" \
 INSTALL=true \
 ODYSSEUS_ROOT="$FAKE_ROOT" \
-GIT_LOG="$ANCESTOR_GIT_LOG" \
-SKILL_MARKER="$SKILL_MARKER" \
-ANCESTOR_SWAP_MARKER="$ANCESTOR_SWAP_MARKER" \
-ANCESTOR_PARENT="$ANCESTOR_PARENT" \
-ANCESTOR_ORIGINAL_PARENT="$ANCESTOR_ORIGINAL_PARENT" \
-ANCESTOR_VICTIM_PARENT="$ANCESTOR_VICTIM_PARENT" \
-REAL_PYTHON3="$REAL_PYTHON3" \
-    bash "$ROOT/scripts/install/60-claude-tooling.sh" \
+    /bin/bash "$ANCESTOR_ROOT/60-claude-tooling.sh" \
     >"$TMP/ancestor-swap-output" 2>&1
 ancestor_status=$?
 
@@ -1846,9 +3484,10 @@ TEMP_FAILURE_ORIGINAL="$TMP/settings-temp-failure-original.json"
 TEMP_FAILURE_GIT_LOG="$TMP/settings-temp-failure-git.log"
 TEMP_FAILURE_BIN="$TMP/settings-temp-failure-bin"
 TEMP_FAILURE_MARKER="$TMP/settings-temp-failure-name"
+TEMP_FAILURE_ROOT="$TMP/settings-temp-failure-installer"
 mkdir -p "$TEMP_FAILURE_HOME/.claude" \
     "$TEMP_FAILURE_HOME/.agent_brain/knowledge/.git" \
-    "$TEMP_FAILURE_BIN"
+    "$TEMP_FAILURE_BIN" "$TEMP_FAILURE_ROOT"
 : > "$TEMP_FAILURE_GIT_LOG"
 cat > "$TEMP_FAILURE_SETTINGS" <<'JSON'
 {
@@ -1859,42 +3498,49 @@ JSON
 cp "$TEMP_FAILURE_SETTINGS" "$TEMP_FAILURE_ORIGINAL"
 cp "$FAKE_BIN/claude" "$FAKE_BIN/codex" "$FAKE_BIN/git" \
     "$TEMP_FAILURE_BIN/"
-cat > "$TEMP_FAILURE_BIN/python3" <<'SH'
-#!/usr/bin/env bash
-set -eu
-script_file="$(mktemp "${TMPDIR:-/tmp}/settings-python.XXXXXX")"
-trap 'rm -f "$script_file" "$script_file.injected"' EXIT
-cat > "$script_file"
-if grep -q '^def reconcile():' "$script_file"; then
-    awk '
-        $0 == "        os.replace(" {
-            print "        os.rename(output_name, \".retained-settings-output\", src_dir_fd=parent_descriptor, dst_dir_fd=parent_descriptor)"
-            print "        victim_descriptor = os.open(output_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=parent_descriptor)"
-            print "        os.write(victim_descriptor, b\"preserve mutable-name victim\\n\")"
-            print "        os.close(victim_descriptor)"
-            print "        with open(os.environ[\"TEMP_FAILURE_MARKER\"], \"w\", encoding=\"utf-8\") as marker_stream:"
-            print "            marker_stream.write(output_name)"
-            print "        raise OSError(\"injected settings publication failure\")"
-        }
-        { print }
-    ' "$script_file" > "$script_file.injected"
-    mv "$script_file.injected" "$script_file"
-fi
-[ "${1:-}" = -I ] && [ "${2:-}" = -S ] && [ "${3:-}" = - ] || exit 97
-shift 3
-exec "$REAL_PYTHON3" -I -S "$script_file" "$@"
-SH
-chmod +x "$TEMP_FAILURE_BIN/python3"
+cp "$ROOT/scripts/install/60-claude-tooling.sh" \
+    "$TEMP_FAILURE_ROOT/60-claude-tooling.sh"
+cp "$ROOT/scripts/install/lib.sh" "$TEMP_FAILURE_ROOT/lib.sh"
+python3 -I -S - \
+    "$TEMP_FAILURE_ROOT/60-claude-tooling.sh" \
+    "$TEMP_FAILURE_MARKER" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+marker = sys.argv[2]
+source = path.read_text(encoding="utf-8")
+needle = '''        publish_settings_atomically(
+'''
+replacement = '''        os.rename(
+            output_name,
+            ".retained-settings-output",
+            src_dir_fd=parent_descriptor,
+            dst_dir_fd=parent_descriptor,
+        )
+        victim_descriptor = os.open(
+            output_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+            dir_fd=parent_descriptor,
+        )
+        os.write(victim_descriptor, b"preserve mutable-name victim\\n")
+        os.close(victim_descriptor)
+        with open({marker!r}, "w", encoding="utf-8") as stream:
+            stream.write(output_name)
+        raise OSError("injected settings publication failure")
+        publish_settings_atomically(
+'''.format(marker=marker)
+if source.count(needle) != 1:
+    raise SystemExit("settings artifact injection point is unavailable")
+path.write_text(source.replace(needle, replacement, 1), encoding="utf-8")
+PY
 
 HOME="$TEMP_FAILURE_HOME" \
 PATH="$TEMP_FAILURE_BIN:/usr/bin:/bin" \
-TEMP_FAILURE_MARKER="$TEMP_FAILURE_MARKER" \
-REAL_PYTHON3="$REAL_PYTHON3" \
 INSTALL=true \
 ODYSSEUS_ROOT="$FAKE_ROOT" \
-GIT_LOG="$TEMP_FAILURE_GIT_LOG" \
-SKILL_MARKER="$SKILL_MARKER" \
-    bash "$ROOT/scripts/install/60-claude-tooling.sh" \
+    /bin/bash "$TEMP_FAILURE_ROOT/60-claude-tooling.sh" \
     >"$TMP/settings-temp-failure-output" 2>&1
 temp_failure_status=$?
 temp_failure_name=""
@@ -2294,11 +3940,368 @@ else
 fi
 
 info "Claude checks require a valid executable version"
+
+SECRET_CLAUDE_BIN="$TMP/secret-claude-bin"
+SECRET_CLAUDE_HOME="$TMP/secret-claude-home"
+SECRET_CLAUDE_GIT_LOG="$TMP/secret-claude-git.log"
+SECRET_CLAUDE_MARKER="$SECRET_CLAUDE_HOME/secret-reached-version"
+mkdir -p "$SECRET_CLAUDE_BIN"
+write_canonical_settings "$SECRET_CLAUDE_HOME/.claude/settings.json"
+write_fake_mnemosyne_checkout \
+    "$SECRET_CLAUDE_HOME/.agent_brain/knowledge"
+cp "$FAKE_BIN/git" "$FAKE_BIN/codex" "$SECRET_CLAUDE_BIN/"
+python3 -I -S - "$SECRET_CLAUDE_BIN/claude" \
+    "$SECRET_CLAUDE_MARKER" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+path = Path(sys.argv[1])
+marker = sys.argv[2]
+path.write_text(
+    "#!/bin/bash\n"
+    'if [ -n "${ANTHROPIC_API_KEY:-}" ]; then\n'
+    f"    : > {shlex.quote(marker)}\n"
+    "fi\n"
+    "printf 'claude 1.2.3\\n'\n",
+    encoding="utf-8",
+)
+PY
+chmod 700 "$SECRET_CLAUDE_BIN/claude"
+HOME="$SECRET_CLAUDE_HOME" \
+PATH="$SECRET_CLAUDE_BIN:/usr/bin:/bin" \
+INSTALL=true \
+ODYSSEUS_ROOT="$FAKE_ROOT" \
+GIT_LOG="$SECRET_CLAUDE_GIT_LOG" \
+SKILL_MARKER="$SKILL_MARKER" \
+ANTHROPIC_API_KEY=must-not-reach-version-probe \
+    bash "$ROOT/scripts/install/60-claude-tooling.sh" \
+    >"$TMP/secret-claude-output" 2>&1
+secret_claude_status=$?
+if [ "$secret_claude_status" -eq 0 ] \
+    && [ ! -e "$SECRET_CLAUDE_MARKER" ]; then
+    pass "Claude version probe receives no ambient provider credential"
+else
+    fail "Claude version probe inherited an ambient provider credential"
+fi
+
+UNSAFE_CLAUDE_BIN="$TMP/unsafe-claude-bin"
+UNSAFE_CLAUDE_HOME="$TMP/unsafe-claude-home"
+UNSAFE_CLAUDE_GIT_LOG="$TMP/unsafe-claude-git.log"
+UNSAFE_CLAUDE_MARKER="$UNSAFE_CLAUDE_HOME/unsafe-claude-invoked"
+mkdir -p "$UNSAFE_CLAUDE_BIN"
+write_canonical_settings "$UNSAFE_CLAUDE_HOME/.claude/settings.json"
+write_fake_mnemosyne_checkout \
+    "$UNSAFE_CLAUDE_HOME/.agent_brain/knowledge"
+cp "$FAKE_BIN/git" "$FAKE_BIN/codex" "$UNSAFE_CLAUDE_BIN/"
+cat > "$UNSAFE_CLAUDE_BIN/claude" <<'SH'
+#!/usr/bin/env bash
+: > "$HOME/unsafe-claude-invoked"
+printf 'claude 1.2.3\n'
+SH
+chmod 777 "$UNSAFE_CLAUDE_BIN/claude"
+HOME="$UNSAFE_CLAUDE_HOME" \
+PATH="$UNSAFE_CLAUDE_BIN:/usr/bin:/bin" \
+INSTALL=true \
+ODYSSEUS_ROOT="$FAKE_ROOT" \
+GIT_LOG="$UNSAFE_CLAUDE_GIT_LOG" \
+SKILL_MARKER="$SKILL_MARKER" \
+    bash "$ROOT/scripts/install/60-claude-tooling.sh" \
+    >"$TMP/unsafe-claude-output" 2>&1
+unsafe_claude_status=$?
+if [ "$unsafe_claude_status" -ne 0 ] \
+    && [ ! -e "$UNSAFE_CLAUDE_MARKER" ] \
+    && grep -q 'claude — version check failed' \
+        "$TMP/unsafe-claude-output"; then
+    pass "Claude probe rejects a writable executable before invocation"
+else
+    fail "Claude probe invoked an executable with mutable authority"
+fi
+
+OVERSIZED_CLAUDE_BIN="$TMP/oversized-claude-bin"
+OVERSIZED_CLAUDE_HOME="$TMP/oversized-claude-home"
+OVERSIZED_CLAUDE_GIT_LOG="$TMP/oversized-claude-git.log"
+mkdir -p "$OVERSIZED_CLAUDE_BIN"
+write_canonical_settings "$OVERSIZED_CLAUDE_HOME/.claude/settings.json"
+write_fake_mnemosyne_checkout \
+    "$OVERSIZED_CLAUDE_HOME/.agent_brain/knowledge"
+cp "$FAKE_BIN/git" "$FAKE_BIN/codex" "$OVERSIZED_CLAUDE_BIN/"
+cat > "$OVERSIZED_CLAUDE_BIN/claude" <<'SH'
+#!/bin/bash
+printf 'claude 1.2.3\n'
+count=0
+while [ "$count" -lt 700 ]; do
+    printf '%0100d' 0
+    count=$((count + 1))
+done
+SH
+chmod 700 "$OVERSIZED_CLAUDE_BIN/claude"
+HOME="$OVERSIZED_CLAUDE_HOME" \
+PATH="$OVERSIZED_CLAUDE_BIN:/usr/bin:/bin" \
+INSTALL=true \
+ODYSSEUS_ROOT="$FAKE_ROOT" \
+GIT_LOG="$OVERSIZED_CLAUDE_GIT_LOG" \
+SKILL_MARKER="$SKILL_MARKER" \
+    bash "$ROOT/scripts/install/60-claude-tooling.sh" \
+    >"$TMP/oversized-claude-output" 2>&1
+oversized_claude_status=$?
+if [ "$oversized_claude_status" -ne 0 ] \
+    && grep -q 'claude — version check failed' \
+        "$TMP/oversized-claude-output"; then
+    pass "Claude probe rejects output past its byte boundary"
+else
+    fail "Claude probe accepted output past its byte boundary"
+fi
+
+DETACHED_CLAUDE_BIN="$TMP/detached-claude-bin"
+DETACHED_CLAUDE_HOME="$TMP/detached-claude-home"
+DETACHED_CLAUDE_GIT_LOG="$TMP/detached-claude-git.log"
+DETACHED_CLAUDE_PID="$DETACHED_CLAUDE_HOME/detached-claude.pid"
+DETACHED_CLAUDE_ATTEMPT="$DETACHED_CLAUDE_HOME/detached-claude.attempt"
+mkdir -p "$DETACHED_CLAUDE_BIN"
+write_canonical_settings "$DETACHED_CLAUDE_HOME/.claude/settings.json"
+write_fake_mnemosyne_checkout \
+    "$DETACHED_CLAUDE_HOME/.agent_brain/knowledge"
+cp "$FAKE_BIN/git" "$FAKE_BIN/codex" "$DETACHED_CLAUDE_BIN/"
+python3 -I -S - "$DETACHED_CLAUDE_BIN/claude" \
+    "$DETACHED_CLAUDE_ATTEMPT" "$DETACHED_CLAUDE_PID" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+path = Path(sys.argv[1])
+attempt_path = sys.argv[2]
+marker_path = sys.argv[3]
+python = str(Path(sys.executable).resolve())
+path.write_text(
+    f"#!{python}\n"
+    "from pathlib import Path\n"
+    "import os\n"
+    "import subprocess\n"
+    "import sys\n"
+    "import time\n\n"
+    f"attempt = Path({attempt_path!r})\n"
+    f"marker = Path({marker_path!r})\n"
+    'attempt.write_text("attempted\\n", encoding="ascii")\n'
+    "subprocess.Popen(\n"
+    "    [\n"
+    "        sys.executable,\n"
+    '        "-I",\n'
+    '        "-S",\n'
+    '        "-c",\n'
+    "        (\n"
+    '            "from pathlib import Path; import os, sys, time; "\n'
+    '            "Path(sys.argv[1]).write_text(str(os.getpid()), encoding=\'ascii\'); "\n'
+    '            "time.sleep(30)"\n'
+    "        ),\n"
+    "        str(marker),\n"
+    "    ],\n"
+    "    stdin=subprocess.DEVNULL,\n"
+    "    stdout=subprocess.DEVNULL,\n"
+    "    stderr=subprocess.DEVNULL,\n"
+    "    close_fds=True,\n"
+    "    start_new_session=True,\n"
+    ")\n"
+    "deadline = time.monotonic() + 1.0\n"
+    "while not marker.exists() and time.monotonic() < deadline:\n"
+    "    time.sleep(0.01)\n"
+    'print("claude 1.2.3")\n',
+    encoding="utf-8",
+)
+PY
+chmod 700 "$DETACHED_CLAUDE_BIN/claude"
+HOME="$DETACHED_CLAUDE_HOME" \
+PATH="$DETACHED_CLAUDE_BIN:/usr/bin:/bin" \
+INSTALL=true \
+ODYSSEUS_ROOT="$FAKE_ROOT" \
+GIT_LOG="$DETACHED_CLAUDE_GIT_LOG" \
+SKILL_MARKER="$SKILL_MARKER" \
+    bash "$ROOT/scripts/install/60-claude-tooling.sh" \
+    >"$TMP/detached-claude-output" 2>&1
+detached_claude_status=$?
+detached_claude_process=""
+if [ -s "$DETACHED_CLAUDE_PID" ]; then
+    detached_claude_process=$(cat "$DETACHED_CLAUDE_PID")
+fi
+detached_claude_contained=false
+if [[ "$detached_claude_process" =~ ^[1-9][0-9]*$ ]]; then
+    if ! process_is_live "$detached_claude_process"; then
+        detached_claude_contained=true
+    fi
+elif [ ! -e "$DETACHED_CLAUDE_PID" ]; then
+    detached_claude_contained=true
+fi
+if [ "$detached_claude_status" -ne 0 ] \
+    && [ -e "$DETACHED_CLAUDE_ATTEMPT" ] \
+    && $detached_claude_contained \
+    && grep -q 'claude — version check failed' \
+        "$TMP/detached-claude-output"; then
+    pass "Claude probe extinguishes a detached descendant before return"
+else
+    fail "Claude probe returned while a detached descendant survived"
+fi
+if [[ "$detached_claude_process" =~ ^[1-9][0-9]*$ ]]; then
+    wait_for_test_process_exit "$detached_claude_process" || \
+        fail "detached Claude test process did not expire"
+fi
+
+if [ "$(uname -s)" = Linux ]; then
+    CLEANUP_ERROR_CLAUDE_BIN="$TMP/cleanup-error-claude-bin"
+    CLEANUP_ERROR_CLAUDE_HOME="$TMP/cleanup-error-claude-home"
+    CLEANUP_ERROR_CLAUDE_PID="$TMP/cleanup-error-claude.pid"
+    CLEANUP_ERROR_CLAUDE_ROOT="$TMP/cleanup-error-claude-installer"
+    mkdir -p "$CLEANUP_ERROR_CLAUDE_BIN" "$CLEANUP_ERROR_CLAUDE_ROOT"
+    write_canonical_settings \
+        "$CLEANUP_ERROR_CLAUDE_HOME/.claude/settings.json"
+    write_fake_mnemosyne_checkout \
+        "$CLEANUP_ERROR_CLAUDE_HOME/.agent_brain/knowledge"
+    cp "$FAKE_BIN/git" "$FAKE_BIN/codex" "$CLEANUP_ERROR_CLAUDE_BIN/"
+    python3 -I -S - "$CLEANUP_ERROR_CLAUDE_BIN/claude" \
+        "$CLEANUP_ERROR_CLAUDE_PID" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+marker_path = sys.argv[2]
+python = str(Path(sys.executable).resolve())
+path.write_text(
+    f"#!{python}\n"
+    "from pathlib import Path\n"
+    "import subprocess\n"
+    "import sys\n"
+    "import time\n\n"
+    f"marker = Path({marker_path!r})\n"
+    "subprocess.Popen(\n"
+    "    [\n"
+    "        sys.executable,\n"
+    '        "-I",\n'
+    '        "-S",\n'
+    '        "-c",\n'
+    "        (\n"
+    '            "from pathlib import Path; import os, sys, time; "\n'
+    '            "Path(sys.argv[1]).write_text(str(os.getpid()), encoding=\'ascii\'); "\n'
+    '            "time.sleep(30)"\n'
+    "        ),\n"
+    "        str(marker),\n"
+    "    ],\n"
+    "    stdin=subprocess.DEVNULL,\n"
+    "    stdout=subprocess.DEVNULL,\n"
+    "    stderr=subprocess.DEVNULL,\n"
+    "    close_fds=True,\n"
+    "    start_new_session=True,\n"
+    ")\n"
+    "deadline = time.monotonic() + 1.0\n"
+    "while not marker.exists() and time.monotonic() < deadline:\n"
+    "    time.sleep(0.01)\n"
+    'print("claude 1.2.3")\n',
+    encoding="utf-8",
+)
+path.chmod(0o700)
+PY
+    cp "$ROOT/scripts/install/60-claude-tooling.sh" \
+        "$CLEANUP_ERROR_CLAUDE_ROOT/60-claude-tooling.sh"
+    cp "$ROOT/scripts/install/lib.sh" "$CLEANUP_ERROR_CLAUDE_ROOT/lib.sh"
+    python3 -I -S - \
+        "$CLEANUP_ERROR_CLAUDE_ROOT/60-claude-tooling.sh" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+source = path.read_text(encoding="utf-8")
+discover_needle = '''    def discover(self):
+        while True:
+'''
+discover_replacement = '''    def discover(self):
+        if getattr(self, "_inject_cleanup_inventory_failure", False):
+            raise ProbeFailure("injected cleanup inventory failure")
+        while True:
+'''
+descendants_needle = '''    def descendants(self, root):
+        return tuple(item for item in self.live() if item[0] != root)
+'''
+descendants_replacement = '''    def descendants(self, root):
+        active = tuple(item for item in self.live() if item[0] != root)
+        if active:
+            self._inject_cleanup_inventory_failure = True
+            raise ProbeFailure("injected cleanup inventory failure")
+        return active
+'''
+if source.count(discover_needle) != 1:
+    raise SystemExit("Claude discover injection point is unavailable")
+if source.count(descendants_needle) != 1:
+    raise SystemExit("Claude descendant injection point is unavailable")
+source = source.replace(discover_needle, discover_replacement, 1)
+source = source.replace(descendants_needle, descendants_replacement, 1)
+path.write_text(source, encoding="utf-8")
+PY
+    HOME="$CLEANUP_ERROR_CLAUDE_HOME" \
+    PATH="$CLEANUP_ERROR_CLAUDE_BIN:/usr/bin:/bin" \
+    INSTALL=true \
+    ODYSSEUS_ROOT="$FAKE_ROOT" \
+    GIT_LOG="$TMP/cleanup-error-claude-git.log" \
+    SKILL_MARKER="$SKILL_MARKER" \
+        /bin/bash "$CLEANUP_ERROR_CLAUDE_ROOT/60-claude-tooling.sh" \
+        >"$TMP/cleanup-error-claude-output" 2>&1
+    cleanup_error_claude_status=$?
+    cleanup_error_claude_process=""
+    if [ -s "$CLEANUP_ERROR_CLAUDE_PID" ]; then
+        read -r cleanup_error_claude_process < "$CLEANUP_ERROR_CLAUDE_PID"
+    fi
+    if [ "$cleanup_error_claude_status" -ne 0 ] \
+        && [ -n "$cleanup_error_claude_process" ] \
+        && wait_for_test_process_exit "$cleanup_error_claude_process"; then
+        pass "Claude cleanup inventory failure still extinguishes descendants"
+    else
+        fail "Claude cleanup inventory failure left a descendant alive"
+        if [ -n "$cleanup_error_claude_process" ]; then
+            if ! kill -KILL "$cleanup_error_claude_process" 2>/dev/null; then :; fi
+        fi
+    fi
+else
+    pass "Linux CI owns Claude cleanup-error descendant proof"
+fi
+
+HANGING_CLAUDE_BIN="$TMP/hanging-claude-bin"
+HANGING_CLAUDE_HOME="$TMP/hanging-claude-home"
+HANGING_CLAUDE_GIT_LOG="$TMP/hanging-claude-git.log"
+mkdir -p "$HANGING_CLAUDE_BIN"
+write_canonical_settings "$HANGING_CLAUDE_HOME/.claude/settings.json"
+write_fake_mnemosyne_checkout \
+    "$HANGING_CLAUDE_HOME/.agent_brain/knowledge"
+cp "$FAKE_BIN/git" "$FAKE_BIN/codex" "$HANGING_CLAUDE_BIN/"
+cat > "$HANGING_CLAUDE_BIN/claude" <<'SH'
+#!/bin/bash
+sleep 30
+SH
+chmod 700 "$HANGING_CLAUDE_BIN/claude"
+run_with_wall_deadline 6 /usr/bin/env \
+    HOME="$HANGING_CLAUDE_HOME" \
+    PATH="$HANGING_CLAUDE_BIN:/usr/bin:/bin" \
+    INSTALL=true \
+    ODYSSEUS_ROOT="$FAKE_ROOT" \
+    GIT_LOG="$HANGING_CLAUDE_GIT_LOG" \
+    SKILL_MARKER="$SKILL_MARKER" \
+    "$TOOLING_RUNNER" \
+    >"$TMP/hanging-claude-output" 2>&1
+hanging_claude_status=$?
+if [ "$hanging_claude_status" -ne 0 ] \
+    && [ "$hanging_claude_status" -ne 124 ] \
+    && grep -q 'claude — version check failed' \
+        "$TMP/hanging-claude-output"; then
+    pass "Claude probe enforces one wall-clock deadline"
+else
+    fail "Claude probe exceeded its wall-clock deadline"
+fi
+
 BROKEN_CLAUDE_BIN="$TMP/broken-claude-bin"
 BROKEN_CLAUDE_HOME="$TMP/broken-claude-home"
 BROKEN_CLAUDE_GIT_LOG="$TMP/broken-claude-git.log"
+BROKEN_CLAUDE_EXTERNAL="$TMP/broken-claude-external-knowledge"
 mkdir -p "$BROKEN_CLAUDE_BIN" "$BROKEN_CLAUDE_HOME/.claude" \
-    "$BROKEN_CLAUDE_HOME/.agent_brain/knowledge/.git"
+    "$BROKEN_CLAUDE_HOME/.agent_brain" "$BROKEN_CLAUDE_EXTERNAL"
+: > "$BROKEN_CLAUDE_GIT_LOG"
+ln -s "$BROKEN_CLAUDE_EXTERNAL" \
+    "$BROKEN_CLAUDE_HOME/.agent_brain/knowledge"
 cp "$FAKE_BIN/git" "$FAKE_BIN/codex" "$BROKEN_CLAUDE_BIN/"
 cat > "$BROKEN_CLAUDE_BIN/claude" <<'SH'
 #!/usr/bin/env bash
@@ -2309,7 +4312,7 @@ chmod +x "$BROKEN_CLAUDE_BIN/claude"
 cp "$WEIRD_SETTINGS" "$BROKEN_CLAUDE_HOME/.claude/settings.json"
 HOME="$BROKEN_CLAUDE_HOME" \
 PATH="$BROKEN_CLAUDE_BIN:/usr/bin:/bin" \
-INSTALL=false \
+INSTALL=true \
 ODYSSEUS_ROOT="$FAKE_ROOT" \
 GIT_LOG="$BROKEN_CLAUDE_GIT_LOG" \
 SKILL_MARKER="$SKILL_MARKER" \
@@ -2334,12 +4337,14 @@ fi
 POSTCONDITION_BIN="$TMP/postcondition-bin"
 POSTCONDITION_HOME="$TMP/postcondition-home"
 POSTCONDITION_GIT_LOG="$TMP/postcondition-git.log"
+POSTCONDITION_CURL_MARKER="$TMP/postcondition-curl-invoked"
 mkdir -p "$POSTCONDITION_BIN" "$POSTCONDITION_HOME/.claude" \
     "$POSTCONDITION_HOME/.agent_brain/knowledge/.git"
 cp "$FAKE_BIN/git" "$FAKE_BIN/codex" "$POSTCONDITION_BIN/"
 cat > "$POSTCONDITION_BIN/curl" <<'SH'
 #!/usr/bin/env bash
-printf '%s\n' '#!/usr/bin/env bash' 'exit 0'
+: > "$POSTCONDITION_CURL_MARKER"
+exit 99
 SH
 chmod +x "$POSTCONDITION_BIN/curl"
 cp "$WEIRD_SETTINGS" "$POSTCONDITION_HOME/.claude/settings.json"
@@ -2349,17 +4354,19 @@ INSTALL=true \
 ODYSSEUS_ROOT="$FAKE_ROOT" \
 GIT_LOG="$POSTCONDITION_GIT_LOG" \
 SKILL_MARKER="$SKILL_MARKER" \
+POSTCONDITION_CURL_MARKER="$POSTCONDITION_CURL_MARKER" \
     bash "$ROOT/scripts/install/60-claude-tooling.sh" \
     >"$TMP/postcondition-output" 2>&1
 postcondition_status=$?
 
 if [ "$postcondition_status" -eq 0 ] && \
-   grep -q 'installer completed but no executable returned a valid version' \
+   grep -q 'pre-provision a verified Claude Code CLI' \
        "$TMP/postcondition-output" && \
+   [ ! -e "$POSTCONDITION_CURL_MARKER" ] && \
    ! grep -q 'claude installed' "$TMP/postcondition-output"; then
-    pass "installer success is not reported before a valid version postcondition"
+    pass "missing Claude CLI never executes an unverified network installer"
 else
-    fail "installer transport success bypassed the executable postcondition"
+    fail "missing Claude CLI reached an unverified network installer"
 fi
 
 info "a failed Mnemosyne clone leaves the next install retryable"
@@ -2418,6 +4425,7 @@ else
 fi
 
 info "tooling setup uses the canonical knowledge checkout"
+prepare_test_git_control GIT_LOG
 HOME="$TEST_HOME" \
 PATH="$FAKE_BIN:/usr/bin:/bin" \
 INSTALL=true \
@@ -2446,7 +4454,7 @@ else
     fail "Mnemosyne was not seeded at .agent_brain/knowledge"
 fi
 if grep -Fqx -- \
-    "-c core.attributesFile=/dev/null -c core.fsmonitor=false -c core.hooksPath=/dev/null -c credential.helper= -c credential.interactive=false -c protocol.allow=never -c protocol.https.allow=always -c protocol.file.allow=never -c http.sslVerify=true -c http.sslCAPath= -c http.curloptResolve= clone --depth 1 --branch main --single-branch -- https://github.com/HomericIntelligence/Mnemosyne.git ." \
+    "-c core.attributesFile=/dev/null -c core.fsmonitor=false -c core.hooksPath=/dev/null -c credential.helper= -c credential.interactive=false -c protocol.allow=never -c protocol.https.allow=always -c protocol.file.allow=never -c http.sslVerify=true -c http.https://github.com/HomericIntelligence/Mnemosyne.git.sslVerify=true -c http.sslCAInfo= -c http.sslCAPath= -c http.proxy= -c http.https://github.com/HomericIntelligence/Mnemosyne.git.proxy= -c http.curloptResolve= clone --depth 1 --branch main --single-branch -- https://github.com/HomericIntelligence/Mnemosyne.git ." \
     "$GIT_LOG"; then
     pass "Mnemosyne is cloned from the exact canonical remote"
 else
@@ -2464,6 +4472,7 @@ SECOND_INSTALL_GIT_LOG="$TMP/second-install-git.log"
 settings_before_second_install="$(settings_write_fingerprint "$SETTINGS")"
 backups_before_second_install="$(settings_backup_inventory "$TEST_HOME/.claude")"
 
+GIT_LOG="$SECOND_INSTALL_GIT_LOG" prepare_test_git_control GIT_LOG
 HOME="$TEST_HOME" \
 PATH="$FAKE_BIN:/usr/bin:/bin" \
 INSTALL=true \
@@ -2495,7 +4504,7 @@ else
     fail "a second install created or replaced a settings backup"
 fi
 if grep -Eq -- \
-    '^-c core[.]attributesFile=/dev/null -c core[.]fsmonitor=false -c core[.]hooksPath=/dev/null -c credential[.]helper= -c credential[.]interactive=false -c protocol[.]allow=never -c protocol[.]https[.]allow=always -c protocol[.]file[.]allow=never -c http[.]sslVerify=true -c http[.]sslCAPath= -c http[.]curloptResolve= --git-dir=[.] --work-tree=[.][.] -c url[.]https://github[.]com/HomericIntelligence/Mnemosyne[.]git[.]insteadOf=https://github[.]com/HomericIntelligence/Mnemosyne[.]git/[.]homeric-bound-[0-9a-f]{32} pull --ff-only --no-recurse-submodules https://github[.]com/HomericIntelligence/Mnemosyne[.]git/[.]homeric-bound-[0-9a-f]{32} main$' \
+    '^-c core[.]attributesFile=/dev/null -c core[.]fsmonitor=false -c core[.]hooksPath=/dev/null -c credential[.]helper= -c credential[.]interactive=false -c protocol[.]allow=never -c protocol[.]https[.]allow=always -c protocol[.]file[.]allow=never -c http[.]sslVerify=true -c http[.]https://github[.]com/HomericIntelligence/Mnemosyne[.]git[.]sslVerify=true -c http[.]sslCAInfo= -c http[.]sslCAPath= -c http[.]proxy= -c http[.]https://github[.]com/HomericIntelligence/Mnemosyne[.]git[.]proxy= -c http[.]curloptResolve= --git-dir=[.] --work-tree=[.][.] -c url[.]https://github[.]com/HomericIntelligence/Mnemosyne[.]git[.]insteadOf=https://github[.]com/HomericIntelligence/Mnemosyne[.]git/[.]homeric-bound-[0-9a-f]{32} pull --ff-only --no-recurse-submodules https://github[.]com/HomericIntelligence/Mnemosyne[.]git/[.]homeric-bound-[0-9a-f]{32} main$' \
     "$SECOND_INSTALL_GIT_LOG"; then
     pass "the expected Mnemosyne refresh is logged independently"
 else
@@ -2541,6 +4550,7 @@ MALFORMED_SETTINGS="$MALFORMED_HOME/.claude/settings.json"
 mkdir -p "$MALFORMED_HOME/.claude" \
     "$MALFORMED_HOME/.agent_brain/knowledge/.git"
 printf '{not valid json}\n' >"$MALFORMED_SETTINGS"
+prepare_test_git_control GIT_LOG
 HOME="$MALFORMED_HOME" \
 PATH="$FAKE_BIN:/usr/bin:/bin" \
 INSTALL=true \

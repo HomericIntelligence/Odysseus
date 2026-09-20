@@ -68,7 +68,10 @@ if [[ "${ALEXNET_CHAOS_APPROVED_HOST:-}" != "$LOCAL_HOST" ]]; then
     echo "Set ALEXNET_CHAOS_APPROVED_HOST to the exact local host: $LOCAL_HOST" >&2
     exit 2
 fi
-LSOF_BIN=$(command -v lsof 2>/dev/null || true)
+LSOF_BIN=""
+if discovered_lsof=$(command -v lsof 2>/dev/null); then
+    LSOF_BIN=$discovered_lsof
+fi
 [[ -n "$LSOF_BIN" ]] || LSOF_BIN=/usr/sbin/lsof
 if ! command -v python3 >/dev/null 2>&1 || [[ ! -x "$LSOF_BIN" ]]; then
     echo "ERROR: python3 and lsof are required for bound cleanup and worker extinction." >&2
@@ -157,7 +160,7 @@ cleanup_chaos_output() {
         echo "ERROR: could not safely remove the bound chaos receipt directory; retained evidence near: $CHAOS_RECEIPT_DIR" >&2
         failed=1
     fi
-    exec 6<&- 15>&- 16<&- 20<&- || true
+    if ! exec 6<&- 15>&- 16<&- 20<&-; then :; fi
     return "$failed"
 }
 
@@ -183,7 +186,7 @@ PENDING_CONTAINER_IMAGE=""
 PENDING_CONTAINER_MOUNT=""
 PENDING_CONTAINER_CID_NAME=""
 PENDING_RECEIPT_ACTIVE=0
-PENDING_RECEIPT_CHANNEL_PID=""
+PENDING_RECEIPT_PATH=""
 OWNED_RESULTS_ACTIVE=0
 OWNED_RESULTS_PARENT_ID=""
 OWNED_RESULTS_ID=""
@@ -195,6 +198,9 @@ EXPECTED_RESULTS_PATH=""
 SPAWN_CRITICAL=0
 SPAWN_WORKER_PID=""
 SPAWN_SENTINEL=""
+SPAWN_SENTINEL_ID=""
+SPAWN_SENTINEL_FD=""
+SPAWN_CONTROLLER_PID=$$
 SPAWN_SHUTDOWN_FAILED=0
 PENDING_SIGNAL_STATUS=0
 
@@ -230,6 +236,9 @@ register_owned_container() {
 }
 
 begin_container_spawn() {
+    local receipt_saved_umask receipt_noclobber_was_set=0
+    local local_sentinel_attempt local_sentinel_path local_saved_umask
+    local local_noclobber_was_set
     [[ "$SPAWN_CRITICAL" == 0 && -z "$SPAWN_WORKER_PID" \
         && -z "$OWNED_CONTAINER_ID" && -z "$PENDING_CONTAINER_RUN" ]] || {
         echo "ERROR: a prior fixture ownership receipt is still active." >&2
@@ -240,31 +249,138 @@ begin_container_spawn() {
     PENDING_CONTAINER_MOUNT=$3
     PENDING_CONTAINER_CID_NAME=$4
     [[ "$PENDING_CONTAINER_CID_NAME" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
-    if ! coproc ALEXNET_RECEIPT_CHANNEL { cat; }; then
+    PENDING_RECEIPT_PATH="$CHAOS_RECEIPT_DIR/$PENDING_CONTAINER_CID_NAME"
+    receipt_saved_umask=$(umask)
+    [[ -o noclobber ]] && receipt_noclobber_was_set=1
+    umask 077
+    # Linux creates the receipt exclusively, then upgrades that exact open
+    # object through procfs. Other platforms perform one nonblocking O_RDWR
+    # open inside the bound private directory and validate it immediately.
+    # FD 12 is the sole retained receipt authority in both cases.
+    if [[ "$(uname -s)" == Linux ]]; then
+        set -o noclobber
+        if ! exec 13> "$PENDING_RECEIPT_PATH" 2>/dev/null; then
+            if [[ "$receipt_noclobber_was_set" == 0 ]]; then
+                set +o noclobber
+            fi
+            umask "$receipt_saved_umask"
+            PENDING_CONTAINER_RUN=""
+            PENDING_CONTAINER_IMAGE=""
+            PENDING_CONTAINER_MOUNT=""
+            PENDING_CONTAINER_CID_NAME=""
+            PENDING_RECEIPT_PATH=""
+            return 1
+        fi
+        if [[ "$receipt_noclobber_was_set" == 0 ]]; then
+            set +o noclobber
+        fi
+        if ! exec 12<> "/proc/$$/fd/13"; then
+            exec 13>&-
+            umask "$receipt_saved_umask"
+            PENDING_CONTAINER_RUN=""
+            PENDING_CONTAINER_IMAGE=""
+            PENDING_CONTAINER_MOUNT=""
+            PENDING_CONTAINER_CID_NAME=""
+            PENDING_RECEIPT_PATH=""
+            return 1
+        fi
+    else
+        if [[ -e "$PENDING_RECEIPT_PATH" \
+                || -L "$PENDING_RECEIPT_PATH" ]] \
+                || ! exec 12<> "$PENDING_RECEIPT_PATH"; then
+            umask "$receipt_saved_umask"
+            PENDING_CONTAINER_RUN=""
+            PENDING_CONTAINER_IMAGE=""
+            PENDING_CONTAINER_MOUNT=""
+            PENDING_CONTAINER_CID_NAME=""
+            PENDING_RECEIPT_PATH=""
+            return 1
+        fi
+    fi
+    umask "$receipt_saved_umask"
+    if ! python3 -I -E -c '
+import os, stat, sys
+directory_fd, receipt_fd = map(int, sys.argv[1:3])
+name = sys.argv[3]
+directory = os.fstat(directory_fd)
+receipt = os.fstat(receipt_fd)
+named = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+def key(value): return value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode)
+if (
+    not stat.S_ISDIR(directory.st_mode)
+    or not stat.S_ISREG(receipt.st_mode)
+    or receipt.st_nlink != 1
+    or receipt.st_uid != os.geteuid()
+    or stat.S_IMODE(receipt.st_mode) & 0o077
+    or key(receipt) != key(named)
+):
+    raise SystemExit(1)
+' 6 12 "$PENDING_CONTAINER_CID_NAME"; then
+        if ! exec 12>&- 13>&-; then :; fi
         PENDING_CONTAINER_RUN=""
         PENDING_CONTAINER_IMAGE=""
         PENDING_CONTAINER_MOUNT=""
         PENDING_CONTAINER_CID_NAME=""
+        PENDING_RECEIPT_PATH=""
         return 1
     fi
-    PENDING_RECEIPT_CHANNEL_PID=$ALEXNET_RECEIPT_CHANNEL_PID
-    if ! exec 12>&"${ALEXNET_RECEIPT_CHANNEL[1]}" \
-            || ! exec 13<&"${ALEXNET_RECEIPT_CHANNEL[0]}"; then
-        exec 12>&- 13<&- || true
-        PENDING_CONTAINER_RUN=""
-        PENDING_CONTAINER_IMAGE=""
-        PENDING_CONTAINER_MOUNT=""
-        PENDING_CONTAINER_CID_NAME=""
-        return 1
-    fi
+    if ! exec 13>&-; then :; fi
     PENDING_RECEIPT_ACTIVE=1
-    if ! SPAWN_SENTINEL=$(mktemp \
-            "$CHAOS_RECEIPT_DIR/.worker-sentinel.XXXXXX"); then
-        exec 12>&- 13<&- || true
+    local_sentinel_attempt=0
+    local_sentinel_path=""
+    local_saved_umask=$(umask)
+    local_noclobber_was_set=0
+    [[ -o noclobber ]] && local_noclobber_was_set=1
+    umask 077
+    set -o noclobber
+    while ((local_sentinel_attempt < 128)); do
+        local_sentinel_path="$CHAOS_RECEIPT_DIR/.worker-sentinel.$$.$RANDOM.$local_sentinel_attempt"
+        if exec 14> "$local_sentinel_path"; then
+            break
+        fi
+        ((local_sentinel_attempt += 1))
+    done
+    if [[ "$local_noclobber_was_set" == 0 ]]; then
+        set +o noclobber
+    fi
+    umask "$local_saved_umask"
+    if ((local_sentinel_attempt == 128)); then
+        if ! exec 12>&-; then :; fi
         PENDING_RECEIPT_ACTIVE=0
+        PENDING_CONTAINER_RUN=""
+        PENDING_CONTAINER_IMAGE=""
+        PENDING_CONTAINER_MOUNT=""
+        PENDING_CONTAINER_CID_NAME=""
+        PENDING_RECEIPT_PATH=""
         return 1
     fi
-    chmod 600 "$SPAWN_SENTINEL"
+    SPAWN_SENTINEL=$local_sentinel_path
+    SPAWN_SENTINEL_FD=14
+    if ! SPAWN_SENTINEL_ID=$(python3 -I -E -c '
+import os, stat, sys
+fd = int(sys.argv[1])
+value = os.fstat(fd)
+named = os.stat(sys.argv[2], follow_symlinks=False)
+if (not stat.S_ISREG(value.st_mode) or value.st_nlink != 1
+        or value.st_uid != os.geteuid()
+        or stat.S_IMODE(value.st_mode) & 0o077
+        or (value.st_dev, value.st_ino) != (named.st_dev, named.st_ino)):
+    raise SystemExit(1)
+print(f"{value.st_dev}:{value.st_ino}")
+' "$SPAWN_SENTINEL_FD" "$SPAWN_SENTINEL"); then
+        exec 12>&-
+        exec 14>&-
+        PENDING_RECEIPT_ACTIVE=0
+        PENDING_CONTAINER_RUN=""
+        PENDING_CONTAINER_IMAGE=""
+        PENDING_CONTAINER_MOUNT=""
+        PENDING_CONTAINER_CID_NAME=""
+        PENDING_RECEIPT_PATH=""
+        SPAWN_SENTINEL=""
+        SPAWN_SENTINEL_ID=""
+        SPAWN_SENTINEL_FD=""
+        return 1
+    fi
     SPAWN_CRITICAL=1
 }
 
@@ -273,77 +389,161 @@ pending_container_id() {
     python3 -I -E -c '
 import os, sys
 receipt_fd = int(sys.argv[1])
-data = b""
-while len(data) < 65:
-    part = os.read(receipt_fd, 65 - len(data))
-    if not part: break
-    data += part
+data = os.pread(receipt_fd, 66, 0)
 data = data.decode("ascii")
 if len(data) != 65 or data[-1] != "\n" or any(c not in "0123456789abcdef" for c in data[:-1]):
     raise SystemExit(1)
 print(data[:-1])
-' 13
+' 12
+}
+
+prepare_spawn_worker() {
+    local actual
+    [[ "$SPAWN_SENTINEL_FD" == 14 ]] || return 1
+    actual=$(python3 -I -E -c '
+import os, stat
+value = os.fstat(14)
+if not stat.S_ISREG(value.st_mode): raise SystemExit(1)
+print(f"{value.st_dev}:{value.st_ino}")
+') || return 1
+    [[ "$actual" == "$SPAWN_SENTINEL_ID" ]] || return 1
+    printf R >&14
+}
+
+wait_spawn_worker_ready() {
+    local descriptor=$SPAWN_SENTINEL_FD attempt
+    [[ "$descriptor" =~ ^[0-9]+$ \
+        && "$SPAWN_WORKER_PID" =~ ^[0-9]+$ ]] || return 1
+    for ((attempt = 0; attempt < 100; attempt++)); do
+        if python3 -I -E -c '
+import os, stat, sys, time
+descriptor = int(sys.argv[1])
+device, inode = map(int, sys.argv[2].split(":"))
+value = os.fstat(descriptor)
+if (not stat.S_ISREG(value.st_mode)
+        or (value.st_dev, value.st_ino) != (device, inode)):
+    raise SystemExit(2)
+if value.st_size == 1:
+    raise SystemExit(0)
+if value.st_size != 0:
+    raise SystemExit(2)
+time.sleep(0.02)
+raise SystemExit(1)
+' "$descriptor" "$SPAWN_SENTINEL_ID"; then
+            return 0
+        fi
+        [[ "$PENDING_SIGNAL_STATUS" == 0 ]] || return 1
+    done
+    return 1
 }
 
 worker_sentinel_holders() {
-    local sentinel=$1 output rc=0
-    output=$("$LSOF_BIN" -t -- "$sentinel" 2>/dev/null) || rc=$?
-    [[ "$rc" == 0 || "$rc" == 1 ]] || return 2
-    if [[ "$rc" == 0 ]]; then
-        printf '%s\n' "$output" | awk '/^[0-9]+$/ && !seen[$0]++'
+    local expected=$1 output rc=0
+    [[ "$expected" =~ ^[0-9]+:[0-9]+$ ]] || return 2
+    # This function runs in command substitution. Close the substitution
+    # shell's inherited controller descriptor before its scanner starts, or
+    # that short-lived shell would report itself as an escaped worker.
+    exec 14>&-
+    if [[ "$(uname -s)" == Linux ]]; then
+        python3 -I -E -c '
+import glob, os, sys
+device, inode = map(int, sys.argv[1].split(":"))
+controller = sys.argv[2]
+for proc in glob.glob("/proc/[0-9]*"):
+    pid = proc.rsplit("/", 1)[-1]
+    if pid == controller or int(pid) == os.getpid(): continue
+    try: entries = os.listdir(proc + "/fd")
+    except (FileNotFoundError, PermissionError): continue
+    for entry in entries:
+        try: value = os.stat(proc + "/fd/" + entry)
+        except (FileNotFoundError, PermissionError): continue
+        if (value.st_dev, value.st_ino) == (device, inode):
+            print(pid)
+            break
+' "$expected" "$SPAWN_CONTROLLER_PID"
+        return
     fi
-    return 0
+    output=$("$LSOF_BIN" -F pDi 2>/dev/null) || rc=$?
+    [[ "$rc" == 0 || "$rc" == 1 ]] || return 2
+    [[ "$rc" == 0 ]] || return 0
+    python3 -I -E -c '
+import sys
+device, inode = map(int, sys.argv[1].split(":"))
+controller = sys.argv[2]
+pid = None; current_device = None; seen = set()
+for raw in sys.stdin:
+    line = raw.rstrip("\n")
+    if line.startswith("p") and line[1:].isdigit():
+        pid = line[1:]; current_device = None
+    elif line.startswith("D"):
+        try: current_device = int(line[1:], 0)
+        except ValueError: current_device = None
+    elif line.startswith("i") and pid is not None and current_device == device:
+        try: current_inode = int(line[1:])
+        except ValueError: continue
+        if current_inode == inode and pid != controller and pid not in seen:
+            print(pid); seen.add(pid)
+' "$expected" "$SPAWN_CONTROLLER_PID" <<< "$output"
 }
 
 signal_worker_holder() {
-    local holder=$1 sentinel=$2 signal_name=$3
+    local holder=$1 expected=$2 signal_name=$3
     if [[ "$(uname -s)" == Linux ]]; then
         python3 -I -E -c '
 import os, signal, sys
-pid, path, signal_name = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+pid, expected, signal_name = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+device, inode = map(int, expected.split(":"))
 if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"): raise SystemExit(2)
-expected = os.stat(path, follow_symlinks=False)
-pidfd = os.pidfd_open(pid)
+try: pidfd = os.pidfd_open(pid)
+except ProcessLookupError: raise SystemExit(0)
 try:
-    held = any((value.st_dev, value.st_ino) == (expected.st_dev, expected.st_ino)
-        for name in os.listdir(f"/proc/{pid}/fd")
-        for value in [os.stat(f"/proc/{pid}/fd/{name}")])
-    if held: signal.pidfd_send_signal(pidfd, getattr(signal, "SIG" + signal_name))
+    held = False
+    try: names = os.listdir(f"/proc/{pid}/fd")
+    except FileNotFoundError: names = ()
+    for name in names:
+        try: value = os.stat(f"/proc/{pid}/fd/{name}")
+        except (FileNotFoundError, PermissionError): continue
+        if (value.st_dev, value.st_ino) == (device, inode):
+            held = True
+            break
+    if held:
+        try: signal.pidfd_send_signal(pidfd, getattr(signal, "SIG" + signal_name))
+        except ProcessLookupError: pass
 finally: os.close(pidfd)
-' "$holder" "$sentinel" "$signal_name"
-    elif "$LSOF_BIN" -t -a -p "$holder" -- "$sentinel" 2>/dev/null \
-            | grep -Fxq "$holder"; then
-        kill -"$signal_name" "$holder" 2>/dev/null
+' "$holder" "$expected" "$signal_name"
+    else
+        return 2
     fi
 }
 
 extinguish_worker_sentinel() {
-    local sentinel=$1 signal_name holder holders attempt rc
-    [[ -f "$sentinel" && ! -L "$sentinel" ]] || return 1
+    local expected=$1 signal_name holder holders attempt rc
+    [[ "$expected" =~ ^[0-9]+:[0-9]+$ ]] || return 1
     for signal_name in TERM KILL; do
         for ((attempt = 0; attempt < 20; attempt++)); do
             rc=0
-            holders=$(worker_sentinel_holders "$sentinel") || rc=$?
+            holders=$(worker_sentinel_holders "$expected") || rc=$?
             [[ "$rc" == 0 ]] || return 1
             [[ -n "$holders" ]] || return 0
             while IFS= read -r holder; do
                 [[ "$holder" =~ ^[0-9]+$ ]] || continue
-                signal_worker_holder "$holder" "$sentinel" "$signal_name" || true
+                signal_worker_holder "$holder" "$expected" "$signal_name" \
+                    || return 1
             done <<< "$holders"
-            sleep 0.1 || true
+            if ! sleep 0.1; then :; fi
         done
     done
     rc=0
-    holders=$(worker_sentinel_holders "$sentinel") || rc=$?
+    holders=$(worker_sentinel_holders "$expected") || rc=$?
     [[ "$rc" == 0 && -z "$holders" ]]
 }
 
 stop_spawn_worker() {
     local worker_pid=$SPAWN_WORKER_PID
-    [[ -n "$SPAWN_SENTINEL" ]] || return 0
-    extinguish_worker_sentinel "$SPAWN_SENTINEL" || return 1
+    [[ -n "$SPAWN_SENTINEL_ID" ]] || return 0
+    extinguish_worker_sentinel "$SPAWN_SENTINEL_ID" || return 1
     if [[ "$worker_pid" =~ ^[0-9]+$ ]]; then
-        wait "$worker_pid" 2>/dev/null || true
+        if ! wait "$worker_pid" 2>/dev/null; then :; fi
     fi
     SPAWN_WORKER_PID=""
     return 0
@@ -368,14 +568,16 @@ honor_pending_signal() {
 
 end_container_spawn() {
     if [[ "$PENDING_RECEIPT_ACTIVE" == 1 ]]; then
-        exec 12>&- 13<&- || true
-        if [[ "$PENDING_RECEIPT_CHANNEL_PID" =~ ^[0-9]+$ ]]; then
-            wait "$PENDING_RECEIPT_CHANNEL_PID" 2>/dev/null || true
-        fi
-        PENDING_RECEIPT_CHANNEL_PID=""
+        if ! exec 12>&-; then :; fi
         PENDING_RECEIPT_ACTIVE=0
+        PENDING_RECEIPT_PATH=""
+    fi
+    if [[ "$SPAWN_SENTINEL_FD" =~ ^[0-9]+$ ]]; then
+        if ! exec 14>&-; then :; fi
     fi
     SPAWN_SENTINEL=""
+    SPAWN_SENTINEL_ID=""
+    SPAWN_SENTINEL_FD=""
     SPAWN_CRITICAL=0
     honor_pending_signal
 }
@@ -385,10 +587,14 @@ handle_chaos_signal() {
     if [[ "$SPAWN_CRITICAL" == 1 ]]; then
         PENDING_SIGNAL_STATUS=$status
         trap ':' INT TERM HUP
+        return 0
+    fi
+    trap ':' INT TERM HUP
+    if [[ -n "$SPAWN_SENTINEL_ID" ]]; then
         if ! stop_spawn_worker; then
             SPAWN_SHUTDOWN_FAILED=1
         fi
-        return 0
+        end_container_spawn
     fi
     exit "$status"
 }
@@ -401,8 +607,8 @@ bind_owned_result_tree() {
     OWNED_RESULTS_NAME=${result_path##*/}
     [[ -n "$parent" && -n "$OWNED_RESULTS_NAME" ]] || return 1
     if ! exec 8< "$parent" || ! exec 9< "$result_path"; then
-        exec 8<&- || true
-        exec 9<&- || true
+        if ! exec 8<&-; then :; fi
+        if ! exec 9<&-; then :; fi
         return 1
     fi
     if [[ "$EXPECTED_RESULTS_ACTIVE" == 1 ]]; then
@@ -456,7 +662,7 @@ bind_expected_result_absence() {
     EXPECTED_RESULTS_NAME=${result_path##*/}
     [[ -n "$parent" && -n "$EXPECTED_RESULTS_NAME" ]] || return 1
     if ! mkdir -p -- "$parent" || ! exec 7< "$parent"; then
-        exec 7<&- || true
+        if ! exec 7<&-; then :; fi
         EXPECTED_RESULTS_NAME=""
         return 1
     fi
@@ -911,7 +1117,7 @@ if [[ "$LIVE" -eq 1 ]]; then
         c4_cid_path="$CHAOS_RECEIPT_DIR/c4.podman.cid"
         begin_container_spawn "$c4_run_id" "$c4_image_id" "" "$c4_cid_name"
         (
-            exec 14< "$SPAWN_SENTINEL"
+            prepare_spawn_worker
             created_id=$(podman create --cidfile "$c4_cid_path" --name alexnet-training \
                 --label "io.homeric.alexnet.run-id=$c4_run_id" \
                 --userns=keep-id "$c4_image_id" sleep 600)
@@ -920,13 +1126,25 @@ if [[ "$LIVE" -eq 1 ]]; then
             podman start "$created_id" >/dev/null
         ) >"$CHAOS_OUT" 2>&1 &
         SPAWN_WORKER_PID=$!
+        if ! wait_spawn_worker_ready; then
+            c4_launch_rc=1
+            if ! stop_spawn_worker; then
+                SPAWN_SHUTDOWN_FAILED=1
+            fi
+        fi
+        SPAWN_CRITICAL=0
         consume_pending_spawn_signal
-        wait "$SPAWN_WORKER_PID" || c4_launch_rc=$?
-        if ! extinguish_worker_sentinel "$SPAWN_SENTINEL"; then
+        if [[ "$c4_launch_rc" == 0 ]]; then
+            wait "$SPAWN_WORKER_PID" || c4_launch_rc=$?
+        fi
+        if ! extinguish_worker_sentinel "$SPAWN_SENTINEL_ID"; then
             c4_launch_rc=1
         fi
         SPAWN_WORKER_PID=""
-        c4_container_id=$(pending_container_id 2>/dev/null || true)
+        c4_container_id=""
+        if ! c4_container_id=$(pending_container_id 2>/dev/null); then
+            c4_container_id=""
+        fi
         if [[ "$c4_launch_rc" == 0 \
                 && "$c4_container_id" =~ ^[0-9a-f]{64}$ ]] \
                 && register_owned_container "$c4_container_id" \
@@ -961,9 +1179,12 @@ if [[ "$LIVE" -eq 1 ]]; then
                     echo "  train output (tail):"
                     tail -4 "$CHAOS_OUT" | sed 's/^/    /'
                     if grep -Fq "cannot safely replace 'alexnet-training'" "$CHAOS_OUT"; then
-                        c4_after=$(podman inspect "$c4_container_id" \
+                        c4_after=""
+                        if ! c4_after=$(podman inspect "$c4_container_id" \
                             --format '{{.Id}}|{{.Name}}|{{.State.Status}}|{{index .Config.Labels "io.homeric.alexnet.run-id"}}|{{.Image}}' \
-                            2>/dev/null || true)
+                            2>/dev/null); then
+                            c4_after=""
+                        fi
                         if [[ "$c4_after" == "$c4_binding" ]]; then
                             pass "C4: clobber guard rejected the running fixture and left the exact fixture unchanged"
                         else
@@ -1016,16 +1237,25 @@ if [[ "$LIVE" -eq 1 ]]; then
             c5_cid_name=c5.receipt
             begin_container_spawn "$c5_run_id" "$c5_image_id" "$c5_results" "$c5_cid_name"
             (
-                exec 14< "$SPAWN_SENTINEL"
+                prepare_spawn_worker
                 exec timeout 720 env ALEXNET_RUN_ID="$c5_run_id" \
                     ALEXNET_CONTAINER_ID_FD=12 \
                     IMAGE_NAME="localhost/odyssey:dev" MAX_BATCHES=1 EPOCHS=1 \
                     bash "$SCRIPT_DIR/alexnet-train.sh"
             ) >"$CHAOS_OUT" 2>&1 &
             SPAWN_WORKER_PID=$!
+            if ! wait_spawn_worker_ready; then
+                rc=1
+                if ! stop_spawn_worker; then
+                    SPAWN_SHUTDOWN_FAILED=1
+                fi
+            fi
+            SPAWN_CRITICAL=0
             consume_pending_spawn_signal
-            wait "$SPAWN_WORKER_PID" || rc=$?
-            if ! extinguish_worker_sentinel "$SPAWN_SENTINEL"; then
+            if [[ "$rc" == 0 ]]; then
+                wait "$SPAWN_WORKER_PID" || rc=$?
+            fi
+            if ! extinguish_worker_sentinel "$SPAWN_SENTINEL_ID"; then
                 rc=1
             fi
             SPAWN_WORKER_PID=""
@@ -1036,7 +1266,10 @@ if [[ "$LIVE" -eq 1 ]]; then
                 fail "C5: training launch unavailable (rc=$rc)"
             else
                 c5_binding=""
-                c5_container_id=$(pending_container_id 2>/dev/null || true)
+                c5_container_id=""
+                if ! c5_container_id=$(pending_container_id 2>/dev/null); then
+                    c5_container_id=""
+                fi
                 if [[ ! "$c5_container_id" =~ ^[0-9a-f]{64}$ ]] \
                         || ! c5_binding=$(podman inspect "$c5_container_id" \
                     --format '{{.Id}}|{{.Name}}|{{index .Config.Labels "io.homeric.alexnet.run-id"}}|{{.Image}}|{{range .Mounts}}{{if eq .Destination "/results"}}{{.Source}}{{end}}{{end}}' \
@@ -1227,7 +1460,7 @@ elif mkdir -p "$c6_results"; then
         c6_cid_path="$CHAOS_RECEIPT_DIR/c6.podman.cid"
         begin_container_spawn "$c6_run_id" "$c6_image_id" "$c6_results" "$c6_cid_name"
         (
-            exec 14< "$SPAWN_SENTINEL"
+            prepare_spawn_worker
             created_id=$(podman create --cidfile "$c6_cid_path" --name alexnet-training \
                 --userns=keep-id \
                 --label "io.homeric.alexnet.run-id=$c6_run_id" \
@@ -1238,13 +1471,25 @@ elif mkdir -p "$c6_results"; then
             podman start "$created_id" >/dev/null
         ) >"$CHAOS_OUT" 2>&1 &
         SPAWN_WORKER_PID=$!
+        if ! wait_spawn_worker_ready; then
+            c6_launch_rc=1
+            if ! stop_spawn_worker; then
+                SPAWN_SHUTDOWN_FAILED=1
+            fi
+        fi
+        SPAWN_CRITICAL=0
         consume_pending_spawn_signal
-        wait "$SPAWN_WORKER_PID" || c6_launch_rc=$?
-        if ! extinguish_worker_sentinel "$SPAWN_SENTINEL"; then
+        if [[ "$c6_launch_rc" == 0 ]]; then
+            wait "$SPAWN_WORKER_PID" || c6_launch_rc=$?
+        fi
+        if ! extinguish_worker_sentinel "$SPAWN_SENTINEL_ID"; then
             c6_launch_rc=1
         fi
         SPAWN_WORKER_PID=""
-        c6_container_id=$(pending_container_id 2>/dev/null || true)
+        c6_container_id=""
+        if ! c6_container_id=$(pending_container_id 2>/dev/null); then
+            c6_container_id=""
+        fi
         if [[ "$c6_launch_rc" != 0 \
                 || ! "$c6_container_id" =~ ^[0-9a-f]{64}$ ]]; then
             fail "C6: synthetic fixture launch did not return an immutable container ID"

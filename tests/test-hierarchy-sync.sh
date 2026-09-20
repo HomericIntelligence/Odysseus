@@ -848,12 +848,14 @@ path.write_text(source.replace(entry, replacement), encoding="utf-8")
 PY
 CHECKER="$cleanup_failure_checker"
 run_check_external_bound "$cleanup_failure_repo" --ci
-cleanup_failure_leader="$(cat "$cleanup_failure_pid" 2>/dev/null || :)"
+cleanup_failure_leader=""
+if ! cleanup_failure_leader=$(cat "$cleanup_failure_pid" 2>/dev/null); then :; fi
 cleanup_failure_leader_active=false
 if [[ "$cleanup_failure_leader" =~ ^[0-9]+$ ]]; then
-    cleanup_failure_state="$(
-        /bin/ps -o stat= -p "$cleanup_failure_leader" 2>/dev/null || :
-    )"
+    cleanup_failure_state=""
+    if ! cleanup_failure_state=$(
+        /bin/ps -o stat= -p "$cleanup_failure_leader" 2>/dev/null
+    ); then :; fi
     case "$cleanup_failure_state" in
         ""|*Z*) ;;
         *) cleanup_failure_leader_active=true ;;

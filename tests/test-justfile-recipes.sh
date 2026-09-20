@@ -135,11 +135,31 @@ info "retained root entry points exist"
 recipes=$(just --summary | tr ' ' '\n' | sort -u)
 for r in bootstrap status argus-start validate-configs ci \
          validate-nats validate-compose test-justfile-recipes \
-         test-resource-bounds lane-models loop-env check-hierarchy-sync; do
+         test-resource-bounds test-pinned-build-inputs lane-models loop-env \
+         check-hierarchy-sync; do
     if printf '%s\n' "$recipes" | grep -qx "$r"; then
         pass "recipe present: $r"
     else
         fail "recipe MISSING: $r"
+    fi
+done
+
+info "root C++ recipes delegate to the exact-gitlink snapshot helper"
+for mapping in \
+    '_build-agamemnon:agamemnon' \
+    '_build-nestor:nestor' \
+    '_build-charybdis:charybdis' \
+    '_build-keystone:keystone' \
+    '_build-myrmidon:myrmidon'; do
+    recipe=${mapping%%:*}
+    component=${mapping#*:}
+    if build_plan=$("$JUST_BIN" --dry-run "$recipe" 2>&1) \
+        && grep -Fqx \
+            "BASH_ENV= ENV= /bin/bash -p scripts/build-pinned-submodule.sh $component" \
+            <<< "$build_plan"; then
+        pass "$recipe uses the pinned-input helper"
+    else
+        fail "$recipe bypasses the pinned-input helper"
     fi
 done
 
@@ -559,6 +579,12 @@ for role in worker control; do
     else
         fail "install-$role omits the deployment verification route"
     fi
+    if grep -Fq 'git submodule update --init --recursive' \
+        <<< "$install_plan"; then
+        fail "install-$role duplicates git submodule update"
+    else
+        pass "install-$role omits the duplicate git submodule update"
+    fi
 done
 
 fake_dry_run="$lint_fixture/failing-just-dry-run"
@@ -718,11 +744,23 @@ else
     fail "resource-bound installer checks failed through the canonical recipe"
 fi
 
+info "exact-gitlink build-input checks are part of the required test entry point"
+if run_clean_shell "$JUST_BIN" test-pinned-build-inputs; then
+    pass "exact-gitlink build-input checks pass through the canonical recipe"
+else
+    fail "exact-gitlink build-input checks failed through the canonical recipe"
+fi
+
 info "agent tooling behavior checks are part of the required test entry point"
 if run_clean_shell bash tests/test-claude-tooling.sh; then
     pass "agent tooling behavior checks pass"
 else
     fail "agent tooling behavior checks failed"
+fi
+if run_clean_shell bash tests/test-root-install-ownership.sh; then
+    pass "privileged ownership-repair boundary checks pass"
+else
+    fail "privileged ownership-repair boundary checks failed"
 fi
 if run_clean_shell /bin/bash tests/test-agent-contract.sh; then
     pass "agent entry-point contract checks pass"

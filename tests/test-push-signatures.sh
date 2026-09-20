@@ -13,6 +13,8 @@ trap 'rm -rf "$TMP"' EXIT
 
 FAKE_BIN="$TMP/bin"
 GIT_LOG="$TMP/git.log"
+SYSTEM_GIT="$(command -v git)"
+HOST_KERNEL="$(uname -s)"
 mkdir -p "$FAKE_BIN"
 
 cat > "$FAKE_BIN/git" <<'SH'
@@ -83,12 +85,71 @@ chmod +x "$FAKE_BIN/git"
 
 ZERO=0000000000000000000000000000000000000000
 
+info "the test-only Git seam is gated and remote arguments cannot collide with it"
+: > "$GIT_LOG"
+bash "$ROOT/scripts/check-push-signatures.sh" \
+    --odysseus-test-git "$FAKE_BIN/git" -- \
+    origin ssh://origin.invalid/repo </dev/null \
+    > "$TMP/test-seam-disabled.out" 2> "$TMP/test-seam-disabled.err"
+test_seam_disabled_status=$?
+printf '%s\n' \
+    "refs/heads/good local-good refs/heads/good remote-good" |
+    PATH="$FAKE_BIN:/usr/bin:/bin" GIT_LOG="$GIT_LOG" \
+        ODYSSEUS_SIGNATURE_TEST_MODE=1 \
+        bash "$ROOT/scripts/check-push-signatures.sh" \
+            --odysseus-test-git "$FAKE_BIN/git" -- \
+            --git ssh://origin.invalid/repo \
+        > "$TMP/test-seam-collision.out" 2> "$TMP/test-seam-collision.err"
+test_seam_collision_status=$?
+if [ "$test_seam_disabled_status" -ne 0 ] &&
+    grep -q 'test Git seam is disabled' "$TMP/test-seam-disabled.err" &&
+    [ "$test_seam_collision_status" -eq 0 ]; then
+    pass "the fake-Git seam is explicit and a --git remote name stays data"
+else
+    sed 's/^/    /' "$TMP/test-seam-disabled.err" >&2
+    sed 's/^/    /' "$TMP/test-seam-collision.err" >&2
+    fail "test authority leaked into forwarded pre-push arguments"
+fi
+
+info "the native verifier gives transitive Git tools a fixed environment"
+TRANSITIVE_BIN="$TMP/transitive-hostile-bin"
+TRANSITIVE_MARKER="$TMP/transitive-hostile-ran"
+mkdir "$TRANSITIVE_BIN"
+cat > "$TRANSITIVE_BIN/bash" <<'SH'
+#!/bin/sh
+printf 'hostile transitive shell ran\n' > "${TRANSITIVE_MARKER:?}"
+exit 97
+SH
+chmod +x "$TRANSITIVE_BIN/bash"
+: > "$GIT_LOG"
+printf '%s\n' \
+    "refs/heads/good local-good refs/heads/good remote-good" |
+    PATH="$TRANSITIVE_BIN:/usr/bin:/bin" \
+        GIT_LOG="$GIT_LOG" TRANSITIVE_MARKER="$TRANSITIVE_MARKER" \
+        ODYSSEUS_SIGNATURE_TEST_MODE=1 \
+        /bin/bash "$ROOT/scripts/check-push-signatures.sh" \
+            --odysseus-test-git "$FAKE_BIN/git" -- \
+            origin ssh://origin.invalid/repo \
+        > "$TMP/transitive-environment.out" \
+        2> "$TMP/transitive-environment.err"
+transitive_environment_status=$?
+if [ "$transitive_environment_status" -eq 0 ] \
+    && [ ! -e "$TRANSITIVE_MARKER" ]; then
+    pass "Git descendants cannot select commands from ambient PATH"
+else
+    sed 's/^/    /' "$TMP/transitive-environment.err" >&2
+    fail "ambient process state reached a transitive Git execution boundary"
+fi
+
 info "a deletion-first multi-ref push still validates later refs"
 printf '%s\n%s\n' \
     "refs/heads/deleted $ZERO refs/heads/deleted remote-deleted" \
     "refs/heads/topic local-bad refs/heads/topic remote-bad" |
     PATH="$FAKE_BIN:/usr/bin:/bin" GIT_LOG="$GIT_LOG" \
-        bash "$ROOT/scripts/check-push-signatures.sh" origin ssh://origin.invalid/repo \
+        ODYSSEUS_SIGNATURE_TEST_MODE=1 \
+        bash "$ROOT/scripts/check-push-signatures.sh" \
+            --odysseus-test-git "$FAKE_BIN/git" -- \
+            origin ssh://origin.invalid/repo \
         >"$TMP/deletion-first.out" 2>"$TMP/deletion-first.err"
 status=$?
 if [ "$status" -ne 0 ] && grep -q 'bad-sha(N)' "$TMP/deletion-first.err"; then
@@ -104,7 +165,10 @@ printf '%s\n%s\n' \
     "refs/heads/one local-bad refs/heads/one remote-bad" \
     "refs/heads/two local-new refs/heads/two $ZERO" |
     PATH="$FAKE_BIN:/usr/bin:/bin" GIT_LOG="$GIT_LOG" \
-        bash "$ROOT/scripts/check-push-signatures.sh" origin ssh://origin.invalid/repo \
+        ODYSSEUS_SIGNATURE_TEST_MODE=1 \
+        bash "$ROOT/scripts/check-push-signatures.sh" \
+            --odysseus-test-git "$FAKE_BIN/git" -- \
+            origin ssh://origin.invalid/repo \
         >"$TMP/multi.out" 2>"$TMP/multi.err"
 status=$?
 if ! bad_checks=$(grep -c '^log -1 --format=%G? bad-sha$' "$GIT_LOG"); then
@@ -125,7 +189,10 @@ if printf '%s\n%s\n' \
     "refs/heads/deleted $ZERO refs/heads/deleted remote-deleted" \
     "refs/heads/good local-good refs/heads/good remote-good" |
     PATH="$FAKE_BIN:/usr/bin:/bin" GIT_LOG="$GIT_LOG" \
-        bash "$ROOT/scripts/check-push-signatures.sh" origin ssh://origin.invalid/repo \
+        ODYSSEUS_SIGNATURE_TEST_MODE=1 \
+        bash "$ROOT/scripts/check-push-signatures.sh" \
+            --odysseus-test-git "$FAKE_BIN/git" -- \
+            origin ssh://origin.invalid/repo \
         >"$TMP/good.out" 2>"$TMP/good.err"; then
     pass "signed multi-ref push succeeds"
 else
@@ -137,7 +204,10 @@ info "an orphan branch includes its unsigned root commit"
 printf '%s\n' \
     "refs/heads/orphan local-orphan refs/heads/orphan $ZERO" |
     PATH="$FAKE_BIN:/usr/bin:/bin" GIT_LOG="$GIT_LOG" \
-        bash "$ROOT/scripts/check-push-signatures.sh" origin ssh://origin.invalid/repo \
+        ODYSSEUS_SIGNATURE_TEST_MODE=1 \
+        bash "$ROOT/scripts/check-push-signatures.sh" \
+            --odysseus-test-git "$FAKE_BIN/git" -- \
+            origin ssh://origin.invalid/repo \
         >"$TMP/orphan.out" 2>"$TMP/orphan.err"
 status=$?
 if [ "$status" -ne 0 ] && grep -q 'orphan-root-sha(N)' "$TMP/orphan.err"; then
@@ -151,7 +221,10 @@ info "a new ref uses an immutable destination ref snapshot"
 printf '%s\n' \
     "refs/heads/foreign local-new-foreign refs/heads/foreign $ZERO" |
     PATH="$FAKE_BIN:/usr/bin:/bin" GIT_LOG="$GIT_LOG" \
-        bash "$ROOT/scripts/check-push-signatures.sh" upstream ssh://upstream.invalid/repo \
+        ODYSSEUS_SIGNATURE_TEST_MODE=1 \
+        bash "$ROOT/scripts/check-push-signatures.sh" \
+            --odysseus-test-git "$FAKE_BIN/git" -- \
+            upstream ssh://upstream.invalid/repo \
         >"$TMP/non-origin.out" 2>"$TMP/non-origin.err"
 status=$?
 if [ "$status" -ne 0 ] && grep -q 'foreign-unsigned-sha(N)' "$TMP/non-origin.err"; then
@@ -166,7 +239,9 @@ info "a literal-URL harness push uses the destination snapshot"
 printf '%s\n' \
     "refs/heads/foreign local-new-foreign refs/heads/foreign $ZERO" |
     PATH="$FAKE_BIN:/usr/bin:/bin" GIT_LOG="$GIT_LOG" \
+        ODYSSEUS_SIGNATURE_TEST_MODE=1 \
         bash "$ROOT/scripts/check-push-signatures.sh" \
+        --odysseus-test-git "$FAKE_BIN/git" -- \
         ssh://harness.invalid/repo ssh://harness.invalid/repo \
         >"$TMP/url-remote.out" 2>"$TMP/url-remote.err"
 status=$?
@@ -185,7 +260,9 @@ info "a forged remote-tracking ref cannot hide an unsigned new-ref tip"
 printf '%s\n' \
     "refs/heads/forged local-forged refs/heads/forged $ZERO" |
     PATH="$FAKE_BIN:/usr/bin:/bin" GIT_LOG="$GIT_LOG" \
-        bash "$ROOT/scripts/check-push-signatures.sh" origin \
+        ODYSSEUS_SIGNATURE_TEST_MODE=1 \
+        bash "$ROOT/scripts/check-push-signatures.sh" \
+        --odysseus-test-git "$FAKE_BIN/git" -- origin \
         ssh://origin.invalid/repo \
         >"$TMP/forged-remote.out" 2>"$TMP/forged-remote.err"
 status=$?
@@ -203,7 +280,10 @@ info "signature inspection failure cannot pass verification"
 printf '%s\n' \
     "refs/heads/topic local-error refs/heads/topic remote-error" |
     PATH="$FAKE_BIN:/usr/bin:/bin" GIT_LOG="$GIT_LOG" \
-        bash "$ROOT/scripts/check-push-signatures.sh" origin ssh://origin.invalid/repo \
+        ODYSSEUS_SIGNATURE_TEST_MODE=1 \
+        bash "$ROOT/scripts/check-push-signatures.sh" \
+            --odysseus-test-git "$FAKE_BIN/git" -- \
+            origin ssh://origin.invalid/repo \
         >"$TMP/helper-failure.out" 2>"$TMP/helper-failure.err"
 status=$?
 if [ "$status" -ne 0 ] && grep -q \
@@ -215,14 +295,245 @@ else
     fail "signature inspection failure was swallowed"
 fi
 
+info "the native verifier ignores an ambient PATH replacement for Git"
+AMBIENT_GIT_REPO="$TMP/ambient-git-repo"
+mkdir "$AMBIENT_GIT_REPO"
+env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$SYSTEM_GIT" -c init.templateDir= -C "$AMBIENT_GIT_REPO" init -q
+env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$SYSTEM_GIT" -C "$AMBIENT_GIT_REPO" \
+    -c user.name=Fixture -c user.email=fixture@example.invalid \
+    -c commit.gpgsign=false commit --allow-empty -qm base
+ambient_base=$(env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$SYSTEM_GIT" -C "$AMBIENT_GIT_REPO" rev-parse HEAD)
+env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$SYSTEM_GIT" -C "$AMBIENT_GIT_REPO" \
+    -c user.name=Fixture -c user.email=fixture@example.invalid \
+    -c commit.gpgsign=false commit --allow-empty -qm topic
+ambient_tip=$(env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$SYSTEM_GIT" -C "$AMBIENT_GIT_REPO" rev-parse HEAD)
+AMBIENT_BIN="$TMP/ambient-git-bin"
+AMBIENT_MARKER="$TMP/ambient-git-ran"
+mkdir "$AMBIENT_BIN"
+cat > "$AMBIENT_BIN/git" <<'SH'
+#!/usr/bin/env bash
+: > "${AMBIENT_MARKER:?}"
+case "${1:-}" in
+    rev-list) printf '%s\n' "${AMBIENT_TIP:?}" ;;
+    log) printf 'G\n' ;;
+    *) exit 92 ;;
+esac
+SH
+chmod +x "$AMBIENT_BIN/git"
+printf '%s\n' \
+    "refs/heads/topic $ambient_tip refs/heads/topic $ambient_base" |
+    (
+        cd "$AMBIENT_GIT_REPO" || exit 93
+        PATH="$AMBIENT_BIN:/usr/bin:/bin" \
+            AMBIENT_MARKER="$AMBIENT_MARKER" AMBIENT_TIP="$ambient_tip" \
+            bash "$ROOT/scripts/check-push-signatures.sh" origin unused
+    ) > "$TMP/ambient-git.out" 2> "$TMP/ambient-git.err"
+ambient_status=$?
+if [ "$ambient_status" -ne 0 ] && [ ! -e "$AMBIENT_MARKER" ] \
+    && { grep -q "$ambient_tip(N)" "$TMP/ambient-git.err" \
+        || grep -q 'explicit commit-signature policy is required' \
+            "$TMP/ambient-git.err"; }; then
+    pass "ambient PATH cannot replace the Git or signature-verifier boundary"
+else
+    sed 's/^/    /' "$TMP/ambient-git.err" >&2
+    fail "ambient PATH selected the Git or signature-verifier boundary"
+fi
+
+info "the native pre-push hook executes the verifier from immutable HEAD bytes"
+NATIVE_HOOK_REPO="$TMP/native-hook-repo"
+NATIVE_VERIFIER_RESULT="$TMP/native-verifier-result"
+mkdir -p "$NATIVE_HOOK_REPO/scripts"
+env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$SYSTEM_GIT" -c init.templateDir= -C "$NATIVE_HOOK_REPO" init -q
+cat > "$NATIVE_HOOK_REPO/scripts/check-push-signatures.sh" <<'SH'
+#!/bin/bash
+printf 'committed-verifier\n' > "${NATIVE_VERIFIER_RESULT:?}"
+SH
+chmod +x "$NATIVE_HOOK_REPO/scripts/check-push-signatures.sh"
+env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$SYSTEM_GIT" -C "$NATIVE_HOOK_REPO" \
+    -c user.name=Fixture -c user.email=fixture@example.invalid \
+    -c commit.gpgsign=false add scripts/check-push-signatures.sh
+env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$SYSTEM_GIT" -C "$NATIVE_HOOK_REPO" \
+    -c user.name=Fixture -c user.email=fixture@example.invalid \
+    -c commit.gpgsign=false commit -qm verifier
+cat > "$NATIVE_HOOK_REPO/scripts/check-push-signatures.sh" <<'SH'
+#!/bin/bash
+printf 'worktree-replacement\n' > "${NATIVE_VERIFIER_RESULT:?}"
+SH
+chmod +x "$NATIVE_HOOK_REPO/scripts/check-push-signatures.sh"
+(
+    cd "$NATIVE_HOOK_REPO" || exit 93
+    NATIVE_VERIFIER_RESULT="$NATIVE_VERIFIER_RESULT" \
+        /bin/bash "$ROOT/.githooks/pre-push" origin unused </dev/null
+) > "$TMP/native-hook.out" 2> "$TMP/native-hook.err"
+native_hook_status=$?
+native_verifier_value=
+if [ -f "$NATIVE_VERIFIER_RESULT" ]; then
+    native_verifier_value=$(cat "$NATIVE_VERIFIER_RESULT")
+fi
+if [ "$native_hook_status" -eq 0 ] \
+    && [ "$native_verifier_value" = committed-verifier ]; then
+    pass "worktree replacement cannot change the bound verifier bytes"
+else
+    sed 's/^/    /' "$TMP/native-hook.err" >&2
+    fail "native pre-push reopened the mutable worktree verifier"
+fi
+
+info "the native pre-push shebang ignores ambient Bash startup code"
+NATIVE_STARTUP_MARKER="$TMP/native-startup-ran"
+NATIVE_STARTUP_FILE="$TMP/native-startup.sh"
+NATIVE_STARTUP_HOME="$TMP/native-startup-home"
+mkdir "$NATIVE_STARTUP_HOME"
+printf ': > %q\n' "$NATIVE_STARTUP_MARKER" > "$NATIVE_STARTUP_FILE"
+rm -f "$NATIVE_VERIFIER_RESULT"
+(
+    cd "$NATIVE_HOOK_REPO" || exit 93
+    env -i \
+        BASH_ENV="$NATIVE_STARTUP_FILE" \
+        ENV="$NATIVE_STARTUP_FILE" \
+        HOME="$NATIVE_STARTUP_HOME" \
+        NATIVE_VERIFIER_RESULT="$NATIVE_VERIFIER_RESULT" \
+        PATH=/usr/bin:/bin \
+        "$ROOT/.githooks/pre-push" origin unused </dev/null
+) > "$TMP/native-startup.out" 2> "$TMP/native-startup.err"
+native_startup_status=$?
+native_startup_value=
+if [ -f "$NATIVE_VERIFIER_RESULT" ]; then
+    native_startup_value=$(cat "$NATIVE_VERIFIER_RESULT")
+fi
+if [ "$native_startup_status" -eq 0 ] && \
+    [ "$native_startup_value" = committed-verifier ] && \
+    [ ! -e "$NATIVE_STARTUP_MARKER" ]; then
+    pass "the native pre-push boundary starts without ambient shell code"
+else
+    sed 's/^/    /' "$TMP/native-startup.err" >&2
+    fail "ambient shell startup code ran before the pre-push boundary"
+fi
+
+info "the native pre-push hook pins one verifier blob across a concurrent HEAD move"
+HEAD_MOVE_REPO="$TMP/native-head-move"
+HEAD_MOVE_RESULT="$TMP/native-head-move-result"
+mkdir -p "$HEAD_MOVE_REPO/scripts"
+env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$SYSTEM_GIT" -c init.templateDir= -C "$HEAD_MOVE_REPO" init -q
+cat > "$HEAD_MOVE_REPO/scripts/check-push-signatures.sh" <<'SH'
+#!/bin/bash
+printf 'old-head-verifier\n' > "${HEAD_MOVE_RESULT:?}"
+SH
+chmod +x "$HEAD_MOVE_REPO/scripts/check-push-signatures.sh"
+env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$SYSTEM_GIT" -C "$HEAD_MOVE_REPO" add scripts/check-push-signatures.sh
+env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$SYSTEM_GIT" -C "$HEAD_MOVE_REPO" \
+    -c user.name=Fixture -c user.email=fixture@example.invalid \
+    -c commit.gpgsign=false commit -qm old-verifier
+old_head=$(env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$SYSTEM_GIT" -C "$HEAD_MOVE_REPO" rev-parse HEAD)
+cat > "$HEAD_MOVE_REPO/scripts/check-push-signatures.sh" <<'SH'
+#!/bin/bash
+printf 'new-head-verifier\n' > "${HEAD_MOVE_RESULT:?}"
+SH
+env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$SYSTEM_GIT" -C "$HEAD_MOVE_REPO" add scripts/check-push-signatures.sh
+env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$SYSTEM_GIT" -C "$HEAD_MOVE_REPO" \
+    -c user.name=Fixture -c user.email=fixture@example.invalid \
+    -c commit.gpgsign=false commit -qm new-verifier
+new_head=$(env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$SYSTEM_GIT" -C "$HEAD_MOVE_REPO" rev-parse HEAD)
+head_ref=$(env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$SYSTEM_GIT" -C "$HEAD_MOVE_REPO" symbolic-ref HEAD)
+env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$SYSTEM_GIT" -C "$HEAD_MOVE_REPO" update-ref "$head_ref" "$old_head" "$new_head"
+head_ref_path="$HEAD_MOVE_REPO/.git/$head_ref"
+rm "$head_ref_path"
+mkfifo "$head_ref_path"
+head_fifo_ready="$HEAD_MOVE_REPO/fifo-ready"
+head_fifo_release="$HEAD_MOVE_REPO/fifo-release"
+python3 -I -S - "$head_ref_path" "$old_head" \
+    "$head_fifo_ready" "$head_fifo_release" <<'PY' &
+import os
+import sys
+import time
+
+fifo, old_head, ready, release = sys.argv[1:]
+descriptor = os.open(fifo, os.O_WRONLY)
+with open(ready, "xb"):
+    pass
+deadline = time.monotonic() + 5
+while not os.path.exists(release):
+    if time.monotonic() >= deadline:
+        os.close(descriptor)
+        raise SystemExit(2)
+    time.sleep(0.01)
+os.write(descriptor, (old_head + "\n").encode("ascii"))
+os.close(descriptor)
+PY
+head_fifo_writer=$!
+(
+    cd "$HEAD_MOVE_REPO" || exit 93
+    HEAD_MOVE_RESULT="$HEAD_MOVE_RESULT" \
+        /bin/bash "$ROOT/.githooks/pre-push" origin unused </dev/null
+) > "$TMP/native-head-move.out" 2> "$TMP/native-head-move.err" &
+head_move_hook=$!
+for _attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    [ -e "$head_fifo_ready" ] && break
+    kill -0 "$head_move_hook" 2>/dev/null || break
+    /bin/sleep 0.05
+done
+if [ -e "$head_fifo_ready" ]; then
+    rm "$head_ref_path"
+    printf '%s\n' "$new_head" > "$head_ref_path"
+    : > "$head_fifo_release"
+fi
+set +e
+wait "$head_move_hook"
+head_move_status=$?
+kill "$head_fifo_writer" 2>/dev/null
+wait "$head_fifo_writer" 2>/dev/null
+set +e
+head_move_value=
+if [ -f "$HEAD_MOVE_RESULT" ]; then
+    head_move_value=$(cat "$HEAD_MOVE_RESULT")
+fi
+if [ -e "$head_fifo_ready" ] && [ "$head_move_status" -eq 0 ] \
+    && [ "$head_move_value" = old-head-verifier ]; then
+    pass "one resolved verifier blob remains authoritative after HEAD moves"
+else
+    sed 's/^/    /' "$TMP/native-head-move.err" >&2
+    fail "a concurrent HEAD move changed the verifier transaction"
+fi
+
 INSTALL_BIN="$TMP/install-bin"
 PRECOMMIT_FIXTURE="$INSTALL_BIN/pre-commit-fixture"
-PRECOMMIT_REGISTRY="$PRECOMMIT_FIXTURE.registry"
-PRECOMMIT_FIXTURE_SHA256=c1aa9caa1d4bcf7598e851f03d007fd706fdaa9874cbeb46a3607a66c94ae748
+PRECOMMIT_PROVIDER_PREFIX="$INSTALL_BIN/provider"
+PRECOMMIT_PROVIDER_PYTHON="$PRECOMMIT_PROVIDER_PREFIX/bin/python3"
+PRECOMMIT_ABI=$(python3 -I -S -c \
+    'import sys; print("python{}.{}".format(*sys.version_info[:2]))')
+PRECOMMIT_SITE="$PRECOMMIT_PROVIDER_PREFIX/lib/$PRECOMMIT_ABI/site-packages"
+PRECOMMIT_FIXTURE_BODY_SHA256=275fd99404a7a8772fd7ab66a800b934db632f4c4e64787f9b5aa6f9662c870c
 INSTALL_WRAPPER_REL=scripts/install/dev/80-precommit.sh
 HELPER_REL=scripts/install/dev/precommit_hooks.py
-SYSTEM_GIT="$(command -v git)"
-mkdir -p "$INSTALL_BIN"
+mkdir -p \
+    "$PRECOMMIT_PROVIDER_PREFIX/bin" \
+    "$PRECOMMIT_SITE/pre_commit" \
+    "$PRECOMMIT_SITE/pre_commit-3.8.0.dist-info" \
+    "$PRECOMMIT_SITE/yaml" \
+    "$PRECOMMIT_SITE/PyYAML-6.0.3.dist-info"
+PRECOMMIT_HOST_PYTHON=$(python3 -I -S -c \
+    'import os,sys; print(os.path.realpath(sys.executable))')
+cp "$PRECOMMIT_HOST_PYTHON" "$PRECOMMIT_PROVIDER_PYTHON"
+chmod +x "$PRECOMMIT_PROVIDER_PYTHON"
+printf 'home = %s\ninclude-system-site-packages = false\n' \
+    "$(dirname "$PRECOMMIT_HOST_PYTHON")" \
+    > "$PRECOMMIT_PROVIDER_PREFIX/pyvenv.cfg"
 
 sha256_file() {
     python3 -I -S - "$1" <<'PY'
@@ -233,191 +544,191 @@ with open(sys.argv[1], "rb") as stream:
 PY
 }
 
-cat > "$PRECOMMIT_FIXTURE" <<'SH'
-#!/bin/bash
-set -eu
+cat > "$PRECOMMIT_SITE/pre_commit/fixture.py" <<'PY'
+import os
+import re
+import sys
 
-origin=${ODYSSEUS_EXECUTABLE_ORIGIN:-$0}
-registry="$origin.registry"
-fixture_version=3.8.0
 
-unexpected() {
-    printf 'unexpected fixture syntax: %s\n' "$*" >&2
-    exit 76
-}
-
-sha256_file() {
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | awk '{print $1}'
-    elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" | awk '{print $1}'
-    else
-        printf 'no SHA-256 command is available\n' >&2
-        exit 73
-    fi
-}
-
-require_clean_environment() {
-    if [ "${PYTHONPATH+x}" = x ] || [ "${PYTHONHOME+x}" = x ] ||
-        [ "${ATTACK_MARKER+x}" = x ] ||
-        [ "${PYTHONNOUSERSITE:-}" != 1 ] ||
-        [ "${GIT_CONFIG_GLOBAL:-}" != /dev/null ] ||
-        [ "${GIT_CONFIG_NOSYSTEM:-}" != 1 ] ||
-        [ ! -d "${HOME:-}" ] || [ ! -d "${PRE_COMMIT_HOME:-}" ]; then
-        printf 'fixture received an unsafe environment\n' >&2
-        exit 72
-    fi
-}
-
-lookup_config() {
-    digest=$(sha256_file .pre-commit-config.yaml)
-    record=$(awk -F '|' -v digest="$digest" \
-        '$1 == digest { print; exit }' "$registry")
-    if [ -z "$record" ]; then
-        printf 'unregistered fixture config digest: %s\n' "$digest" >&2
-        exit 74
-    fi
-    hook_types=$(printf '%s\n' "$record" | awk -F '|' '{print $2}')
-    action=$(printf '%s\n' "$record" | awk -F '|' '{print $3}')
-}
-
-write_hook() {
-    hook_type=$1
-    hook_path=".git/hooks/$hook_type"
-    cat > "$hook_path" <<HOOK
-#!/usr/bin/env bash
+HOOK = """#!/usr/bin/env bash
 # File generated by pre-commit: https://pre-commit.com
 # ID: 138fd403232d2ddd5efb44317e38bf03
 
 # start templated
 INSTALL_PYTHON=/definitely/missing/python
-ARGS=(hook-impl --config=.pre-commit-config.yaml --hook-type=$hook_type)
+ARGS=(hook-impl --config=.pre-commit-config.yaml --hook-type=@HOOK_TYPE@)
 # end templated
 
-HERE="\$(cd "\$(dirname "\$0")" && pwd)"
-ARGS+=(--hook-dir "\$HERE" -- "\$@")
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ARGS+=(--hook-dir "$HERE" -- "$@")
 
-if [ -x "\$INSTALL_PYTHON" ]; then
-    exec "\$INSTALL_PYTHON" -mpre_commit "\${ARGS[@]}"
+if [ -x "$INSTALL_PYTHON" ]; then
+    exec "$INSTALL_PYTHON" -mpre_commit "${ARGS[@]}"
 elif command -v pre-commit > /dev/null; then
-    exec pre-commit "\${ARGS[@]}"
+    exec pre-commit "${ARGS[@]}"
 else
-    echo '\`pre-commit\` not found.  Did you forget to activate your virtualenv?' 1>&2
+    echo '`pre-commit` not found.  Did you forget to activate your virtualenv?' 1>&2
     exit 1
 fi
-HOOK
-    chmod +x "$hook_path"
-}
+"""
 
-require_clean_environment
-command_name=${1:-}
 
-if [ "$command_name" = --version ]; then
-    [ "$#" -eq 1 ] || unexpected "$@"
-    printf 'pre-commit %s\n' "$fixture_version"
-    exit 0
-fi
+def unexpected(arguments):
+    sys.stderr.write("unexpected fixture syntax: {}\n".format(" ".join(arguments)))
+    raise SystemExit(76)
 
-if [ "$command_name" = hook-impl ]; then
-    shift
-    config=''
-    hook_type=''
-    hook_dir=''
-    while [ "$#" -gt 0 ]; do
-        case "$1" in
-            --config=.pre-commit-config.yaml)
-                config=.pre-commit-config.yaml
-                shift
-                ;;
-            --hook-type=*)
-                hook_type=${1#*=}
-                [ -n "$hook_type" ] || unexpected "$1"
-                shift
-                ;;
-            --hook-dir)
-                [ "$#" -ge 2 ] && [ -n "$2" ] || unexpected "$1"
-                hook_dir=$2
-                shift 2
-                ;;
-            --) shift; break ;;
-            *) unexpected "$1" ;;
-        esac
-    done
-    [ "$config" = .pre-commit-config.yaml ] || unexpected 'missing --config'
-    [ -n "$hook_type" ] || unexpected 'missing --hook-type'
-    [ -n "$hook_dir" ] || unexpected 'missing --hook-dir'
-    legacy="$hook_dir/$hook_type.legacy"
-    if [ -x "$legacy" ]; then
-        exec "$legacy" "$@"
-    fi
-    exit 0
-fi
 
-lookup_config
-case "$action" in
-    fail-*)
-        printf 'fixture validation failure: %s\n' "${action#fail-}" >&2
-        exit 78
-        ;;
-    pass) ;;
-    *)
-        printf 'invalid fixture action: %s\n' "$action" >&2
-        exit 75
-        ;;
-esac
+def require_clean_environment():
+    environment = os.environ
+    if (
+        "PYTHONPATH" in environment
+        or "PYTHONHOME" in environment
+        or "ATTACK_MARKER" in environment
+        or environment.get("PYTHONNOUSERSITE") != "1"
+        or environment.get("GIT_CONFIG_GLOBAL") != "/dev/null"
+        or environment.get("GIT_CONFIG_NOSYSTEM") != "1"
+        or not os.path.isdir(environment.get("HOME", ""))
+        or not os.path.isdir(environment.get("PRE_COMMIT_HOME", ""))
+    ):
+        sys.stderr.write("fixture received an unsafe environment\n")
+        raise SystemExit(72)
 
-if [ "$command_name" = validate-config ]; then
-    [ "$#" -eq 2 ] && [ "$2" = .pre-commit-config.yaml ] ||
-        unexpected "$@"
-    exit 0
-fi
-if [ "$command_name" != install ]; then
-    printf 'unexpected fixture command: %s\n' "$*" >&2
-    exit 76
-fi
 
-shift
-install_hooks=false
-requested=''
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        --install-hooks) install_hooks=true; shift ;;
-        --hook-type)
-            [ "$#" -ge 2 ] && [ -n "$2" ] || unexpected "$1"
-            case "$2" in
-                --*) unexpected "$@" ;;
-            esac
-            requested="${requested}${requested:+ }$2"
-            shift 2
-            ;;
-        *) unexpected "$1" ;;
-    esac
-done
-if [ "$install_hooks" = true ] && [ "$requested" != "$hook_types" ]; then
-    printf 'requested hook inventory differs from registered inventory\n' >&2
-    exit 77
-fi
-if [ "$install_hooks" = false ] && [ -n "$requested" ]; then
-    printf 'discovery received explicit hook types\n' >&2
-    exit 77
-fi
+def config(path=".pre-commit-config.yaml"):
+    try:
+        with open(path, "r", encoding="utf-8") as stream:
+            text = stream.read()
+    except OSError:
+        unexpected(("missing configuration", path))
+    action_match = re.search(r"(?m)^# fixture-action: ([^\r\n]+)$", text)
+    action = action_match.group(1) if action_match else "pass"
+    inline = re.search(r"(?m)^default_install_hook_types:\s*\[([^]]*)\]", text)
+    if inline:
+        hooks = tuple(
+            value.strip().strip("'\"")
+            for value in inline.group(1).split(",")
+            if value.strip()
+        )
+    else:
+        block = re.search(
+            r"(?ms)^default_install_hook_types:\s*\n((?:\s+-[^\n]*\n?)+)", text
+        )
+        hooks = tuple(
+            value.strip().strip("'\"")
+            for value in re.findall(r"(?m)^\s+-\s*([^\r\n]+)", block.group(1))
+        ) if block else ()
+    if not hooks:
+        unexpected(("missing default_install_hook_types",))
+    if action.startswith("fail-"):
+        sys.stderr.write("fixture validation failure: {}\n".format(action[5:]))
+        raise SystemExit(78)
+    if action != "pass":
+        sys.stderr.write("invalid fixture action: {}\n".format(action))
+        raise SystemExit(75)
+    return hooks
 
-mkdir -p .git/hooks
-for hook_type in $hook_types; do
-    write_hook "$hook_type"
-done
-SH
+
+def write_hook(hook_type):
+    path = os.path.join(".git", "hooks", hook_type)
+    with open(path, "w", encoding="utf-8", newline="\n") as stream:
+        stream.write(HOOK.replace("@HOOK_TYPE@", hook_type))
+    os.chmod(path, 0o755)
+
+
+def hook_impl(arguments):
+    config_path = ""
+    hook_type = ""
+    hook_dir = ""
+    while arguments:
+        value = arguments.pop(0)
+        if value.startswith("--config="):
+            config_path = value.partition("=")[2]
+            if config_path != "/odysseus/runtime/config.yaml":
+                unexpected((value,))
+        elif value.startswith("--hook-type="):
+            hook_type = value.partition("=")[2]
+        elif value == "--hook-dir" and arguments:
+            hook_dir = arguments.pop(0)
+        elif value == "--":
+            break
+        else:
+            unexpected((value,))
+    if not config_path or not hook_type or not hook_dir:
+        unexpected(("incomplete hook invocation",))
+    config(config_path)
+    legacy = os.path.join(hook_dir, hook_type + ".legacy")
+    if os.access(legacy, os.X_OK):
+        os.execv(legacy, [legacy, *arguments])
+    return 0
+
+
+def main():
+    require_clean_environment()
+    arguments = list(sys.argv[1:])
+    if arguments == ["--version"]:
+        print("pre-commit 3.8.0")
+        return 0
+    if arguments and arguments[0] == "hook-impl":
+        return hook_impl(arguments[1:])
+    hooks = config()
+    if arguments == ["validate-config", ".pre-commit-config.yaml"]:
+        return 0
+    if not arguments or arguments.pop(0) != "install":
+        unexpected(tuple(sys.argv[1:]))
+    install_hooks = False
+    requested = []
+    while arguments:
+        value = arguments.pop(0)
+        if value == "--install-hooks":
+            install_hooks = True
+        elif value == "--hook-type" and arguments:
+            hook_type = arguments.pop(0)
+            if hook_type.startswith("--"):
+                unexpected((hook_type,))
+            requested.append(hook_type)
+        else:
+            unexpected((value,))
+    if install_hooks and tuple(requested) != hooks:
+        sys.stderr.write("requested hook inventory differs from configured inventory\n")
+        return 77
+    if not install_hooks and requested:
+        sys.stderr.write("discovery received explicit hook types\n")
+        return 77
+    os.makedirs(os.path.join(".git", "hooks"), exist_ok=True)
+    for hook_type in hooks:
+        write_hook(hook_type)
+    return 0
+PY
+printf '%s\n' '' > "$PRECOMMIT_SITE/pre_commit/__init__.py"
+cat > "$PRECOMMIT_FIXTURE" <<PY
+#!$PRECOMMIT_PROVIDER_PYTHON
+from pre_commit.fixture import main
+raise SystemExit(main())
+PY
+cat > "$PRECOMMIT_SITE/pre_commit-3.8.0.dist-info/METADATA" <<'EOF'
+Name: pre-commit
+Version: 3.8.0
+EOF
+cat > "$PRECOMMIT_SITE/pre_commit-3.8.0.dist-info/RECORD" <<'EOF'
+pre_commit/__init__.py,,
+pre_commit/fixture.py,,
+pre_commit-3.8.0.dist-info/METADATA,,
+pre_commit-3.8.0.dist-info/RECORD,,
+EOF
+cat > "$PRECOMMIT_SITE/yaml/__init__.py" <<'PY'
+__version__ = "6.0.3"
+PY
+cat > "$PRECOMMIT_SITE/PyYAML-6.0.3.dist-info/METADATA" <<'EOF'
+Name: PyYAML
+Version: 6.0.3
+EOF
+cat > "$PRECOMMIT_SITE/PyYAML-6.0.3.dist-info/RECORD" <<'EOF'
+yaml/__init__.py,,
+PyYAML-6.0.3.dist-info/METADATA,,
+PyYAML-6.0.3.dist-info/RECORD,,
+EOF
 chmod +x "$PRECOMMIT_FIXTURE"
 ln -s "$(basename "$PRECOMMIT_FIXTURE")" "$INSTALL_BIN/pre-commit"
-: > "$PRECOMMIT_REGISTRY"
-register_config() {
-    local path=$1 hook_types=$2 action=${3:-pass} digest record
-    digest=$(sha256_file "$path")
-    record="$digest|$hook_types|$action"
-    if ! grep -Fqx "$record" "$PRECOMMIT_REGISTRY" 2>/dev/null; then
-        printf '%s\n' "$record" >> "$PRECOMMIT_REGISTRY"
-    fi
-}
 
 write_config() {
     local repo=$1 hook_types=$2 tag=$3 action=${4:-pass}
@@ -425,18 +736,21 @@ write_config() {
         'pre-commit pre-push')
             printf '%s\n' \
                 "# fixture: $tag" \
+                "# fixture-action: $action" \
                 'default_install_hook_types: [pre-commit, pre-push]' \
                 'repos: []' > "$repo/.pre-commit-config.yaml"
             ;;
         pre-push)
             printf '%s\n' \
                 "# fixture: $tag" \
+                "# fixture-action: $action" \
                 'default_install_hook_types: [pre-push]' \
                 'repos: []' > "$repo/.pre-commit-config.yaml"
             ;;
         commit-msg)
             printf '%s\n' \
                 "# fixture: $tag" \
+                "# fixture-action: $action" \
                 'default_install_hook_types:' \
                 '  - "commit-msg"' \
                 'repos: []' > "$repo/.pre-commit-config.yaml"
@@ -445,7 +759,6 @@ write_config() {
             fail_exit "test fixture requested unsupported hooks: $hook_types"
             ;;
     esac
-    register_config "$repo/.pre-commit-config.yaml" "$hook_types" "$action"
 }
 
 make_repo() {
@@ -459,16 +772,31 @@ make_repo() {
     cp "$ROOT/$HELPER_REL" "$repo/$HELPER_REL"
     cp "$ROOT/scripts/install/lib.sh" "$repo/scripts/install/lib.sh"
     chmod +x "$repo/.githooks/pre-push" "$repo/$INSTALL_WRAPPER_REL"
-    cat > "$repo/scripts/check-push-signatures.sh" <<'SH'
+cat > "$repo/scripts/check-push-signatures.sh" <<'SH'
 #!/usr/bin/env bash
 set -eu
-printf '%s\n' "$#" > "$HOOK_ARGC_LOG"
-printf '%s\0' "$@" > "$HOOK_ARGS_LOG"
-cp /dev/stdin "$HOOK_STDIN_LOG"
+exec /usr/bin/python3 -I -S -c '
+import hashlib
+import os
+import resource
+import signal
+import sys
+arguments = b"".join(os.fsencode(value) + b"\0" for value in sys.argv[1:])
+transaction = sys.stdin.buffer.read()
+print("ODYSSEUS_TEST_ARGC={}".format(len(sys.argv) - 1))
+print("ODYSSEUS_TEST_ARGS_SHA256={}".format(hashlib.sha256(arguments).hexdigest()))
+print("ODYSSEUS_TEST_STDIN_SHA256={}".format(hashlib.sha256(transaction).hexdigest()))
+' "$@"
 SH
     chmod +x "$repo/scripts/check-push-signatures.sh"
     env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
         "$SYSTEM_GIT" -c init.templateDir= -C "$repo" init -q
+    env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+        "$SYSTEM_GIT" -C "$repo" add scripts/check-push-signatures.sh
+    env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+        "$SYSTEM_GIT" -C "$repo" \
+        -c user.name=Fixture -c user.email=fixture@example.invalid \
+        -c commit.gpgsign=false commit -qm verifier-fixture
     mkdir -p "$repo/.git/hooks"
 }
 
@@ -486,32 +814,143 @@ run_installer() {
         /bin/bash "$repo/$INSTALL_WRAPPER_REL" > "$output" 2>&1
 }
 
+boundary_nonproof() {
+    [ "$HOST_KERNEL" != Linux ] || return 1
+    local output
+    for output in "$@"; do
+        grep -Eq \
+            'no (trusted )?secure execution boundary|no trusted Python interpreter can execute the sealed provider|immutable (executable|helper) snapshots are unavailable' \
+            "$output" || return 1
+    done
+}
+
 hook_inventory() {
     local repo=$1
     find "$repo/.git/hooks" -maxdepth 1 -type f ! -name '*.sample' \
         -exec basename {} \; | LC_ALL=C sort
 }
 
-info "the controlled pre-commit fixture has an immutable digest and exact version"
-FIXTURE_REPO="$TMP/fixture-version"
+info "the installer bootstrap does not execute ambient PATH utilities"
+BOOTSTRAP_REPO="$TMP/bootstrap-path"
+BOOTSTRAP_BIN="$TMP/bootstrap-hostile-bin"
+BOOTSTRAP_MARKER="$TMP/bootstrap-hostile-ran"
 mkdir -p "$TMP/ambient-home"
+make_repo "$BOOTSTRAP_REPO"
+write_config "$BOOTSTRAP_REPO" 'pre-commit pre-push' bootstrap-path
+mkdir "$BOOTSTRAP_BIN"
+for hostile_name in dirname python3 git env pre-commit; do
+    cat > "$BOOTSTRAP_BIN/$hostile_name" <<'SH'
+#!/bin/bash
+printf '%s\n' "$0" >> "${BOOTSTRAP_MARKER:?}"
+exit 97
+SH
+    chmod +x "$BOOTSTRAP_BIN/$hostile_name"
+done
+env \
+    PATH="$BOOTSTRAP_BIN:/usr/bin:/bin" \
+    HOME="$TMP/ambient-home" \
+    BOOTSTRAP_MARKER="$BOOTSTRAP_MARKER" \
+    ODYSSEUS_ROOT="$BOOTSTRAP_REPO" \
+    ODYSSEUS_PRECOMMIT_BINARY="$PRECOMMIT_FIXTURE" \
+    ODYSSEUS_PRECOMMIT_EXPECTED_VERSION=3.8.0 \
+    INSTALL=false \
+    /bin/bash "$BOOTSTRAP_REPO/$INSTALL_WRAPPER_REL" \
+    > "$TMP/bootstrap-path.out" 2>&1
+bootstrap_path_status=$?
+if [ ! -e "$BOOTSTRAP_MARKER" ] &&
+    { { grep -q 'pre-commit 3.8.0' "$TMP/bootstrap-path.out" &&
+        { [ "$bootstrap_path_status" -eq 0 ] ||
+            grep -q 'installed managed hook inventory is not exact' \
+                "$TMP/bootstrap-path.out"; }; } \
+      || boundary_nonproof "$TMP/bootstrap-path.out"; }; then
+    pass "bootstrap tools are fixed and the helper is bound before execution"
+else
+    sed 's/^/    /' "$TMP/bootstrap-path.out" >&2
+    fail "ambient PATH code ran before the installer security boundary"
+fi
+
+info "the installer bootstrap rejects a helper FIFO without blocking"
+BOOTSTRAP_FIFO_REPO="$TMP/bootstrap-fifo"
+make_repo "$BOOTSTRAP_FIFO_REPO"
+rm "$BOOTSTRAP_FIFO_REPO/$HELPER_REL"
+mkfifo "$BOOTSTRAP_FIFO_REPO/$HELPER_REL"
+python3 -I -S - \
+    "$BOOTSTRAP_FIFO_REPO/$INSTALL_WRAPPER_REL" \
+    "$BOOTSTRAP_FIFO_REPO" "$PRECOMMIT_FIXTURE" \
+    "$TMP/bootstrap-fifo.out" <<'PY'
+import os
+import subprocess
+import sys
+
+wrapper, root, pre_commit, output = sys.argv[1:]
+environment = {
+    "HOME": os.path.join(root, "home"),
+    "INSTALL": "false",
+    "ODYSSEUS_PRECOMMIT_BINARY": pre_commit,
+    "ODYSSEUS_PRECOMMIT_EXPECTED_VERSION": "3.8.0",
+    "ODYSSEUS_ROOT": root,
+    "PATH": "/usr/bin:/bin",
+}
+os.mkdir(environment["HOME"], 0o700)
+try:
+    result = subprocess.run(
+        ["/bin/bash", wrapper],
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=2,
+        check=False,
+    )
+except subprocess.TimeoutExpired:
+    with open(output, "wb") as stream:
+        stream.write(b"outer watchdog expired\n")
+    raise SystemExit(99)
+with open(output, "wb") as stream:
+    stream.write(result.stdout)
+raise SystemExit(result.returncode)
+PY
+bootstrap_fifo_status=$?
+if [ "$bootstrap_fifo_status" -ne 0 ] && \
+    [ "$bootstrap_fifo_status" -ne 99 ] && \
+    grep -Eq 'cannot bind the pre-commit helper|helper is not one direct regular file|immutable helper snapshots are unavailable' \
+        "$TMP/bootstrap-fifo.out"; then
+    pass "the helper is opened nonblocking and rejected before execution"
+else
+    sed 's/^/    /' "$TMP/bootstrap-fifo.out" >&2
+    fail "a helper FIFO blocked or entered the installer boundary"
+fi
+
+info "the controlled pre-commit fixture has known bytes and a selected version"
+FIXTURE_REPO="$TMP/fixture-version"
 make_repo "$FIXTURE_REPO"
 write_config "$FIXTURE_REPO" 'pre-commit pre-push' fixture-version
-actual_fixture_digest=$(sha256_file "$PRECOMMIT_FIXTURE")
+actual_fixture_digest=$(python3 -I -S - "$PRECOMMIT_FIXTURE" <<'PY'
+import hashlib
+import sys
+with open(sys.argv[1], "rb") as stream:
+    _shebang, separator, body = stream.read().partition(b"\n")
+if not separator:
+    raise SystemExit(1)
+print(hashlib.sha256(body).hexdigest())
+PY
+)
 run_installer "$FIXTURE_REPO" true 3.8.0 "$TMP/version-pass.out"
 version_pass_status=$?
 run_installer "$FIXTURE_REPO" false 9.9.9 "$TMP/version-mismatch.out"
 version_mismatch_status=$?
-if [ "$actual_fixture_digest" = "$PRECOMMIT_FIXTURE_SHA256" ] &&
+if [ "$actual_fixture_digest" = "$PRECOMMIT_FIXTURE_BODY_SHA256" ] &&
     [ "$version_pass_status" -eq 0 ] &&
     [ "$version_mismatch_status" -ne 0 ] &&
     grep -q 'expected pre-commit 9.9.9, found 3.8.0' \
         "$TMP/version-mismatch.out"; then
-    pass "explicit pre-commit selection enforces the exact locked version"
+    pass "known fixture bytes and the requested fixture version are enforced"
+elif boundary_nonproof "$TMP/version-pass.out" "$TMP/version-mismatch.out"; then
+    info "NON_PROOF: fixture installation requires the Linux execution boundary"
 else
     sed 's/^/    /' "$TMP/version-pass.out" >&2
     sed 's/^/    /' "$TMP/version-mismatch.out" >&2
-    fail "explicit pre-commit selection or exact version enforcement failed"
+    fail "fixture provenance or requested version enforcement failed"
 fi
 
 info "the controlled pre-commit fixture rejects unknown options"
@@ -551,7 +990,15 @@ printf '%s\n%s\n' \
     > "$TMP/installed-hook.input"
 printf '%s\0' 'upstream remote' 'ssh://upstream.invalid/repo with space' \
     > "$TMP/installed-hook.expected-args"
+installed_stdin_digest=$(sha256_file "$TMP/installed-hook.input")
+installed_args_digest=$(sha256_file "$TMP/installed-hook.expected-args")
 mkdir -p "$TMP/hook-home" "$TMP/hook-cache"
+cat > "$INSTALL_BIN/git" <<'SH'
+#!/usr/bin/env bash
+: > "${HOOK_AMBIENT_GIT_MARKER:?}"
+exit 94
+SH
+chmod +x "$INSTALL_BIN/git"
 (
     cd "$INSTALL_REPO" || exit 90
     env -i \
@@ -561,29 +1008,68 @@ mkdir -p "$TMP/hook-home" "$TMP/hook-cache"
         PYTHONNOUSERSITE=1 \
         GIT_CONFIG_GLOBAL=/dev/null \
         GIT_CONFIG_NOSYSTEM=1 \
-        HOOK_ARGC_LOG="$TMP/installed-hook.argc" \
-        HOOK_ARGS_LOG="$TMP/installed-hook.args" \
-        HOOK_STDIN_LOG="$TMP/installed-hook.stdin" \
+        HOOK_AMBIENT_GIT_MARKER="$TMP/installed-hook.ambient-git" \
         "$INSTALL_REPO/.git/hooks/pre-push" \
         'upstream remote' 'ssh://upstream.invalid/repo with space'
 ) < "$TMP/installed-hook.input" > "$TMP/installed-hook.out" 2>&1
 hook_status=$?
+rm "$INSTALL_BIN/git"
 inventory=$(hook_inventory "$INSTALL_REPO")
+install_contract_nonproof=false
+if boundary_nonproof "$TMP/install-contract.out" "$TMP/check-contract.out"; then
+    install_contract_nonproof=true
+fi
 if [ "$install_status" -eq 0 ] && [ "$check_status" -eq 0 ] &&
     [ "$hook_status" -eq 0 ] &&
     [ "$inventory" = $'pre-commit\npre-push\npre-push.legacy' ] &&
     cmp -s "$INSTALL_REPO/.githooks/pre-push" \
         "$INSTALL_REPO/.git/hooks/pre-push.legacy" &&
-    cmp -s "$TMP/installed-hook.input" "$TMP/installed-hook.stdin" &&
-    grep -qx '2' "$TMP/installed-hook.argc" &&
-    cmp -s "$TMP/installed-hook.expected-args" \
-        "$TMP/installed-hook.args"; then
+    [ ! -e "$TMP/installed-hook.ambient-git" ] &&
+    grep -Fqx 'ODYSSEUS_TEST_ARGC=2' "$TMP/installed-hook.out" &&
+    grep -Fqx "ODYSSEUS_TEST_ARGS_SHA256=$installed_args_digest" \
+        "$TMP/installed-hook.out" &&
+    grep -Fqx "ODYSSEUS_TEST_STDIN_SHA256=$installed_stdin_digest" \
+        "$TMP/installed-hook.out"; then
     pass "install and check keep the exact hook inventory and full push input"
+elif [ "$install_contract_nonproof" = true ]; then
+    info "NON_PROOF: managed-hook installation requires the Linux execution boundary"
 else
     sed 's/^/    /' "$TMP/install-contract.out" >&2
     sed 's/^/    /' "$TMP/check-contract.out" >&2
     sed 's/^/    /' "$TMP/installed-hook.out" >&2
     fail "installed hooks did not preserve the signed pre-push transaction"
+fi
+
+info "installed managed hooks bind the selected executable provenance"
+cp "$PRECOMMIT_FIXTURE" "$TMP/pre-commit-fixture.saved"
+cat > "$PRECOMMIT_FIXTURE" <<'SH'
+#!/bin/bash
+: > "${POST_INSTALL_REPLACEMENT_MARKER:?}"
+exit 0
+SH
+chmod +x "$PRECOMMIT_FIXTURE"
+(
+    cd "$INSTALL_REPO" || exit 90
+    env -i \
+        PATH="$INSTALL_BIN:/usr/bin:/bin" \
+        HOME="$TMP/hook-home" \
+        PRE_COMMIT_HOME="$TMP/hook-cache" \
+        POST_INSTALL_REPLACEMENT_MARKER="$TMP/post-install-replacement-ran" \
+        "$INSTALL_REPO/.git/hooks/pre-commit"
+) > "$TMP/post-install-replacement.out" 2>&1
+post_install_replacement_status=$?
+cp "$TMP/pre-commit-fixture.saved" "$PRECOMMIT_FIXTURE"
+chmod +x "$PRECOMMIT_FIXTURE"
+if [ "$post_install_replacement_status" -ne 0 ] &&
+    [ ! -e "$TMP/post-install-replacement-ran" ] &&
+    grep -q 'executable provenance changed' \
+        "$TMP/post-install-replacement.out"; then
+    pass "post-install executable replacement fails before selected bytes run"
+elif [ "$install_contract_nonproof" = true ]; then
+    info "NON_PROOF: installed-provider execution requires the Linux boundary"
+else
+    sed 's/^/    /' "$TMP/post-install-replacement.out" >&2
+    fail "an installed hook executed a replaced pre-commit program"
 fi
 
 info "check mode detects a changed managed hook without repairing it"
@@ -597,6 +1083,8 @@ if [ "$tampered_status" -ne 0 ] &&
     grep -q 'installed managed hook inventory is not exact' \
         "$TMP/tampered-check.out"; then
     pass "check mode rejects but does not rewrite a changed managed hook"
+elif boundary_nonproof "$TMP/tampered-check.out"; then
+    info "NON_PROOF: managed-hook checking requires the Linux execution boundary"
 else
     sed 's/^/    /' "$TMP/tampered-check.out" >&2
     fail "check mode repaired or accepted a changed managed hook"
@@ -615,6 +1103,8 @@ stale_inventory=$(hook_inventory "$STALE_REPO")
 if [ "$stale_before_status" -eq 0 ] && [ "$stale_after_status" -eq 0 ] &&
     [ "$stale_inventory" = $'pre-push\npre-push.legacy' ]; then
     pass "install removes stale managed hooks and retains configured hooks"
+elif boundary_nonproof "$TMP/stale-before.out" "$TMP/stale-after.out"; then
+    info "NON_PROOF: managed-hook reconciliation requires the Linux boundary"
 else
     sed 's/^/    /' "$TMP/stale-before.out" >&2
     sed 's/^/    /' "$TMP/stale-after.out" >&2
@@ -654,6 +1144,8 @@ if [ "$unmanaged_status" -ne 0 ] &&
     grep -q 'unmanaged legacy pre-push hook already exists' \
         "$TMP/unmanaged-legacy.out"; then
     pass "install rejects conflicts without changing unmanaged hook content"
+elif boundary_nonproof "$TMP/unmanaged-hook.out" "$TMP/unmanaged-legacy.out"; then
+    info "NON_PROOF: unmanaged-hook conflict testing requires the Linux boundary"
 else
     sed 's/^/    /' "$TMP/unmanaged-hook.out" >&2
     sed 's/^/    /' "$TMP/unmanaged-legacy.out" >&2
@@ -684,6 +1176,8 @@ env \
 poison_status=$?
 if [ "$poison_status" -eq 0 ] && [ ! -e "$TMP/sitecustomize-ran" ]; then
     pass "the version probe and hook commands use a clean Python environment"
+elif boundary_nonproof "$TMP/poisoned-environment.out"; then
+    info "NON_PROOF: managed provider execution requires the Linux boundary"
 else
     sed 's/^/    /' "$TMP/poisoned-environment.out" >&2
     fail "ambient Python startup state entered the trusted helper boundary"
@@ -759,6 +1253,8 @@ if [ "$fifo_status" -ne 0 ] && [ "$hung_status" -ne 0 ] &&
     grep -q 'not a direct regular file' "$TMP/fifo.out" &&
     grep -q 'command timed out' "$TMP/hung.out"; then
     pass "FIFO reads and hung process groups terminate with clear failures"
+elif boundary_nonproof "$TMP/fifo.out" "$TMP/hung.out"; then
+    info "NON_PROOF: contained FIFO/timeout execution requires the Linux boundary"
 else
     sed 's/^/    /' "$TMP/fifo.out" >&2
     sed 's/^/    /' "$TMP/hung.out" >&2
@@ -779,12 +1275,14 @@ if [ "$aggregate_status" -ne 0 ] &&
     grep -q 'fixture validation failure: alpha' "$TMP/aggregate.out" &&
     grep -q 'fixture validation failure: beta' "$TMP/aggregate.out"; then
     pass "the installer reports each repository failure in one run"
+elif boundary_nonproof "$TMP/aggregate.out"; then
+    info "NON_PROOF: contained repository aggregation requires the Linux boundary"
 else
     sed 's/^/    /' "$TMP/aggregate.out" >&2
     fail "the installer stopped before it reported all repository failures"
 fi
 
-info "cleanup preserves a replacement at a swapped temporary-root name"
+info "namespace-owned scratch cannot be swapped onto a host route"
 SWAP_PRECOMMIT="$INSTALL_BIN/pre-commit-cleanup-swap"
 cat > "$SWAP_PRECOMMIT" <<'SH'
 #!/bin/bash
@@ -813,16 +1311,18 @@ env TMPDIR="$SWAP_TMP" \
     --timeout 1 > "$TMP/cleanup-swap.out" 2>&1
 swap_status=$?
 replacement_count=$(find "$SWAP_TMP" -name replacement-marker -type f | wc -l | tr -d ' ')
-if { [ "$swap_status" -ne 0 ] && [ "$replacement_count" -eq 1 ] &&
-        grep -q 'directory changed after binding' "$TMP/cleanup-swap.out" &&
-        grep -q 'cannot safely clean temporary resources' "$TMP/cleanup-swap.out"; } ||
-    { [ "$swap_status" -ne 0 ] && [ "$replacement_count" -eq 0 ] &&
-        grep -Eq 'Read-only file system|Device or resource busy' \
-            "$TMP/cleanup-swap.out"; }; then
-    pass "the boundary blocks a root swap or cleanup preserves its replacement"
+host_scratch_count=$(find "$SWAP_TMP" -mindepth 1 -print | wc -l | tr -d ' ')
+if [ "$swap_status" -ne 0 ] && [ "$replacement_count" -eq 0 ] &&
+    [ "$host_scratch_count" -eq 0 ] &&
+    grep -q 'no trusted secure execution boundary\|no secure execution boundary' \
+        "$TMP/cleanup-swap.out"; then
+    pass "an unsupported host fails closed before allocating scratch"
+elif [ "$swap_status" -ne 0 ] && [ "$replacement_count" -eq 0 ] &&
+    [ "$host_scratch_count" -eq 0 ]; then
+    pass "namespace teardown reclaims a private scratch-route replacement"
 else
     sed 's/^/    /' "$TMP/cleanup-swap.out" >&2
-    fail "cleanup removed or ignored a replacement at a swapped name"
+    fail "a private scratch-route replacement escaped onto the host"
 fi
 
 info "the real locked pre-commit 3.8.0 owns YAML hook-type semantics"
@@ -874,6 +1374,8 @@ if REAL_PRECOMMIT=$(command -v pre-commit 2>/dev/null); then
         printf '%s\0' 'upstream remote' \
             'ssh://upstream.invalid/repo with space' \
             > "$TMP/real-installed-hook.expected-args"
+        real_stdin_digest=$(sha256_file "$TMP/real-installed-hook.input")
+        real_args_digest=$(sha256_file "$TMP/real-installed-hook.expected-args")
         mkdir -p "$TMP/real-hook-home" "$TMP/real-hook-cache"
         (
             cd "$REAL_REPO" || exit 90
@@ -883,9 +1385,6 @@ if REAL_PRECOMMIT=$(command -v pre-commit 2>/dev/null); then
                 PRE_COMMIT_HOME="$TMP/real-hook-cache" \
                 GIT_CONFIG_GLOBAL=/dev/null \
                 GIT_CONFIG_NOSYSTEM=1 \
-                HOOK_ARGC_LOG="$TMP/real-installed-hook.argc" \
-                HOOK_ARGS_LOG="$TMP/real-installed-hook.args" \
-                HOOK_STDIN_LOG="$TMP/real-installed-hook.stdin" \
                 "$REAL_REPO/.git/hooks/pre-push" \
                 'upstream remote' 'ssh://upstream.invalid/repo with space'
         ) < "$TMP/real-installed-hook.input" \
@@ -896,16 +1395,94 @@ if REAL_PRECOMMIT=$(command -v pre-commit 2>/dev/null); then
         if [ "$real_status" -eq 0 ] && [ "$real_hook_status" -eq 0 ] &&
             [ "$real_root_inventory" = $'pre-commit\npre-push\npre-push.legacy' ] &&
             [ "$real_child_inventory" = commit-msg ] &&
-            cmp -s "$TMP/real-installed-hook.input" \
-                "$TMP/real-installed-hook.stdin" &&
-            grep -qx '2' "$TMP/real-installed-hook.argc" &&
-            cmp -s "$TMP/real-installed-hook.expected-args" \
-                "$TMP/real-installed-hook.args"; then
+            grep -Fqx 'ODYSSEUS_TEST_ARGC=2' \
+                "$TMP/real-installed-hook.out" &&
+            grep -Fqx "ODYSSEUS_TEST_ARGS_SHA256=$real_args_digest" \
+                "$TMP/real-installed-hook.out" &&
+            grep -Fqx "ODYSSEUS_TEST_STDIN_SHA256=$real_stdin_digest" \
+                "$TMP/real-installed-hook.out"; then
             pass "real pre-commit 3.8.0 preserves exact push arguments"
         else
             sed 's/^/    /' "$TMP/real-precommit.out" >&2
             sed 's/^/    /' "$TMP/real-installed-hook.out" >&2
             fail "real pre-commit 3.8.0 lost YAML selection or the push transaction"
+        fi
+
+        info "the installed managed pre-commit hook runs the real forbid-or-true policy"
+        if [ "$HOST_KERNEL" = Linux ]; then
+            POLICY_REPO="$TMP/real-forbid-or-true"
+            make_repo "$POLICY_REPO"
+            awk '
+                /^      - id:/ {
+                    hooks += 1
+                    if (hooks == 2) exit
+                }
+                { print }
+            ' "$ROOT/.pre-commit-config.yaml" \
+                > "$POLICY_REPO/.pre-commit-config.yaml"
+            cp "$ROOT/scripts/check_silent_failures.py" \
+                "$POLICY_REPO/scripts/check_silent_failures.py"
+            printf '#!/bin/sh\nprobe || true\n' \
+                > "$POLICY_REPO/scripts/suppressed.sh"
+            chmod +x "$POLICY_REPO/scripts/suppressed.sh"
+            if grep -Eq '^[[:space:]]*- id: forbid-or-true$' \
+                "$POLICY_REPO/.pre-commit-config.yaml"; then
+                real_forbid_id_status=0
+            else
+                real_forbid_id_status=1
+            fi
+            env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+                "$SYSTEM_GIT" -C "$POLICY_REPO" add \
+                .pre-commit-config.yaml scripts/check_silent_failures.py \
+                scripts/suppressed.sh
+            env \
+                PATH="$(dirname "$REAL_PRECOMMIT"):/usr/bin:/bin" \
+                HOME="$TMP/real-version-home" \
+                GIT_CONFIG_GLOBAL=/dev/null \
+                GIT_CONFIG_NOSYSTEM=1 \
+                ODYSSEUS_ROOT="$POLICY_REPO" \
+                ODYSSEUS_PRECOMMIT_BINARY="$REAL_PRECOMMIT" \
+                ODYSSEUS_PRECOMMIT_EXPECTED_VERSION="$real_version" \
+                INSTALL=true \
+                /bin/bash "$POLICY_REPO/$INSTALL_WRAPPER_REL" \
+                > "$TMP/real-forbid-install.out" 2>&1
+            real_forbid_install_status=$?
+            printf 'default_install_hook_types: [pre-commit]\nrepos: []\n' \
+                > "$POLICY_REPO/.pre-commit-config.yaml"
+            printf 'raise SystemExit(0)\n' \
+                > "$POLICY_REPO/scripts/check_silent_failures.py"
+            env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+                "$SYSTEM_GIT" -C "$POLICY_REPO" add \
+                .pre-commit-config.yaml scripts/check_silent_failures.py
+            real_forbid_restaged_status=$?
+            (
+                cd "$POLICY_REPO" || exit 90
+                env \
+                    PATH="$(dirname "$REAL_PRECOMMIT"):/usr/bin:/bin" \
+                    HOME="$TMP/real-hook-home" \
+                    PRE_COMMIT_HOME="$TMP/real-hook-cache" \
+                    GIT_CONFIG_GLOBAL=/dev/null \
+                    GIT_CONFIG_NOSYSTEM=1 \
+                    ODYSSEUS_TRUSTED_POLICY_ROOT=/hostile/policy \
+                    ODYSSEUS_PRE_COMMIT_PROVIDER=/hostile/provider \
+                    "$POLICY_REPO/.git/hooks/pre-commit"
+            ) > "$TMP/real-forbid-hook.out" 2>&1
+            real_forbid_hook_status=$?
+            if [ "$real_forbid_install_status" -eq 0 ] && \
+                [ "$real_forbid_restaged_status" -eq 0 ] && \
+                [ "$real_forbid_id_status" -eq 0 ] && \
+                [ "$real_forbid_hook_status" -ne 0 ] && \
+                grep -Eq \
+                    'scripts/suppressed\.sh:2: forbidden .*failure workaround' \
+                    "$TMP/real-forbid-hook.out"; then
+                pass "installed managed policy rejects a staged suppression without ambient authority"
+            else
+                sed 's/^/    /' "$TMP/real-forbid-install.out" >&2
+                sed 's/^/    /' "$TMP/real-forbid-hook.out" >&2
+                fail "installed forbid-or-true did not execute through the managed boundary"
+            fi
+        else
+            info "SKIP (non-proof): installed managed-policy execution requires Linux"
         fi
     else
         fail "real pre-commit 3.8.0 is required; found ${real_version:-unknown}"
@@ -919,10 +1496,13 @@ cat > "$RED_HARNESS" <<'PY'
 #!/usr/bin/env python3
 """Behavior fault harness for the pre-commit installer boundary."""
 
+import ctypes
 import errno
+import hashlib
 import importlib.util
 import os
 import resource
+import select
 import shutil
 import shlex
 import signal
@@ -1098,6 +1678,164 @@ def committed_publication_behavior(subject, base):
     return safe
 
 
+def candidate_receipt_drift_behavior(subject, base):
+    """A rejected candidate is reported from live descriptor-bound bytes."""
+
+    fixture = InstallFixture(subject, base, "native")
+    payloads = {"pre-push": b"opaque generated hook bytes\n"}
+    replacement = b"concurrent candidate replacement\n"
+    state = {"fired": False}
+
+    def replace_candidate_entry():
+        if state["fired"]:
+            return
+        names = [
+            name
+            for name in os.listdir(fixture.git)
+            if name.startswith(".odysseus-hooks-")
+        ]
+        if len(names) != 1:
+            return
+        target = os.path.join(fixture.git, names[0], "pre-push")
+        if not os.path.isfile(target):
+            return
+        write_file(target, replacement, 0o755)
+        state["fired"] = True
+
+    error = None
+    try:
+        subject.install(
+            fixture.repo,
+            {"pre-push"},
+            payloads,
+            fixture.native,
+            fixture.root,
+            replace_candidate_entry,
+        )
+    except (OSError, subject.SetupError) as caught:
+        error = caught
+
+    names = [
+        name
+        for name in os.listdir(fixture.git)
+        if name.startswith(".odysseus-hooks-")
+    ]
+    live_path = os.path.join(fixture.git, names[0]) if len(names) == 1 else None
+    live_digest = None
+    if live_path is not None:
+        directory = subject.BoundDir.open(live_path, safe=True)
+        try:
+            live_digest = subject.manifest_digest(
+                subject.content(subject.inventory(directory))
+            )
+        finally:
+            directory.close()
+    message = str(error) if error is not None else ""
+    safe = (
+        state["fired"]
+        and error is not None
+        and live_path is not None
+        and live_path in message
+        and live_digest is not None
+        and "digest=sha256:{}".format(live_digest) in message
+    )
+    if not safe:
+        print(
+            "rejected candidate receipt did not describe live bytes: "
+            "fired={},path={!r},digest={!r},error={!r}".format(
+                state["fired"], live_path, live_digest, message
+            )
+        )
+    fixture.close()
+    return safe
+
+
+def publication_commit_window_race_behavior(subject, base):
+    """A forward exchange is committed even if a same-UID race changes its input."""
+
+    failures = []
+    for race in ("replacement", "mutation"):
+        fixture = InstallFixture(subject, base, "native")
+        payloads = {"pre-push": fixture.payload}
+        malicious = (race + " commit-window bytes\n").encode("utf-8")
+        original_rename = subject.atomic_rename
+        fired = {"value": False}
+
+        def racing_rename(parent_fd, source, destination, exchange=False):
+            candidate_path = os.path.join(fixture.git, source)
+            if race == "replacement":
+                preserved = source + ".verified-object"
+                os.rename(source, preserved, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+                os.mkdir(source, 0o755, dir_fd=parent_fd)
+                write_file(os.path.join(candidate_path, "pre-push"), malicious, 0o755)
+                write_file(
+                    os.path.join(candidate_path, "pre-push.legacy"),
+                    fixture.native_data,
+                    0o755,
+                )
+            else:
+                write_file(os.path.join(candidate_path, "pre-push"), malicious, 0o755)
+            fired["value"] = True
+            return original_rename(parent_fd, source, destination, exchange=exchange)
+
+        subject.atomic_rename = racing_rename
+        error = None
+        try:
+            subject.install(
+                fixture.repo,
+                {"pre-push"},
+                payloads,
+                fixture.native,
+                fixture.root,
+                lambda: None,
+            )
+        except (OSError, subject.SetupError) as caught:
+            error = caught
+        finally:
+            subject.atomic_rename = original_rename
+        active = route_snapshot(fixture.hooks_path)
+        active_bytes = active[3].get("pre-push", (None, None, None))[2]
+        active_content = {
+            name: (item[2], item[1])
+            for name, item in active[3].items()
+            if item[2] is not None
+        }
+        active_digest = subject.manifest_digest(active_content)
+        desired = {
+            "pre-push": (fixture.payload, 0o755),
+            "pre-push.legacy": (
+                fixture.native_data,
+                stat.S_IMODE(os.stat(fixture.native_path).st_mode),
+            ),
+        }
+        expected_digest = subject.manifest_digest(desired)
+        message = str(error) if error is not None else ""
+        if not (
+            fired["value"]
+            and error is not None
+            and active_bytes == malicious
+            and "committed and was not rolled back" in message
+            and "did not commit" not in message
+            and "live-active" in message
+            and "identity={}:{}".format(active[0], active[1]) in message
+            and "digest=sha256:{}".format(active_digest) in message
+            and "expected-candidate" in message
+            and "digest=sha256:{}".format(expected_digest) in message
+            and "expected-recovery" in message
+            and "live-recovery" in message
+        ):
+            failures.append(
+                "{}(fired={},active={!r},error={!r})".format(
+                    race, fired["value"], active_bytes, message
+                )
+            )
+        fixture.close()
+    if failures:
+        print("commit-window race was misclassified: {}".format(", ".join(failures)))
+        return False
+    return True
+
+
 def directory_preservation_behavior(subject, base):
     broken = []
     for mode in (0o750, 0o755):
@@ -1270,7 +2008,7 @@ def process_group_behavior(subject, base):
 def signal_cancellation_behavior(subject, base):
     broken = []
     child_code = "import signal; signal.pause()"
-    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT, signal.SIGQUIT):
         original_popen = subject.subprocess.Popen
         state = {"process": None, "cancelled": False}
 
@@ -1319,12 +2057,200 @@ def signal_cancellation_behavior(subject, base):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=1)
+
+    if hasattr(signal, "pthread_sigmask"):
+        cancellation_signals = (
+            signal.SIGTERM, signal.SIGHUP, signal.SIGINT, signal.SIGQUIT
+        )
+        for sig in cancellation_signals:
+            inherited_handler = signal.getsignal(sig)
+            inherited_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+            for mode in ("ignored", "blocked"):
+                state = {"process": None, "cancelled": False}
+                try:
+                    signal.pthread_sigmask(signal.SIG_SETMASK, inherited_mask)
+                    signal.signal(sig, inherited_handler)
+                    if mode == "ignored":
+                        signal.signal(sig, signal.SIG_IGN)
+                    else:
+                        signal.pthread_sigmask(signal.SIG_BLOCK, {sig})
+                    expected_handler = signal.getsignal(sig)
+                    expected_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+                    original_popen = subject.subprocess.Popen
+
+                    def signal_with_inherited_state(*args, **kwargs):
+                        process = original_popen(*args, **kwargs)
+                        state["process"] = process
+                        os.kill(os.getpid(), sig)
+                        return process
+
+                    subject.subprocess.Popen = signal_with_inherited_state
+                    try:
+                        try:
+                            subject.run(
+                                [sys.executable, "-I", "-S", "-c", child_code],
+                                base,
+                                {},
+                                10,
+                            )
+                        except subject.SetupError as error:
+                            state["cancelled"] = (
+                                signal.Signals(sig).name in str(error)
+                            )
+                    finally:
+                        subject.subprocess.Popen = original_popen
+                    restored = (
+                        signal.getsignal(sig) == expected_handler
+                        and set(signal.pthread_sigmask(signal.SIG_BLOCK, set()))
+                        == set(expected_mask)
+                    )
+                    process = state["process"]
+                    extinct = False
+                    if process is not None:
+                        try:
+                            os.killpg(process.pid, 0)
+                        except ProcessLookupError:
+                            extinct = True
+                    if not state["cancelled"] or not restored or not extinct:
+                        broken.append(
+                            "{}-{}(cancelled={},restored={},extinct={})".format(
+                                signal.Signals(sig).name,
+                                mode,
+                                state["cancelled"],
+                                restored,
+                                extinct,
+                            )
+                        )
+                finally:
+                    signal.signal(sig, inherited_handler)
+                    signal.pthread_sigmask(signal.SIG_SETMASK, inherited_mask)
+
+        original_signal = subject.signal.signal
+        original_popen = subject.subprocess.Popen
+        installed = {"count": 0, "spawned": False}
+        handlers = {
+            signum: signal.getsignal(signum) for signum in cancellation_signals
+        }
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+
+        def fail_second_handler(signum, handler):
+            if callable(handler):
+                installed["count"] += 1
+                if installed["count"] == 2:
+                    raise ValueError("synthetic handler failure")
+            return original_signal(signum, handler)
+
+        def observe_spawn(*args, **kwargs):
+            installed["spawned"] = True
+            return original_popen(*args, **kwargs)
+
+        subject.signal.signal = fail_second_handler
+        subject.subprocess.Popen = observe_spawn
+        failed_closed = False
+        try:
+            try:
+                subject.run([sys.executable, "-c", "pass"], base, {}, 1)
+            except subject.SetupError:
+                failed_closed = True
+        finally:
+            subject.signal.signal = original_signal
+            subject.subprocess.Popen = original_popen
+        restored = (
+            all(signal.getsignal(signum) == handlers[signum] for signum in handlers)
+            and set(signal.pthread_sigmask(signal.SIG_BLOCK, set())) == set(mask)
+        )
+        if not failed_closed or installed["spawned"] or not restored:
+            broken.append(
+                "partial-handler-install(failed_closed={},spawned={},restored={})".format(
+                    failed_closed, installed["spawned"], restored
+                )
+            )
     if broken:
         print(
             "spawn-window cancellation returned before teardown: {}".format(
                 ", ".join(broken)
             )
         )
+        return False
+    return True
+
+
+def parent_death_behavior(subject, base):
+    """A child dies when its supervisor exits during preexec setup."""
+
+    if not sys.platform.startswith("linux"):
+        print("NON_PROOF_SKIP: Linux parent-death contract is not observable here")
+        return None
+    ready_read, ready_write = os.pipe()
+    gate_read, gate_write = os.pipe()
+    original_setrlimit = subject.resource.setrlimit
+    notified = {"value": False}
+
+    def paused_setrlimit(key, value):
+        if not notified["value"]:
+            notified["value"] = True
+            os.write(ready_write, str(os.getpid()).encode("ascii") + b"\n")
+            if os.read(gate_read, 1) != b"x":
+                os._exit(98)
+        return original_setrlimit(key, value)
+
+    subject.resource.setrlimit = paused_setrlimit
+    supervisor = os.fork()
+    if supervisor == 0:
+        os.close(ready_read)
+        os.close(gate_write)
+        try:
+            subprocess.Popen(
+                [sys.executable, "-I", "-S", "-c", "import time; time.sleep(30)"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                pass_fds=(ready_write, gate_read),
+                start_new_session=True,
+                preexec_fn=subject._child_resource_limits(30),
+            )
+        finally:
+            os._exit(0)
+    subject.resource.setrlimit = original_setrlimit
+    os.close(ready_write)
+    os.close(gate_read)
+    try:
+        ready, _, _ = select.select([ready_read], [], [], 5)
+        raw = os.read(ready_read, 64) if ready else b""
+    finally:
+        os.close(ready_read)
+    if not raw:
+        os.close(gate_write)
+        os.kill(supervisor, signal.SIGKILL)
+        os.waitpid(supervisor, 0)
+        print("supervisor did not report its pre-boundary child")
+        return False
+    child = int(raw.strip().decode("ascii"))
+    os.kill(supervisor, signal.SIGKILL)
+    os.waitpid(supervisor, 0)
+    os.write(gate_write, b"x")
+    os.close(gate_write)
+    deadline = time.monotonic() + 3
+    extinct = False
+    while time.monotonic() < deadline:
+        try:
+            with open("/proc/{}/stat".format(child), "rb") as stream:
+                state = stream.read().split()[2]
+            if state == b"Z":
+                extinct = True
+                break
+            os.kill(child, 0)
+        except (FileNotFoundError, ProcessLookupError):
+            extinct = True
+            break
+        time.sleep(0.02)
+    if not extinct:
+        try:
+            os.killpg(child, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        print("pre-bubblewrap child survived its supervisor")
         return False
     return True
 
@@ -1394,7 +2320,7 @@ def terminal_cancellation_behavior(helper, base, git, signal_name):
     subject.run = lambda _argv, _cwd, _env, _timeout: (
         0, b"pre-commit 3.8.0\n", b""
     )
-    subject.configs_under = lambda _root: [root_config, child_config]
+    subject.configs_under = lambda _root, _deadline=None: [root_config, child_config]
     subject.bind_repo = bind_repo
     subject.generate = generate
     subject.emit = lambda kind, message: emitted.append(
@@ -1505,55 +2431,263 @@ def observer_exit_latch_behavior(subject):
 
 
 def short_write_behavior(subject, base, git):
-    config_path = os.path.join(base, "short-write-source.yaml")
+    del base, git
     prefix = b"repos: []\n"
     source = prefix + b"default_install_hook_types: [pre-commit, pre-push]\n"
-    write_file(config_path, source)
-    config = subject.BoundFile.open(config_path)
-    tree = subject.PrivateTree()
-    original_open = subject.os.open
     original_write = subject.os.write
-    state = {"descriptor": None, "fired": False}
-
-    def tracked_open(path, flags, mode=0o777, *, dir_fd=None):
-        descriptor = original_open(path, flags, mode, dir_fd=dir_fd)
-        if (
-            os.path.basename(os.fspath(path)) == ".pre-commit-config.yaml"
-            and flags & (os.O_WRONLY | os.O_RDWR)
-            and flags & os.O_CREAT
-        ):
-            state["descriptor"] = descriptor
-        return descriptor
+    state = {"fired": False}
 
     def short_write(descriptor, data):
-        if descriptor == state["descriptor"] and not state["fired"]:
+        if not state["fired"] and bytes(data) == source:
             state["fired"] = True
             return original_write(descriptor, data[: len(prefix)])
         return original_write(descriptor, data)
 
-    subject.os.open = tracked_open
     subject.os.write = short_write
-    result = None
+    snapshot = None
     rejected = False
-    home = tree.mkdir("short-home")
-    cache = tree.mkdir("short-cache")
-    environment = subject.clean_env(git, git, home, cache)
     try:
         try:
-            _, result = subject.shadow_repo(
-                tree, "short-repo", config, git, environment, 5
+            snapshot = subject.BoundTool.sealed_bytes(
+                os.path.join(
+                    subject.SCRATCH_REPO, ".pre-commit-config.yaml"
+                ),
+                source,
+                executable=False,
             )
         except (OSError, subject.SetupError):
             rejected = True
     finally:
-        subject.os.open = original_open
         subject.os.write = original_write
-        tree.close()
-    exact = result is not None and result.data == source
-    if not state["fired"] or not (rejected or exact):
-        print("a permitted short write produced truncated valid configuration bytes")
+    exact = False
+    if snapshot is not None:
+        try:
+            snapshot.verify()
+            exact = os.pread(snapshot.descriptor, len(source) + 1, 0) == source
+        finally:
+            snapshot.close()
+    safe = (
+        sys.platform.startswith("linux")
+        and state["fired"]
+        and exact
+        and not rejected
+    ) or (not sys.platform.startswith("linux") and rejected)
+    if not safe:
+        print(
+            "a short write changed the sealed configuration snapshot: "
+            "fired={}, rejected={}, exact={}".format(
+                state["fired"], rejected, exact
+            )
+        )
         return False
     return True
+
+
+def single_generation_transaction_behavior(subject):
+    """Discovery and optional environment install share one namespace run."""
+
+    class FakeConfig:
+        data = b"repos: []\n"
+
+        def __init__(self):
+            self.verifications = 0
+
+        def verify(self):
+            self.verifications += 1
+
+    class FakeInput:
+        def __init__(self, path, data, executable):
+            self.path = path
+            self.data = data
+            self.executable = executable
+            self.closed = 0
+
+        def close(self):
+            self.closed += 1
+
+    class FakeExecution:
+        def __init__(self, path):
+            self.path = path
+
+    class FakeCommand:
+        def __init__(self, path):
+            self.execution = FakeExecution(path)
+            self.interpreter_source = None
+
+    config = FakeConfig()
+    repo = type("FakeRepo", (), {"config": config, "path": "/runtime/repo"})()
+    policy = FakeConfig()
+    driver = "/runtime/generate-hooks"
+    pre_commit = FakeCommand("/runtime/pre-commit")
+    git = FakeCommand("/runtime/git")
+    created = []
+    calls = []
+    archive_calls = []
+    obsolete_calls = []
+
+    original_sealed = subject.BoundTool.__dict__["sealed_bytes"]
+    original_run = subject.run
+    original_archive = subject._generated_archive
+    original_runtime = subject._hook_runtime
+    had_shadow = hasattr(subject, "shadow_repo")
+    had_inventory = hasattr(subject, "generated_inventory")
+    original_shadow = getattr(subject, "shadow_repo", None)
+    original_inventory = getattr(subject, "generated_inventory", None)
+
+    def fake_sealed(_cls, path, data, executable=True):
+        item = FakeInput(path, data, executable)
+        created.append(item)
+        return item
+
+    def fake_run(
+        argv, cwd, env, timeout, readonly_paths=(), input_files=()
+    ):
+        calls.append(
+            (
+                tuple(argv), cwd, dict(env), timeout,
+                tuple(readonly_paths), tuple(input_files),
+            )
+        )
+        return (0, b"archive", b"")
+
+    def fake_archive(data, install_python):
+        archive_calls.append((data, install_python))
+        return {"pre-push": b"canonical hook\n"}
+
+    def fake_runtime(_pre_commit, _git, _repo, _policy):
+        return {
+            "source": "/runtime/pre-commit",
+            "source_digest": "a" * 64,
+            "interpreter": "/usr/bin/python3",
+            "interpreter_digest": "b" * 64,
+            "boundary": "/usr/bin/bwrap",
+            "boundary_digest": "c" * 64,
+            "repository": "/runtime/repository",
+            "git_directory": "/runtime/repository/.git",
+            "git_common": "/runtime/repository/.git",
+            "home": "/runtime/home",
+        }
+
+    def obsolete(*_args, **_kwargs):
+        obsolete_calls.append(True)
+        raise AssertionError("obsolete host generation helper was reached")
+
+    error = None
+    results = []
+    subject.BoundTool.sealed_bytes = classmethod(fake_sealed)
+    subject.run = fake_run
+    subject._generated_archive = fake_archive
+    subject._hook_runtime = fake_runtime
+    subject.shadow_repo = obsolete
+    subject.generated_inventory = obsolete
+    try:
+        try:
+            for install in (False, True):
+                results.append(
+                    subject.generate(
+                        repo,
+                        driver,
+                        pre_commit,
+                        git,
+                        {"LANG": "C"},
+                        7,
+                        install,
+                        policy,
+                    )
+                )
+        except BaseException as caught:
+            error = caught
+    finally:
+        subject.BoundTool.sealed_bytes = original_sealed
+        subject.run = original_run
+        subject._generated_archive = original_archive
+        subject._hook_runtime = original_runtime
+        if had_shadow:
+            subject.shadow_repo = original_shadow
+        else:
+            del subject.shadow_repo
+        if had_inventory:
+            subject.generated_inventory = original_inventory
+        else:
+            del subject.generated_inventory
+
+    expected_modes = ("check", "install")
+    calls_exact = len(calls) == 2 and all(
+        call[0] == (
+            driver,
+            pre_commit.execution.path,
+            pre_commit.execution.path,
+            git.execution.path,
+            git.execution.path,
+            mode,
+        )
+        and call[1] == "/"
+        and call[2] == {"LANG": "C"}
+        and call[3] == 7
+        and call[4] == ()
+        and len(call[5]) == 1
+        and call[5][0] is created[index]
+        for index, (call, mode) in enumerate(zip(calls, expected_modes))
+    )
+    inputs_exact = len(created) == 2 and all(
+        item.path
+        == os.path.join(subject.SCRATCH_REPO, ".pre-commit-config.yaml")
+        and item.data == config.data
+        and item.executable is False
+        and item.closed == 1
+        for item in created
+    )
+    results_exact = results == [
+        ({"pre-push"}, {"pre-push": b"canonical hook\n"}),
+        ({"pre-push"}, {"pre-push": b"canonical hook\n"}),
+    ]
+    safe = (
+        error is None
+        and calls_exact
+        and inputs_exact
+        and results_exact
+        and config.verifications == 4
+        and archive_calls
+        == [
+                (
+                    b"archive",
+                    fake_runtime(
+                        pre_commit,
+                        git,
+                        repo,
+                        policy,
+                    ),
+                ),
+            (
+                b"archive",
+                fake_runtime(
+                    pre_commit,
+                    git,
+                    repo,
+                    policy,
+                ),
+            ),
+        ]
+        and not obsolete_calls
+    )
+    if not safe:
+        print(
+            "generation escaped its one namespace transaction: "
+            "error={!r},calls={!r},inputs={!r},results={!r},verifications={},"
+            "archives={!r},obsolete={!r}".format(
+                error,
+                calls,
+                [
+                    (item.path, item.data, item.executable, item.closed)
+                    for item in created
+                ],
+                results,
+                config.verifications,
+                archive_calls,
+                obsolete_calls,
+            )
+        )
+    return safe
 
 
 def descriptor_count():
@@ -1578,78 +2712,38 @@ def descriptor_numbers():
 
 def acquisition_failure_behavior(subject, base):
     broken = []
-    original_tempdir = tempfile.tempdir
     original_mkdir = subject.os.mkdir
     original_open = subject.os.open
-    tempfile.tempdir = base
-    for fault in ("private-mkdir", "private-root-open"):
-        before_names = set(os.listdir(base))
+    if sys.platform.startswith("linux"):
+        original_fsync = subject.os.fsync
         before_fds = descriptor_numbers()
-        state = {"name": None, "fired": False}
+        state = {"fired": False}
 
-        def mkdir_fault(path, mode=0o777, *, dir_fd=None):
-            if dir_fd is not None and state["name"] is None:
-                state["name"] = os.fspath(path)
-                if fault == "private-mkdir":
-                    state["fired"] = True
-                    raise OSError(errno.EIO, "injected private mkdir failure")
-            return original_mkdir(path, mode, dir_fd=dir_fd)
+        def sealed_fsync_fault(_descriptor):
+            state["fired"] = True
+            raise OSError(errno.EIO, "injected sealed-input fsync failure")
 
-        def open_fault(path, flags, mode=0o777, *, dir_fd=None):
-            if (
-                fault == "private-root-open"
-                and state["name"] is not None
-                and os.path.basename(os.fspath(path)) == state["name"]
-                and flags & os.O_DIRECTORY
-            ):
-                state["fired"] = True
-                raise OSError(errno.EIO, "injected private root-open failure")
-            return original_open(path, flags, mode, dir_fd=dir_fd)
-
-        subject.os.mkdir = mkdir_fault
-        subject.os.open = open_fault
+        subject.os.fsync = sealed_fsync_fault
         error = None
         try:
             try:
-                subject.PrivateTree()
+                subject.BoundTool.sealed_bytes(
+                    os.path.join(subject.SCRATCH_REPO, "input"),
+                    b"sealed input\n",
+                    executable=False,
+                )
             except (OSError, subject.SetupError) as caught:
                 error = caught
         finally:
-            subject.os.mkdir = original_mkdir
-            subject.os.open = original_open
-        after_names = set(os.listdir(base))
+            subject.os.fsync = original_fsync
         after_fds = descriptor_numbers()
-        leaked_fds = sorted(after_fds - before_fds)
-        leftovers = sorted(after_names - before_names)
-        expected_leftovers = (
-            [state["name"]] if fault == "private-root-open" else []
-        )
-        preserved_path = (
-            os.path.join(base, state["name"])
-            if fault == "private-root-open" and state["name"] is not None
-            else None
-        )
-        reported = (
-            preserved_path is None or
-            (error is not None and preserved_path in str(error))
-        )
-        for descriptor in leaked_fds:
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
-        for name in leftovers:
-            shutil.rmtree(os.path.join(base, name), ignore_errors=True)
-        if (not state["fired"] or error is None or leaked_fds or
-                leftovers != expected_leftovers or not reported):
+        if not state["fired"] or error is None or after_fds != before_fds:
             broken.append(
-                "{}(fired={},error={},fds={},paths={},reported={})".format(
-                    fault, state["fired"], error, leaked_fds, leftovers,
-                    reported,
+                "sealed-input(fired={},error={},fds={})".format(
+                    state["fired"], error, sorted(after_fds - before_fds)
                 )
             )
 
-    tempfile.tempdir = original_tempdir
     for fault in ("candidate-mkdir", "candidate-bind"):
         fixture = InstallFixture(subject, base, "native")
         before_names = set(os.listdir(fixture.git))
@@ -1827,7 +2921,10 @@ def descriptor_behavior(subject, base):
     original_git_value = subject.git_value
     original_run = subject.run
 
-    def controlled_git_value(_git, repo, args, _env, _timeout):
+    def controlled_git_value(
+        _git, repo, args, _env, _timeout, readonly_paths=()
+    ):
+        del readonly_paths
         if args == ["rev-parse", "--show-toplevel"]:
             return repo
         if args == ["rev-parse", "--absolute-git-dir"]:
@@ -1836,7 +2933,8 @@ def descriptor_behavior(subject, base):
             return os.path.join(repo, ".git")
         raise AssertionError(args)
 
-    def controlled_run(argv, _cwd, _env, _timeout):
+    def controlled_run(argv, _cwd, _env, _timeout, readonly_paths=()):
+        del readonly_paths
         if argv[-4:] == ["config", "--show-origin", "--get", "core.hooksPath"]:
             return (1, b"", b"")
         raise AssertionError(argv)
@@ -1929,159 +3027,74 @@ def named_route_behavior(subject, base):
     return True
 
 
-def preserve_private_tree_closes(subject):
-    """Keep private-tree bytes for an execution assertion, but close all fds."""
-
-    original_close = subject.PrivateTree.close
-    preserved = []
-
-    def preserve(tree):
-        preserved.append(tree.path)
-        if tree.root is not None:
-            tree.root.close()
-        if tree.parent is not None:
-            tree.parent.close()
-        tree.root = None
-        tree.parent = None
-        return None
-
-    subject.PrivateTree.close = preserve
-    return original_close, preserved
-
-
-def private_marker_exists(preserved, name):
-    return any(
-        os.path.isfile(os.path.join(path, "home", name))
-        for path in preserved
-    )
-
-
-def discard_preserved_trees(paths):
-    for path in paths:
-        shutil.rmtree(path, ignore_errors=True)
-
-
 def tool_swap_behavior(subject, base, git):
+    del git
     broken = []
+    exercised = 0
     for swap_target in ("pre-commit", "git"):
-        root = tempfile.mkdtemp(
+        source_root = tempfile.mkdtemp(
             prefix="{}-swap-".format(swap_target), dir=base
         )
-        native_dir = os.path.join(root, ".githooks")
-        os.mkdir(native_dir, 0o700)
-        write_file(
-            os.path.join(native_dir, "pre-push"),
-            b"#!/bin/sh\nexit 0\n",
-            0o755,
-        )
-        original_marker = "original-pre-commit-ran"
-        replacement_marker = "replacement-pre-commit-ran"
-        original_git_marker = "original-git-ran"
-        replacement_git_marker = "replacement-git-ran"
-        tool = os.path.join(root, "pre-commit")
-        replacement = os.path.join(root, "pre-commit-replacement")
-        git_tool = os.path.join(root, "git")
-        git_replacement = os.path.join(root, "git-replacement")
-        write_file(
-            tool,
-            (
-                "#!/bin/sh\n"
-                "git --version >/dev/null\n"
-                "printf original > \"$HOME/{!s}\"\n"
-                "printf 'pre-commit 3.8.0\\n'\n"
-            ).format(original_marker).encode("utf-8"),
-            0o755,
-        )
-        write_file(
-            replacement,
-            (
-                "#!/bin/sh\n"
-                "printf replacement > \"$HOME/{!s}\"\n"
-                "printf 'pre-commit 3.8.0\\n'\n"
-            ).format(replacement_marker).encode("utf-8"),
-            0o755,
-        )
-        write_file(
-            git_tool,
-            (
-                "#!/bin/sh\n"
-                "printf original > \"$HOME/{!s}\"\n"
-                "printf 'git version controlled\\n'\n"
-            ).format(original_git_marker).encode("utf-8"),
-            0o755,
-        )
-        write_file(
-            git_replacement,
-            (
-                "#!/bin/sh\n"
-                "printf replacement > \"$HOME/{!s}\"\n"
-                "printf 'git version controlled\\n'\n"
-            ).format(replacement_git_marker).encode("utf-8"),
-            0o755,
-        )
-
-        original_popen = subject.subprocess.Popen
-        original_close, preserved = preserve_private_tree_closes(subject)
-        original_emit = subject.emit
-        emitted = []
-        subject.emit = lambda kind, message: emitted.append(
-            "{}\t{}".format(kind, message)
-        )
-        state = {"swapped": False}
+        tool = os.path.join(source_root, swap_target)
+        replacement = os.path.join(source_root, swap_target + "-replacement")
+        original = (
+            "#!/bin/sh\nprintf 'original-{}\\n'\n".format(swap_target)
+        ).encode("utf-8")
+        replacement_data = (
+            "#!/bin/sh\nprintf 'replacement-{}\\n'\n".format(swap_target)
+        ).encode("utf-8")
+        write_file(tool, original, 0o755)
+        write_file(replacement, replacement_data, 0o755)
+        bound_tools = []
+        boundary = subject.ReadOnlyExecutionBoundary(bound_tools)
         descriptors_before = descriptor_count()
-
-        def swap_at_spawn(*args, **kwargs):
-            if not state["swapped"]:
-                if swap_target == "pre-commit":
-                    os.replace(replacement, tool)
-                else:
-                    os.replace(git_replacement, git_tool)
-                state["swapped"] = True
-            return original_popen(*args, **kwargs)
-
-        subject.subprocess.Popen = swap_at_spawn
+        unavailable = False
+        source_rejected = False
+        snapshot_exact = False
+        source = None
         try:
-            status = subject.main([
-                "--root", root,
-                "--pre-commit", tool,
-                "--git", git_tool,
-                "--mode", "check",
-                "--expected-version", "3.8.0",
-                "--timeout", "5",
-            ])
+            try:
+                boundary.require()
+            except subject.SetupError as error:
+                unavailable = "secure execution boundary" in str(error)
+            if not unavailable:
+                source = subject.BoundTool.open(tool)
+                bound_tools.append(source)
+                bound = subject.bind_executable(
+                    source,
+                    boundary.tree,
+                    swap_target,
+                    bound_tools,
+                    boundary,
+                )
+                os.replace(replacement, tool)
+                try:
+                    source.verify()
+                except subject.SetupError:
+                    source_rejected = True
+                bound.execution.verify()
+                snapshot_exact = (
+                    os.pread(bound.execution.descriptor, len(original) + 1, 0)
+                    == original
+                    and bound.execution.path != tool
+                )
         finally:
-            subject.subprocess.Popen = original_popen
-            subject.PrivateTree.close = original_close
-            subject.emit = original_emit
-
-        original_ran = private_marker_exists(preserved, original_marker)
-        replacement_ran = private_marker_exists(preserved, replacement_marker)
-        original_git_ran = private_marker_exists(preserved, original_git_marker)
-        replacement_git_ran = private_marker_exists(
-            preserved, replacement_git_marker
-        )
+            for item in reversed(bound_tools):
+                item.close()
         descriptor_delta = descriptor_count() - descriptors_before
-        swapped = state["swapped"]
-        unavailable = status != 0 and not swapped and any(
-            marker in line
-            for marker in (
-                "no trusted secure execution boundary",
-                "no secure execution boundary",
-            )
-            for line in emitted
-        )
-        discard_preserved_trees(preserved)
-        shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(source_root, ignore_errors=True)
         if unavailable:
+            if sys.platform.startswith("linux"):
+                broken.append("{}(boundary-unavailable)".format(swap_target))
             continue
-        if (status == 0 or not swapped or replacement_ran or
-                replacement_git_ran or not original_ran or
-                not original_git_ran or descriptor_delta):
+        exercised += 1
+        if not source_rejected or not snapshot_exact or descriptor_delta:
             broken.append(
-                "{}(status={},swapped={},pre-commit={}/{},git={}/{},fds={})".format(
-                    swap_target, status, swapped, original_ran,
-                    replacement_ran, original_git_ran,
-                    replacement_git_ran, descriptor_delta,
+                "{}(source_rejected={},snapshot_exact={},fds={})".format(
+                    swap_target,
+                    source_rejected,
+                    snapshot_exact,
+                    descriptor_delta,
                 )
             )
     if broken:
@@ -2091,24 +3104,138 @@ def tool_swap_behavior(subject, base, git):
             )
         )
         return False
+    if not exercised:
+        print("NON_PROOF_SKIP: immutable tool routing requires Linux containment")
+        return None
     return True
 
 
+def immutable_snapshot_behavior(subject, base):
+    """A same-UID writer cannot alter verified execution bytes in place."""
+
+    source_root = tempfile.mkdtemp(prefix="immutable-snapshot-source-", dir=base)
+    source_path = os.path.join(source_root, "tool")
+    original = b"#!/bin/sh\nprintf original\\n\n"
+    replacement = b"#!/bin/sh\nprintf replacement\n"
+    write_file(source_path, original, 0o755)
+    tree = subject.NamespaceTree(subject.RUNTIME_ROOT)
+    source = None
+    snapshot = None
+    rejected = False
+    attacks = []
+    immutable = False
+    try:
+        source = subject.BoundTool.open(source_path)
+        try:
+            snapshot = source.snapshot(tree, "tool")
+        except subject.SetupError:
+            rejected = True
+        if snapshot is not None:
+            for label, mutate in (
+                ("write", lambda: os.write(snapshot.descriptor, replacement)),
+                (
+                    "pwrite",
+                    lambda: os.pwrite(snapshot.descriptor, replacement, 0),
+                ),
+                ("truncate", lambda: os.ftruncate(snapshot.descriptor, 0)),
+            ):
+                try:
+                    mutate()
+                except OSError:
+                    attacks.append((label, False))
+                else:
+                    attacks.append((label, True))
+            try:
+                snapshot.verify()
+            except subject.SetupError:
+                immutable = False
+            else:
+                immutable = (
+                    os.pread(snapshot.descriptor, len(original) + 1, 0)
+                    == original
+                )
+    finally:
+        if snapshot is not None:
+            snapshot.close()
+        if source is not None:
+            source.close()
+        shutil.rmtree(source_root, ignore_errors=True)
+    safe = (
+        sys.platform.startswith("linux")
+        and immutable
+        and len(attacks) == 3
+        and not any(succeeded for _label, succeeded in attacks)
+    ) or (not sys.platform.startswith("linux") and rejected)
+    if not safe:
+        print(
+            "same-UID mutation reached a verified execution snapshot: "
+            "platform={!r},rejected={},attacks={!r},immutable={}".format(
+                sys.platform, rejected, attacks, immutable
+            )
+        )
+        return False
+    return True
+
+
+def trusted_route_snapshot_behavior(subject, base):
+    """Even an immutable system route executes from exact sealed bytes."""
+
+    source_path = os.path.join(base, "trusted-route-tool")
+    original = b"#!/bin/sh\nprintf trusted-route\\n\n"
+    write_file(source_path, original, 0o755)
+    source = subject.BoundTool.open(source_path)
+    execution = None
+    bound_tools = [source]
+    boundary = subject.ReadOnlyExecutionBoundary(bound_tools)
+    source.trusted_system_route = lambda: True
+    unavailable = False
+    try:
+        try:
+            boundary.require()
+            execution, dependencies = subject.execution_tool(
+                source,
+                boundary.tree,
+                "trusted-route-tool",
+                bound_tools,
+                boundary,
+            )
+        except subject.SetupError as error:
+            unavailable = "secure execution boundary" in str(error)
+        if unavailable:
+            if sys.platform.startswith("linux"):
+                print("authoritative Linux boundary is unavailable")
+                return False
+            print("NON_PROOF_SKIP: trusted-route snapshot requires Linux containment")
+            return None
+        safe = (
+            execution is not source
+            and execution.sealed
+            and not dependencies
+            and execution.path != source.path
+            and os.pread(execution.descriptor, len(original) + 1, 0) == original
+        )
+        if not safe:
+            print(
+                "trusted route remained pathname-authoritative: "
+                "same={},sealed={},path={!r}".format(
+                    execution is source,
+                    getattr(execution, "sealed", False),
+                    getattr(execution, "path", None),
+                )
+            )
+            return False
+        return True
+    finally:
+        for item in reversed(bound_tools):
+            item.close()
+
+
 def interpreter_swap_behavior(subject, base, git):
+    del git
     root = tempfile.mkdtemp(prefix="interpreter-swap-", dir=base)
-    native_dir = os.path.join(root, ".githooks")
-    os.mkdir(native_dir, 0o700)
-    write_file(
-        os.path.join(native_dir, "pre-push"),
-        b"#!/bin/sh\nexit 0\n",
-        0o755,
-    )
-    original_marker = "original-interpreter-ran"
-    replacement_marker = "replacement-interpreter-ran"
     interpreter = os.path.join(root, "python")
     replacement = os.path.join(root, "python-replacement")
-    shutil.copyfile(sys.executable, interpreter)
-    os.chmod(interpreter, 0o755)
+    os.symlink(os.path.realpath(sys.executable), interpreter)
     os.symlink("/bin/sh", replacement)
     tool = os.path.join(root, "pre-commit")
     write_file(
@@ -2116,28 +3243,23 @@ def interpreter_swap_behavior(subject, base, git):
         (
             "#!{}\n"
             "''':'\n"
-            "printf replacement > \"$HOME/{!s}\"\n"
+            "printf 'replacement-interpreter\\n' >&2\n"
             "printf 'pre-commit 3.8.0\\n'\n"
             "exit 0\n"
             "':'''\n"
-            "import os\n"
-            "from pathlib import Path\n"
-            "Path(os.environ['HOME'], {!r}).write_text('original', encoding='ascii')\n"
+            "import sys\n"
+            "sys.stderr.write('original-interpreter\\n')\n"
             "print('pre-commit 3.8.0')\n"
-        ).format(
-            interpreter, replacement_marker, original_marker
-        ).encode("utf-8"),
+        ).format(interpreter).encode("utf-8"),
         0o755,
     )
 
+    bound_tools = []
+    boundary = subject.ReadOnlyExecutionBoundary(bound_tools)
     original_popen = subject.subprocess.Popen
-    original_close, preserved = preserve_private_tree_closes(subject)
-    original_emit = subject.emit
-    emitted = []
-    subject.emit = lambda kind, message: emitted.append(
-        "{}\t{}".format(kind, message)
-    )
     state = {"swapped": False}
+    result = None
+    unavailable = False
 
     def swap_at_spawn(*args, **kwargs):
         if not state["swapped"]:
@@ -2145,44 +3267,57 @@ def interpreter_swap_behavior(subject, base, git):
             state["swapped"] = True
         return original_popen(*args, **kwargs)
 
-    subject.subprocess.Popen = swap_at_spawn
     try:
-        status = subject.main([
-            "--root", root,
-            "--pre-commit", tool,
-            "--git", git,
-            "--mode", "check",
-            "--expected-version", "3.8.0",
-            "--timeout", "5",
-        ])
+        try:
+            boundary.require()
+            source = subject.BoundTool.open(tool)
+            bound_tools.append(source)
+            bound = subject.bind_executable(
+                source,
+                boundary.tree,
+                "pre-commit",
+                bound_tools,
+                boundary,
+            )
+        except subject.SetupError as error:
+            unavailable = any(
+                marker in str(error)
+                for marker in (
+                    "secure execution boundary",
+                    "mutable interpreter/runtime closure",
+                )
+            )
+        if not unavailable:
+            subject.subprocess.Popen = swap_at_spawn
+            result = subject.run(
+                [bound],
+                "/",
+                {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+                2,
+            )
     finally:
         subject.subprocess.Popen = original_popen
-        subject.PrivateTree.close = original_close
-        subject.emit = original_emit
-
-    original_ran = private_marker_exists(preserved, original_marker)
-    replacement_ran = private_marker_exists(preserved, replacement_marker)
-    swapped = state["swapped"]
-    unavailable = status != 0 and not swapped and any(
-        marker in line
-        for marker in (
-            "no trusted secure execution boundary",
-            "no secure execution boundary",
-            "mutable interpreter/runtime closure",
-        )
-        for line in emitted
-    )
-    discard_preserved_trees(preserved)
-    shutil.rmtree(root, ignore_errors=True)
+        for item in reversed(bound_tools):
+            item.close()
+        shutil.rmtree(root, ignore_errors=True)
     if unavailable:
-        return True
-    if status == 0 or not swapped or replacement_ran or not original_ran:
+        if sys.platform.startswith("linux"):
+            print("authoritative Linux boundary is unavailable")
+            return False
+        print("NON_PROOF_SKIP: interpreter swap requires Linux containment")
+        return None
+    safe = (
+        state["swapped"]
+        and result is not None
+        and result[0] == 0
+        and result[1] == b"pre-commit 3.8.0\n"
+        and b"original-interpreter\n" in result[2]
+        and b"replacement-interpreter" not in result[2]
+    )
+    if not safe:
         print(
             "verified shebang selected different interpreter bytes: "
-            "status={}, swapped={}, original={}, replacement={}".format(
-                status, swapped, original_ran, replacement_ran
-            )
-            + ", messages={!r}".format(emitted)
+            "swapped={}, result={!r}".format(state["swapped"], result)
         )
         return False
     return True
@@ -2208,23 +3343,14 @@ def execution_copy_write_behavior(subject, base, git, target):
         tool_body = (
             "#!/bin/sh\n"
             "set -eu\n"
-            "if [ \"${{1:-}}\" = --replacement ]; then\n"
-            "  printf replacement > \"$HOME/{!s}\"\n"
-            "  printf 'pre-commit 3.8.0\\n'\n"
-            "  exit 0\n"
-            "fi\n"
-            "printf attempted > \"$HOME/{!s}\"\n"
+            "printf '{}\\n' >&2\n"
             "if /bin/chmod u+w \"$0\" 2>/dev/null; then\n"
-            "  printf '%s\\n' '#!/bin/sh' "
-            "'printf replacement > \"$HOME/{!s}\"' "
-            "\"printf 'pre-commit 3.8.0\\\\n'\" > \"$0\"\n"
-            "  /bin/chmod 500 \"$0\"\n"
-            "  exec \"$0\" --replacement\n"
+            "  printf '{}\\n' >&2\n"
+            "  exit 91\n"
             "fi\n"
-            "printf original > \"$HOME/{!s}\"\n"
+            "printf '{}\\n' >&2\n"
             "printf 'pre-commit 3.8.0\\n'\n"
         ).format(
-            replacement_marker,
             attempted_marker,
             replacement_marker,
             original_marker,
@@ -2235,7 +3361,7 @@ def execution_copy_write_behavior(subject, base, git, target):
             git_tool,
             (
                 "#!/bin/sh\n"
-                "printf original > \"$HOME/{!s}\"\n"
+                "printf '{}\\n' >&2\n"
                 "printf 'git version original\\n'\n"
             ).format(original_marker).encode("utf-8"),
             0o755,
@@ -2244,26 +3370,33 @@ def execution_copy_write_behavior(subject, base, git, target):
             "#!/bin/sh\n"
             "set -eu\n"
             "git_path=$(command -v git)\n"
-            "printf attempted > \"$HOME/{!s}\"\n"
+            "printf '{}\\n' >&2\n"
             "if /bin/chmod u+w \"$git_path\" 2>/dev/null; then\n"
-            "  printf '%s\\n' '#!/bin/sh' "
-            "'printf replacement > \"$HOME/{!s}\"' "
-            "\"printf 'git version replacement\\\\n'\" > \"$git_path\"\n"
-            "  /bin/chmod 500 \"$git_path\"\n"
+            "  printf '{}\\n' >&2\n"
+            "  exit 91\n"
             "fi\n"
             "git --version >/dev/null\n"
+            "printf '{}\\n' >&2\n"
             "printf 'pre-commit 3.8.0\\n'\n"
-        ).format(attempted_marker, replacement_marker)
+        ).format(attempted_marker, replacement_marker, original_marker)
     else:
         raise AssertionError(target)
     write_file(tool, tool_body.encode("utf-8"), 0o755)
 
     emitted = []
+    captured = []
     original_emit = subject.emit
-    original_close, preserved = preserve_private_tree_closes(subject)
+    original_run = subject.run
     subject.emit = lambda kind, message: emitted.append(
         "{}\t{}".format(kind, message)
     )
+
+    def capture_run(*args, **kwargs):
+        result = original_run(*args, **kwargs)
+        captured.append(result)
+        return result
+
+    subject.run = capture_run
     descriptors_before = descriptor_count()
     try:
         status = subject.main([
@@ -2276,16 +3409,14 @@ def execution_copy_write_behavior(subject, base, git, target):
         ])
     finally:
         subject.emit = original_emit
-        subject.PrivateTree.close = original_close
-    attempted = private_marker_exists(preserved, attempted_marker)
-    original_ran = private_marker_exists(preserved, original_marker)
-    replacement_ran = private_marker_exists(preserved, replacement_marker)
+        subject.run = original_run
+    output = b"".join(result[1] + result[2] for result in captured)
+    attempted = attempted_marker.encode("utf-8") in output
+    original_ran = original_marker.encode("utf-8") in output
+    replacement_ran = replacement_marker.encode("utf-8") in output
     descriptor_delta = descriptor_count() - descriptors_before
-    discard_preserved_trees(preserved)
     shutil.rmtree(root, ignore_errors=True)
-    enforced = (
-        status == 0 and attempted and original_ran and not replacement_ran
-    )
+    enforced = attempted and original_ran and not replacement_ran
     unavailable = status != 0 and not any(
         (attempted, original_ran, replacement_ran)
     ) and any(
@@ -2300,13 +3431,19 @@ def execution_copy_write_behavior(subject, base, git, target):
         )
         for line in emitted
     )
-    if (not enforced and not unavailable) or descriptor_delta:
+    if unavailable:
+        if sys.platform.startswith("linux"):
+            print("authoritative Linux boundary is unavailable")
+            return False
+        print("NON_PROOF_SKIP: execution-copy writes require Linux containment")
+        return None
+    if not enforced or descriptor_delta:
         print(
             "{} copy was writable during child execution: ".format(target) +
             "status={}, attempted={}, original={}, replacement={}, fds={}, "
-            "messages={!r}".format(
+            "messages={!r}, output={!r}".format(
                 status, attempted, original_ran, replacement_ran,
-                descriptor_delta, emitted,
+                descriptor_delta, emitted, output,
             )
         )
         return False
@@ -2314,17 +3451,11 @@ def execution_copy_write_behavior(subject, base, git, target):
 
 
 def boundary_policy_behavior(subject):
-    """Require a read-only host plus one writable private data tree."""
-
-    class FakeTree:
-        def __init__(self, path):
-            self.path = path
-
-        def verify(self):
-            return None
+    """Require a read-only host plus namespace-owned scratch only."""
 
     class FakeGuard:
         path = "/usr/bin/bwrap"
+        descriptor = 43
 
         def verify(self):
             return None
@@ -2335,15 +3466,38 @@ def boundary_policy_behavior(subject):
         def close(self):
             return None
 
-    boundary = subject.ReadOnlyExecutionBoundary.__new__(
-        subject.ReadOnlyExecutionBoundary
-    )
-    boundary.tree = FakeTree("/private-execution")
-    boundary.data_tree = FakeTree("/private-data")
-    boundary.bound_tools = []
+    class FakeSealedFile:
+        path = os.path.join(subject.RUNTIME_ROOT, "tool")
+        descriptor = 37
+        token = (0, 0, 0o100500)
+
+        def verify(self):
+            return None
+
+    class FakeBoundDir(subject.BoundDir):
+        def __init__(self):
+            self.path = "/host-repository"
+            self.descriptor = 41
+            self.token = (0, 0, 0, 0, 0)
+            self.parent_fd = None
+            self.name = None
+
+        def verify(self):
+            return None
+
+    boundary = subject.ReadOnlyExecutionBoundary([])
     boundary.guard = FakeGuard()
     boundary.kind = "bubblewrap"
-    command, executable = boundary.wrap(["/private-execution/tool", "arg"])
+    original_lseek = subject.os.lseek
+    subject.os.lseek = lambda *_args: 0
+    try:
+        command, executable = boundary.wrap(
+            [FakeSealedFile.path, "arg"],
+            readonly_paths=(FakeBoundDir(),),
+            sealed_files=(FakeSealedFile(),),
+        )
+    finally:
+        subject.os.lseek = original_lseek
 
     def has_sequence(values):
         width = len(values)
@@ -2353,13 +3507,32 @@ def boundary_policy_behavior(subject):
         )
 
     linux_safe = (
-        executable == "/usr/bin/bwrap"
+        executable == "/proc/self/fd/43"
         and not has_sequence(("--ro-bind", "/", "/"))
         and not has_sequence(("--bind", "/", "/"))
         and has_sequence(("--ro-bind", "/usr", "/usr"))
-        and has_sequence(("--bind", "/private-data", "/private-data"))
-        and has_sequence(("--ro-bind", "/private-execution", "/private-execution"))
+        and "--bind-fd" not in command
+        and has_sequence(("--ro-bind-fd", "41", "/host-repository"))
+        and not has_sequence(
+            ("--ro-bind", "/proc/self/fd/41", "/host-repository")
+        )
+        and has_sequence(
+            (
+                "--perms", "0500", "--ro-bind-data", "37",
+                FakeSealedFile.path,
+            )
+        )
         and has_sequence(("--tmpfs", "/tmp"))
+        and command.count("--tmpfs") == 1
+        and all(
+            has_sequence(("--dir", path))
+            for path in (
+                subject.SCRATCH_ROOT,
+                subject.SCRATCH_HOME,
+                subject.SCRATCH_CACHE,
+                subject.SCRATCH_REPO,
+            )
+        )
         and has_sequence(("--dev", "/dev"))
         and has_sequence(("--proc", "/proc"))
         and "--unshare-net" in command
@@ -2380,14 +3553,7 @@ def boundary_policy_behavior(subject):
     darwin_failed_closed = False
     subject.sys.platform = "darwin"
     subject.BoundTool.open = classmethod(open_darwin_guard)
-    darwin = subject.ReadOnlyExecutionBoundary.__new__(
-        subject.ReadOnlyExecutionBoundary
-    )
-    darwin.tree = FakeTree("/private-execution")
-    darwin.data_tree = FakeTree("/private-data")
-    darwin.bound_tools = []
-    darwin.guard = None
-    darwin.kind = None
+    darwin = subject.ReadOnlyExecutionBoundary([])
     try:
         try:
             darwin.require()
@@ -2397,13 +3563,38 @@ def boundary_policy_behavior(subject):
         subject.BoundTool.open = original_open
         subject.sys.platform = original_platform
 
-    if not linux_safe or not darwin_failed_closed or darwin_opened["value"]:
+    unavailable = subject.ReadOnlyExecutionBoundary([])
+    attempted = []
+
+    def unavailable_guard(_cls, path):
+        attempted.append(path)
+        raise subject.SetupError("missing")
+
+    linux_failed_closed = False
+    subject.sys.platform = "linux"
+    subject.BoundTool.open = classmethod(unavailable_guard)
+    try:
+        try:
+            unavailable.require()
+        except subject.SetupError:
+            linux_failed_closed = True
+    finally:
+        subject.BoundTool.open = original_open
+        subject.sys.platform = original_platform
+
+    if (
+        not linux_safe
+        or not linux_failed_closed
+        or any(path.endswith("/unshare") for path in attempted)
+        or not darwin_failed_closed
+        or darwin_opened["value"]
+    ):
         print(
             "execution policy did not bind a read-only host and PID namespace: "
-            "linux_safe={}, darwin_failed_closed={}, darwin_opened={}, "
-            "command={!r}".format(
-                linux_safe, darwin_failed_closed, darwin_opened["value"],
-                command,
+            "linux_safe={}, linux_failed_closed={}, attempted={!r}, "
+            "darwin_failed_closed={}, darwin_opened={}, command={!r}".format(
+                linux_safe, linux_failed_closed, attempted,
+                darwin_failed_closed, darwin_opened["value"], command,
             )
         )
         return False
@@ -2469,7 +3660,15 @@ def runtime_dependency_write_behavior(subject, base):
         for line in emitted
     )
     safe = after == original and after_mode == 0o755
-    if not safe or (status != 0 and not unavailable):
+    if unavailable:
+        if sys.platform.startswith("linux"):
+            print("authoritative Linux boundary is unavailable")
+            shutil.rmtree(root, ignore_errors=True)
+            return False
+        print("NON_PROOF_SKIP: runtime-host writes require Linux containment")
+        shutil.rmtree(root, ignore_errors=True)
+        return None
+    if not safe or status != 0:
         print(
             "configured execution changed a verified runtime dependency: "
             "status={}, bytes={!r}, mode={!r}, messages={!r}".format(
@@ -2494,23 +3693,20 @@ def runtime_dependency_swap_behavior(subject, base):
         (
             "#!/bin/sh\n"
             ". \"${ODYSSEUS_EXECUTABLE_ORIGIN}.registry\"\n"
-            "printf '%s' \"$VALUE\" > \"$1\"\n"
+            "printf '%s' \"$VALUE\"\n"
         ).encode("utf-8"),
         0o755,
     )
     write_file(dependency, b"VALUE=original\n")
     write_file(replacement, b"VALUE=replacement\n")
-    execution_tree = subject.PrivateTree()
-    data_tree = subject.PrivateTree()
-    marker = os.path.join(data_tree.mkdir("data"), "selected")
     bound_tools = []
-    boundary = subject.ReadOnlyExecutionBoundary(
-        execution_tree, data_tree, bound_tools
-    )
+    boundary = subject.ReadOnlyExecutionBoundary(bound_tools)
     unavailable = False
     rejected = False
     fired = False
-    original_popen = subject.subprocess.Popen
+    selected = None
+    executed_original = False
+    failed_closed = False
     try:
         try:
             boundary.require()
@@ -2521,50 +3717,68 @@ def runtime_dependency_swap_behavior(subject, base):
             bound_tools.append(source)
             bound = subject.bind_executable(
                 source,
-                execution_tree,
+                boundary.tree,
                 "pre-commit",
                 bound_tools,
                 boundary,
             )
-
-            def swap_at_spawn(*args, **kwargs):
-                nonlocal fired
+            dependency_pair = next(
+                (
+                    (source_item, execution_item)
+                    for source_item, execution_item in bound.dependencies
+                    if source_item.path == dependency
+                ),
+                None,
+            )
+            if dependency_pair is not None:
+                source_dependency, execution_dependency = dependency_pair
                 os.replace(replacement, dependency)
                 fired = True
-                return original_popen(*args, **kwargs)
-
-            subject.subprocess.Popen = swap_at_spawn
-            try:
                 try:
-                    subject.run(
-                        [bound, marker],
+                    result = subject.run(
+                        [bound],
                         "/",
-                        {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
-                        2,
+                        {
+                            "GIT_CONFIG_GLOBAL": "/dev/null",
+                            "GIT_CONFIG_NOSYSTEM": "1",
+                            "HOME": base,
+                            "LANG": "C",
+                            "LC_ALL": "C",
+                            "PATH": "/usr/bin:/bin",
+                        },
+                        subject.OperationDeadline(5),
                     )
-                except subject.SetupError:
-                    rejected = True
-            finally:
-                subject.subprocess.Popen = original_popen
+                except subject.SetupError as error:
+                    failed_closed = (
+                        source_dependency.path in str(error)
+                        and "changed after binding" in str(error)
+                    )
+                else:
+                    executed_original = (
+                        result[0] == 0 and result[1] == b"original"
+                    )
+                execution_dependency.verify()
+                selected = os.pread(
+                    execution_dependency.descriptor,
+                    len(b"VALUE=original\n") + 1,
+                    0,
+                )
     finally:
-        subject.subprocess.Popen = original_popen
-        try:
-            with open(marker, "rb") as stream:
-                selected = stream.read()
-        except OSError:
-            selected = None
         for tool in reversed(bound_tools):
             tool.close()
-        execution_tree.close()
-        data_tree.close()
         shutil.rmtree(source_root, ignore_errors=True)
     if unavailable:
-        return True
-    if not fired or not rejected or selected != b"original":
+        if sys.platform.startswith("linux"):
+            print("authoritative Linux boundary is unavailable")
+            return False
+        print("NON_PROOF_SKIP: runtime-sibling swaps require Linux containment")
+        return None
+    rejected = failed_closed or executed_original
+    if not fired or not rejected or selected != b"VALUE=original\n":
         print(
             "an imported sibling swap selected mutable bytes: "
-            "fired={},rejected={},selected={!r}".format(
-                fired, rejected, selected
+            "fired={},failed_closed={},executed_original={},selected={!r}".format(
+                fired, failed_closed, executed_original, selected
             )
         )
         return False
@@ -2572,56 +3786,403 @@ def runtime_dependency_swap_behavior(subject, base):
 
 
 def untrusted_interpreter_behavior(subject, base):
-    """A mutable interpreter/runtime closure is rejected before execution."""
+    """A Pixi-style provider is accepted only through its sealed import closure."""
 
-    source_root = tempfile.mkdtemp(prefix="mutable-interpreter-", dir=base)
-    interpreter = os.path.join(source_root, "python")
+    for version, allowed in (("1.4.5.0", True), ("1.4.5.9", True), ("1.4.6", False), ("1.4.9", False)):
+        if subject._provider_version_allows(version, (("~=", "1.4.5.0"),)) != allowed:
+            print("incorrect compatible-release dependency result: " + version)
+            return False
+        environment = {"_version": tuple(int(part) for part in version.split("."))}
+        if subject._requires_python_allows("~=1.4.5.0", environment) != allowed:
+            print("incorrect compatible-release Python result: " + version)
+            return False
+    try:
+        subject._provider_version_allows("١.٠", (("==", "1.0"),))
+    except subject.SetupError:
+        pass
+    else:
+        print("provider metadata accepted a non-ASCII release")
+        return False
+
+    source_root = tempfile.mkdtemp(prefix="pixi-provider-", dir=base)
+    prefix = os.path.join(source_root, "prefix")
+    os.makedirs(os.path.join(prefix, "bin"))
+    runtime_version = (sys.version_info.major, sys.version_info.minor)
+    route_minor = runtime_version[1] - 1 if runtime_version[1] else 1
+    route_version = (runtime_version[0], route_minor)
+    interpreter = os.path.join(
+        prefix, "bin", "python{}.{}".format(*route_version)
+    )
     shutil.copyfile(sys.executable, interpreter)
     os.chmod(interpreter, 0o755)
-    script = os.path.join(source_root, "pre-commit")
+    script = os.path.join(prefix, "bin", "pre-commit")
     write_file(
         script,
-        ("#!{}\nprint('pre-commit 3.8.0')\n".format(interpreter)).encode(
-            "utf-8"
-        ),
+        ("#!{}\nfrom pre_commit import VALUE\nprint(VALUE)\n".format(interpreter)).encode("utf-8"),
         0o755,
     )
-    execution_tree = subject.PrivateTree()
-    data_tree = subject.PrivateTree()
-    bound_tools = []
-    boundary = subject.ReadOnlyExecutionBoundary(
-        execution_tree, data_tree, bound_tools
+    site = os.path.join(
+        prefix,
+        "lib",
+        "python{}.{}".format(*route_version),
+        "site-packages",
     )
-    boundary.require = lambda: None
-    rejected = False
+    os.makedirs(site)
+
+    def distribution(
+        name,
+        package,
+        metadata_name,
+        requires=(),
+        requires_python=None,
+        native_payload=False,
+        version="1.0",
+    ):
+        package_root = os.path.join(site, package)
+        os.mkdir(package_root)
+        package_file = os.path.join(package_root, "__init__.py")
+        write_file(package_file, b"VALUE = 'sealed-provider'\n")
+        info = os.path.join(site, name + "-1.0.dist-info")
+        os.mkdir(info)
+        metadata = "Name: {}\nVersion: {}\n".format(metadata_name, version)
+        if requires_python is not None:
+            metadata += "Requires-Python: {}\n".format(requires_python)
+        metadata += "".join("Requires-Dist: {}\n".format(item) for item in requires)
+        metadata_path = os.path.join(info, "METADATA")
+        write_file(metadata_path, metadata.encode("utf-8"))
+        record_path = os.path.join(info, "RECORD")
+        rows = (
+            "{}/__init__.py,,\n{}/METADATA,,\n{}/RECORD,,\n".format(
+                package, os.path.basename(info), os.path.basename(info)
+            )
+        )
+        native_path = None
+        if native_payload:
+            native_path = os.path.join(package_root, "_native.abi.so")
+            write_file(native_path, b"untrusted-native-extension\n")
+            rows += "{}/_native.abi.so,,\n".format(package)
+        write_file(record_path, rows.encode("utf-8"))
+        result = {
+            os.path.realpath(package_file),
+            os.path.realpath(metadata_path),
+            os.path.realpath(record_path),
+        }
+        return result, native_path
+
+    expected = set()
+    runtime_marker = "{}.{}".format(*runtime_version)
+    runtime_spec = ">={}.{},<{}.0".format(
+        runtime_version[0], runtime_version[1], runtime_version[0] + 1
+    )
+    entries, _unused = distribution(
+        "pre_commit",
+        "pre_commit",
+        "pre-commit",
+        (
+            "cfgv>=1.0,<2",
+            "runtime-dep ; python_version == '{}'".format(runtime_marker),
+        ),
+        runtime_spec,
+    )
+    expected.update(entries)
+    entries, _unused = distribution(
+        "cfgv",
+        "cfgv",
+        "cfgv",
+        requires=("extra-dep ; extra == 'feature'",),
+        requires_python=runtime_spec,
+    )
+    expected.update(entries)
+    entries, native_path = distribution(
+        "PyYAML",
+        "yaml",
+        "PyYAML",
+        requires_python=runtime_spec,
+        native_payload=True,
+    )
+    expected.update(entries)
+    entries, _unused = distribution(
+        "runtime_dep", "runtime_dep", "runtime-dep", requires_python=runtime_spec
+    )
+    expected.update(entries)
+    extra_entries, _unused = distribution(
+        "extra_dep", "extra_dep", "extra-dep", requires_python=runtime_spec
+    )
+    bound_tools = []
+    boundary = subject.ReadOnlyExecutionBoundary(bound_tools)
     bound = None
+    before = descriptor_count()
     try:
+        discovered_root, discovered = subject._provider_distribution_closure(
+            interpreter
+        )
+        if discovered_root != os.path.realpath(site) or set(discovered) != expected:
+            print("provider distribution closure was incomplete: {!r}".format(discovered))
+            return False
+        if native_path in discovered:
+            print("provider distribution closure admitted a native extension")
+            return False
+        incompatible_metadata = os.path.join(site, "cfgv-1.0.dist-info", "METADATA")
+        with open(incompatible_metadata, "rb") as stream:
+            compatible_metadata = stream.read()
+        write_file(
+            incompatible_metadata,
+            compatible_metadata.replace(
+                ("Requires-Python: {}".format(runtime_spec)).encode("utf-8"),
+                b"Requires-Python: >=99",
+            ),
+        )
+        incompatible_rejected = False
+        try:
+            subject._provider_distribution_closure(interpreter)
+        except subject.SetupError:
+            incompatible_rejected = True
+        write_file(incompatible_metadata, compatible_metadata)
+        if not incompatible_rejected:
+            print("provider closure accepted an incompatible execution runtime")
+            return False
+
+        pre_commit_metadata = os.path.join(
+            site, "pre_commit-1.0.dist-info", "METADATA"
+        )
+        cfgv_metadata = os.path.join(site, "cfgv-1.0.dist-info", "METADATA")
+        with open(pre_commit_metadata, "rb") as stream:
+            compatible_pre_commit = stream.read()
+        with open(cfgv_metadata, "rb") as stream:
+            compatible_cfgv = stream.read()
+
+        requirement_cases = (
+            (
+                b"Requires-Dist: cfgv>=1.0,<2",
+                b"Requires-Dist: cfgv>=2",
+                "an unsatisfied dependency version",
+            ),
+            (
+                b"Requires-Dist: cfgv>=1.0,<2",
+                b"Requires-Dist: cfgv @ https://example.invalid/cfgv.whl",
+                "a direct-reference dependency",
+            ),
+            (
+                b"Requires-Dist: cfgv>=1.0,<2",
+                b"Requires-Dist: cfgv\n @ https://example.invalid/cfgv.whl",
+                "a folded direct-reference dependency",
+            ),
+            (
+                b"Requires-Dist: cfgv>=1.0,<2",
+                b"Requires-Dist: cfgv >= 1.0 trailing-garbage",
+                "trailing PEP 508 syntax",
+            ),
+        )
+        for original, replacement, label in requirement_cases:
+            write_file(
+                pre_commit_metadata,
+                compatible_pre_commit.replace(original, replacement),
+            )
+            rejected = False
+            try:
+                subject._provider_distribution_closure(interpreter)
+            except subject.SetupError:
+                rejected = True
+            if not rejected:
+                print("provider closure accepted {}".format(label))
+                return False
+        write_file(pre_commit_metadata, compatible_pre_commit)
+
+        write_file(
+            pre_commit_metadata,
+            compatible_pre_commit.replace(
+                b"Requires-Dist: cfgv>=1.0,<2",
+                b"Requires-Dist: cfgv[feature]>=1.0,<2",
+            ),
+        )
+        _extra_root, extra_closure = subject._provider_distribution_closure(interpreter)
+        if not extra_entries.issubset(set(extra_closure)):
+            print("provider extras did not extend the selected dependency closure")
+            return False
+        write_file(pre_commit_metadata, compatible_pre_commit)
+
+        version_cases = (
+            (
+                compatible_cfgv.replace(b"Version: 1.0", b"Version: 0.9"),
+                "a dependency version outside its selected constraint",
+            ),
+            (
+                compatible_cfgv.replace(b"Version: 1.0\n", b""),
+                "missing selected Version metadata",
+            ),
+            (
+                compatible_cfgv.replace(
+                    b"Version: 1.0\n", b"Version: 1.0\nVersion: 1.0\n"
+                ),
+                "duplicate selected Version metadata",
+            ),
+        )
+        for metadata_payload, label in version_cases:
+            write_file(cfgv_metadata, metadata_payload)
+            rejected = False
+            try:
+                subject._provider_distribution_closure(interpreter)
+            except subject.SetupError:
+                rejected = True
+            if not rejected:
+                print("provider closure accepted {}".format(label))
+                return False
+        write_file(cfgv_metadata, compatible_cfgv)
+        closure_tools = []
+        original_sealed_descriptor = subject.BoundTool.__dict__["sealed_bytes"]
+
+        class LocalSealed:
+            def __init__(self, path, data, executable):
+                self.path = path
+                self.data = data
+                self.executable = executable
+                self.descriptor = os.open(os.devnull, os.O_RDONLY)
+
+            def verify(self):
+                os.fstat(self.descriptor)
+
+            def close(self):
+                if self.descriptor >= 0:
+                    os.close(self.descriptor)
+                    self.descriptor = -1
+
+        def local_sealed(_cls, path, data, executable=True):
+            return LocalSealed(path, data, executable)
+
+        class LocalBoundary:
+            def require(self):
+                return None
+
+        subject.BoundTool.sealed_bytes = classmethod(local_sealed)
+        closure_dependencies = ()
+        closure_before = descriptor_count()
+        try:
+            closure_dependencies, _roots = subject._snapshot_provider_import_closure(
+                interpreter,
+                closure_tools,
+                LocalBoundary(),
+            )
+            registered = all(
+                execution_item in closure_tools
+                for _source_item, execution_item in closure_dependencies
+            )
+        finally:
+            subject.BoundTool.sealed_bytes = original_sealed_descriptor
+            for item in reversed(closure_tools):
+                item.close()
+            for _source_item, execution_item in closure_dependencies:
+                if execution_item not in closure_tools:
+                    execution_item.close()
+        if not registered or descriptor_count() != closure_before:
+            print(
+                "provider closure descriptors were not registered in one ownership stack"
+            )
+            return False
+        if not sys.platform.startswith("linux"):
+            print("NON_PROOF_SKIP: sealed Pixi provider execution requires Linux")
+            return None
+        try:
+            boundary.require()
+        except subject.SetupError as error:
+            print("authoritative Linux containment provider is unavailable: {}".format(error))
+            return False
         source = subject.BoundTool.open(script)
         bound_tools.append(source)
+        bound = subject.bind_executable(
+            source,
+            boundary.tree,
+            "pre-commit",
+            bound_tools,
+            boundary,
+        )
+        sealed_paths = {
+            source_item.path for source_item, _execution in bound.dependencies
+        }
+        if bound.python_paths != (site,) or not expected.issubset(sealed_paths):
+            print("Pixi provider did not retain its complete sealed closure")
+            return False
+        runtime_env = {
+            "HOME": base,
+            "LANG": "C",
+            "LC_ALL": "C",
+            "PATH": "/usr/bin:/bin",
+            "PYTHONNOUSERSITE": "1",
+            "TMPDIR": base,
+        }
+        result = subject.run([bound], "/", runtime_env, 5)
+        if result[0] != 0 or result[1] != b"sealed-provider\n":
+            print("sealed Pixi provider did not execute its authenticated closure")
+            return False
+        provider_module = os.path.join(site, "pre_commit", "__init__.py")
+        with open(provider_module, "rb") as stream:
+            original_provider = stream.read()
+        write_file(provider_module, b"VALUE = 'mutable-provider'\n")
+        replacement_failed_closed = False
+        replacement_output = None
         try:
-            bound = subject.bind_executable(
+            replacement_result = subject.run([bound], "/", runtime_env, 5)
+            replacement_output = replacement_result[1]
+        except subject.SetupError:
+            replacement_failed_closed = True
+        finally:
+            write_file(provider_module, original_provider)
+        if not replacement_failed_closed and replacement_output != b"sealed-provider\n":
+            print("provider replacement selected unauthenticated import bytes")
+            return False
+        for tool in reversed(bound_tools):
+            tool.close()
+        bound_tools.clear()
+        if descriptor_count() != before:
+            print("successful provider closure binding leaked a sibling descriptor")
+            return False
+
+        error_tools = []
+        error_boundary = subject.ReadOnlyExecutionBoundary(error_tools)
+        error_boundary.require()
+        original_descriptor = subject.BoundTool.__dict__["sealed_bytes"]
+        original_sealed = original_descriptor.__get__(None, subject.BoundTool)
+        calls = [0]
+
+        def mutate_after_seal(_cls, path, data, executable=True):
+            result = original_sealed(path, data, executable)
+            calls[0] += 1
+            if calls[0] == 2:
+                write_file(path, b"changed-after-seal\n", 0o755 if executable else 0o644)
+            return result
+
+        source = subject.BoundTool.open(script)
+        error_tools.append(source)
+        failed_closed = False
+        subject.BoundTool.sealed_bytes = classmethod(mutate_after_seal)
+        try:
+            subject.bind_executable(
                 source,
-                execution_tree,
-                "pre-commit",
-                bound_tools,
-                boundary,
+                error_boundary.tree,
+                "pre-commit-error",
+                error_tools,
+                error_boundary,
             )
         except subject.SetupError:
-            rejected = True
+            failed_closed = True
+        finally:
+            subject.BoundTool.sealed_bytes = original_descriptor
+            for tool in reversed(error_tools):
+                tool.close()
+        if not failed_closed or descriptor_count() != before:
+            print("failed provider closure binding leaked or accepted changed bytes")
+            return False
     finally:
         for tool in reversed(bound_tools):
             tool.close()
-        execution_tree.close()
-        data_tree.close()
         shutil.rmtree(source_root, ignore_errors=True)
-    if not rejected or bound is not None:
-        print("a mutable interpreter/runtime closure was accepted")
+    if descriptor_count() != before:
+        print("provider closure leaked a sibling descriptor")
         return False
     return True
 
 
 def resource_limit_behavior(subject, base):
-    """Host rlimits stop fork, memory, descriptor, and file growth."""
+    """Host rlimits stop CPU, descriptor, process, and file growth."""
 
     probe = (
         "import json,resource,sys\n"
@@ -2649,12 +4210,13 @@ def resource_limit_behavior(subject, base):
         print("resource-limit probe returned invalid data: {}".format(error))
         return False
     expected = {
-        "RLIMIT_AS": 512 * 1024 * 1024,
         "RLIMIT_CPU": 4,
         "RLIMIT_NOFILE": 128,
         "RLIMIT_FSIZE": 8 * 1024 * 1024,
         "RLIMIT_NPROC": 512,
     }
+    if sys.platform.startswith("linux"):
+        expected["RLIMIT_AS"] = 512 * 1024 * 1024
     bounded = all(
         limits.get(name) is not None
         and 0 < limits[name] <= maximum
@@ -2667,16 +4229,13 @@ def resource_limit_behavior(subject, base):
 
 
 def external_write_channel_behavior(subject, base):
-    """Loopback, Unix sockets, and FIFOs outside private data stay unreachable."""
+    """Loopback, host Unix sockets, and host FIFOs stay unreachable."""
 
     if not sys.platform.startswith("linux"):
-        return True
-    execution_tree = subject.PrivateTree()
-    data_tree = subject.PrivateTree()
+        print("NON_PROOF_SKIP: external-channel containment requires Linux")
+        return None
     bound_tools = []
-    boundary = subject.ReadOnlyExecutionBoundary(
-        execution_tree, data_tree, bound_tools
-    )
+    boundary = subject.ReadOnlyExecutionBoundary(bound_tools)
     unix_path = os.path.join(base, "host-unix.sock")
     fifo_path = os.path.join(base, "host-fifo")
     unix_server = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
@@ -2721,6 +4280,7 @@ def external_write_channel_behavior(subject, base):
         result = subprocess.run(
             command,
             executable=executable,
+            pass_fds=(boundary.guard.descriptor,),
             cwd="/",
             env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
             stdin=subprocess.DEVNULL,
@@ -2768,213 +4328,233 @@ def external_write_channel_behavior(subject, base):
                 pass
         for tool in reversed(bound_tools):
             tool.close()
-        execution_tree.close()
-        data_tree.close()
 
 
-def cleanup_entry_race_behavior(subject, base):
-    """A replacement at the real final quarantine name is never removed."""
+def namespace_nested_cleanup_capability_behavior(subject):
+    """Nested scratch paths never become host deletion capabilities."""
 
-    broken = []
-    for managed_root in ("data", "execution"):
-        for kind in ("file", "directory"):
-            tree = subject.PrivateTree()
-            root_path = tree.path
-            root_fd = tree.root.descriptor
-            victim = "nested-victim"
-            displaced = "nested-victim.displaced"
-            victim_path = os.path.join(root_path, victim)
-            displaced_path = os.path.join(root_path, displaced)
-            if kind == "file":
-                write_file(victim_path, b"original\n")
-            else:
-                os.mkdir(victim_path, 0o700)
-                write_file(os.path.join(victim_path, "original"), b"original\n")
+    calls = []
+    originals = {
+        "mkdir": subject.os.mkdir,
+        "rename": subject.os.rename,
+        "rmdir": subject.os.rmdir,
+        "unlink": subject.os.unlink,
+    }
 
-            original_rename = subject.os.rename
-            original_unlink = subject.os.unlink
-            original_rmdir = subject.os.rmdir
-            fired = {"value": False, "quarantine": None}
+    def forbidden(operation):
+        def record(*args, **kwargs):
+            calls.append((operation, args, kwargs))
+            raise AssertionError("namespace scratch reached host {}".format(operation))
 
-            def install_replacement(quarantine):
-                original_rename(
-                    quarantine,
-                    displaced,
-                    src_dir_fd=root_fd, dst_dir_fd=root_fd,
-                )
-                if kind == "file":
-                    descriptor = os.open(
-                        quarantine,
-                        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                        0o600,
-                        dir_fd=root_fd,
-                    )
-                    os.close(descriptor)
-                else:
-                    os.mkdir(quarantine, 0o700, dir_fd=root_fd)
-                fired["value"] = True
-                fired["quarantine"] = quarantine
+        return record
 
-            def racing_unlink(name, *args, **kwargs):
-                if (
-                    kind == "file"
-                    and not fired["value"]
-                    and name.startswith(".odysseus-quarantine-")
-                    and kwargs.get("dir_fd") == root_fd
-                ):
-                    install_replacement(name)
-                return original_unlink(name, *args, **kwargs)
+    for operation in originals:
+        setattr(subject.os, operation, forbidden(operation))
+    problem = None
+    boundary = None
+    nested = None
+    try:
+        boundary = subject.ReadOnlyExecutionBoundary([])
+        nested = boundary.tree.mkdir("nested")
+        boundary.verify()
+    except BaseException as error:
+        problem = error
+    finally:
+        for operation, original in originals.items():
+            setattr(subject.os, operation, original)
 
-            def racing_rmdir(name, *args, **kwargs):
-                if (
-                    kind == "directory"
-                    and not fired["value"]
-                    and name.startswith(".odysseus-quarantine-")
-                    and kwargs.get("dir_fd") == root_fd
-                ):
-                    install_replacement(name)
-                return original_rmdir(name, *args, **kwargs)
-
-            subject.os.unlink = racing_unlink
-            subject.os.rmdir = racing_rmdir
-            try:
-                problem = tree.close()
-            finally:
-                subject.os.unlink = original_unlink
-                subject.os.rmdir = original_rmdir
-
-            quarantine = fired["quarantine"]
-            replacement_path = (
-                os.path.join(root_path, quarantine) if quarantine else ""
-            )
-            replacement_preserved = bool(quarantine) and (
-                os.path.isfile(replacement_path)
-                if kind == "file"
-                else os.path.isdir(replacement_path)
-            )
-            original_preserved = os.path.exists(displaced_path)
-            if (
-                not fired["value"]
-                or not problem
-                or not replacement_preserved
-                or not original_preserved
-            ):
-                broken.append(
-                    "{}/{}(fired={},quarantine={!r},problem={!r},"
-                    "replacement={},original={})".format(
-                        managed_root, kind, fired["value"], quarantine, problem,
-                        replacement_preserved, original_preserved,
-                    )
-                )
-            shutil.rmtree(root_path, ignore_errors=True)
-    if broken:
+    safe = (
+        problem is None
+        and isinstance(boundary.tree, subject.NamespaceTree)
+        and nested == os.path.join(subject.RUNTIME_ROOT, "nested")
+        and not calls
+    )
+    if not safe:
         print(
-            "cleanup removed a nested replacement at its final quarantine-name "
-            "operation: {}".format(", ".join(broken))
-        )
-        return False
-    return True
-
-
-def cleanup_root_race_behavior(subject):
-    """Both roots preserve a replacement at the real quarantine name."""
-
-    broken = []
-    for managed_root in ("data", "execution"):
-        tree = subject.PrivateTree()
-        root_path = tree.path
-        parent_path = tree.parent.path
-        parent_fd = tree.parent.descriptor
-        original_token = tree.root.token
-        displaced = tree.name + ".displaced-" + managed_root
-        displaced_path = os.path.join(parent_path, displaced)
-        write_file(os.path.join(root_path, "original"), b"original\n")
-        original_rename = subject.os.rename
-        original_rmdir = subject.os.rmdir
-        fired = {"value": False, "quarantine": None}
-
-        def install_replacement(quarantine):
-            original_rename(
-                quarantine,
-                displaced,
-                src_dir_fd=parent_fd, dst_dir_fd=parent_fd,
+            "nested namespace scratch retained a host cleanup capability: "
+            "problem={!r}, nested={!r}, calls={!r}".format(
+                problem, nested, calls
             )
-            os.mkdir(quarantine, 0o700, dir_fd=parent_fd)
-            fired["value"] = True
-            fired["quarantine"] = quarantine
-
-        def racing_rmdir(name, *args, **kwargs):
-            if (
-                not fired["value"]
-                and name.startswith(".odysseus-quarantine-")
-                and kwargs.get("dir_fd") == parent_fd
-            ):
-                install_replacement(name)
-            return original_rmdir(name, *args, **kwargs)
-
-        subject.os.rmdir = racing_rmdir
-        try:
-            problem = tree.close()
-        finally:
-            subject.os.rmdir = original_rmdir
-
-        quarantine = fired["quarantine"]
-        replacement_path = (
-            os.path.join(parent_path, quarantine) if quarantine else ""
         )
-        replacement_preserved = bool(quarantine) and os.path.isdir(
-            replacement_path
-        )
-        try:
-            original_preserved = (
-                subject.dir_ident(os.stat(displaced_path, follow_symlinks=False))
-                == original_token
-            )
-        except OSError:
-            original_preserved = False
-        if (
-            not fired["value"]
-            or not problem
-            or not replacement_preserved
-            or not original_preserved
-        ):
-            broken.append(
-                "{}(fired={},quarantine={!r},problem={!r},replacement={},"
-                "original={})".format(
-                    managed_root, fired["value"], quarantine, problem,
-                    replacement_preserved, original_preserved,
-                )
-            )
-        shutil.rmtree(root_path, ignore_errors=True)
-        shutil.rmtree(displaced_path, ignore_errors=True)
-        if replacement_path:
-            shutil.rmtree(replacement_path, ignore_errors=True)
-    if broken:
+    return safe
+
+
+def namespace_root_cleanup_capability_behavior(subject):
+    """Managed scratch roots are namespace lifetime, not pathname, owned."""
+
+    problem = None
+    boundary = None
+    try:
+        boundary = subject.ReadOnlyExecutionBoundary([])
+        boundary.verify()
+    except BaseException as error:
+        problem = error
+
+    safe = (
+        problem is None
+        and isinstance(boundary.tree, subject.NamespaceTree)
+        and boundary.tree.path == subject.RUNTIME_ROOT
+        and not hasattr(boundary, "data_tree")
+        and not hasattr(subject, "PrivateTree")
+        and not hasattr(boundary.tree, "close")
+    )
+    if not safe:
         print(
-            "cleanup removed a managed-root replacement at its final "
-            "quarantine-name operation: {}".format(", ".join(broken))
+            "managed scratch roots retained a host cleanup capability: "
+            "problem={!r}, boundary={!r}, private_tree={}, data_tree={}, "
+            "tree_close={}".format(
+                problem,
+                boundary,
+                hasattr(subject, "PrivateTree"),
+                hasattr(boundary, "data_tree") if boundary is not None else None,
+                hasattr(boundary.tree, "close") if boundary is not None else None,
+            )
         )
+    return safe
+
+
+def namespace_only_scratch_behavior(subject, base, git):
+    """Live main never allocates or cleans a pathname-selected host scratch tree."""
+
+    fixture = os.path.join(base, "install-bin", "pre-commit-fixture")
+    if not os.path.isfile(fixture):
+        print("controlled pre-commit fixture is unavailable")
         return False
-    return True
+    root = tempfile.mkdtemp(prefix="namespace-only-main-", dir=base)
+    host_tmp = tempfile.mkdtemp(prefix="namespace-only-host-tmp-", dir=base)
+    os.makedirs(os.path.join(root, ".githooks"), mode=0o700)
+    write_file(
+        os.path.join(root, ".githooks", "pre-push"),
+        b"#!/bin/sh\nexit 0\n",
+        0o755,
+    )
+    config_path = os.path.join(root, ".pre-commit-config.yaml")
+    write_file(
+        config_path,
+        b"default_install_hook_types: [pre-commit, pre-push]\nrepos: []\n",
+    )
+    subprocess.run(
+        [git, "-c", "init.templateDir=", "-C", root, "init", "-q"],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "GIT_CONFIG_NOSYSTEM": "1",
+        },
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+
+    original_tempdir = tempfile.tempdir
+    original_mkdir = subject.os.mkdir
+    original_unlink = subject.os.unlink
+    original_rmdir = subject.os.rmdir
+    original_private_tree = getattr(subject, "PrivateTree", None)
+    private_tree_called = {"value": False}
+    final_name_calls = []
+    host_scratch_calls = []
+    emitted = []
+    original_emit = subject.emit
+
+    def private_tree_forbidden(*_args, **_kwargs):
+        private_tree_called["value"] = True
+        raise AssertionError("live main reached the host PrivateTree")
+
+    def tracked_mkdir(path, mode=0o777, *, dir_fd=None):
+        name = os.path.basename(os.fspath(path))
+        if name.startswith(".odysseus-precommit-"):
+            host_scratch_calls.append(("mkdir", name, dir_fd))
+        return original_mkdir(path, mode, dir_fd=dir_fd)
+
+    def tracked_unlink(path, *args, **kwargs):
+        name = os.path.basename(os.fspath(path))
+        if name.startswith(".odysseus-quarantine-"):
+            final_name_calls.append(("unlink", name, kwargs.get("dir_fd")))
+        return original_unlink(path, *args, **kwargs)
+
+    def tracked_rmdir(path, *args, **kwargs):
+        name = os.path.basename(os.fspath(path))
+        if name.startswith(".odysseus-quarantine-"):
+            final_name_calls.append(("rmdir", name, kwargs.get("dir_fd")))
+        return original_rmdir(path, *args, **kwargs)
+
+    tempfile.tempdir = host_tmp
+    subject.os.mkdir = tracked_mkdir
+    subject.os.unlink = tracked_unlink
+    subject.os.rmdir = tracked_rmdir
+    subject.emit = lambda kind, message: emitted.append(
+        "{}\t{}".format(kind, message)
+    )
+    if original_private_tree is not None:
+        subject.PrivateTree = private_tree_forbidden
+    try:
+        status = subject.main([
+            "--root", root,
+            "--pre-commit", fixture,
+            "--git", git,
+            "--mode", "install",
+            "--expected-version", "3.8.0",
+            "--timeout", "10",
+        ])
+    finally:
+        tempfile.tempdir = original_tempdir
+        subject.os.mkdir = original_mkdir
+        subject.os.unlink = original_unlink
+        subject.os.rmdir = original_rmdir
+        subject.emit = original_emit
+        if original_private_tree is not None:
+            subject.PrivateTree = original_private_tree
+
+    residues = []
+    for search_root in (host_tmp, root):
+        for directory, names, files in os.walk(search_root):
+            for name in names + files:
+                if name.startswith(
+                    (".odysseus-precommit-", ".odysseus-quarantine-")
+                ):
+                    residues.append(os.path.join(directory, name))
+    unavailable = status != 0 and any(
+        marker in line
+        for marker in (
+            "no trusted secure execution boundary",
+            "no secure execution boundary",
+            "bwrap:",
+        )
+        for line in emitted
+    )
+    host_clean = (
+        not private_tree_called["value"]
+        and not host_scratch_calls
+        and not final_name_calls
+        and not residues
+    )
+    if unavailable and host_clean:
+        print("BOUNDARY_UNAVAILABLE: live namespace proof was not exercised")
+    safe = host_clean and status == 0 and not unavailable
+    if not safe:
+        print(
+            "live namespace scratch reached a host cleanup route: "
+            "status={},private_tree={},scratch_calls={!r},final_calls={!r},"
+            "residues={!r},messages={!r}".format(
+                status,
+                private_tree_called["value"],
+                host_scratch_calls,
+                final_name_calls,
+                residues,
+                emitted,
+            )
+        )
+    shutil.rmtree(root, ignore_errors=True)
+    shutil.rmtree(host_tmp, ignore_errors=True)
+    return safe
 
 
 def escaped_session_behavior(subject):
     """A setsid plus double-fork descendant cannot outlive containment."""
 
-    execution_tree = subject.PrivateTree()
-    data_tree = subject.PrivateTree()
-    data = data_tree.mkdir("data")
-    attempted = os.path.join(data, "attempted")
-    escaped = os.path.join(data, "escaped-session")
     bound_tools = []
-    boundary = subject.ReadOnlyExecutionBoundary.__new__(
-        subject.ReadOnlyExecutionBoundary
-    )
-    boundary.tree = execution_tree
-    boundary.data_tree = data_tree
-    boundary.bound_tools = bound_tools
-    boundary.guard = None
-    boundary.kind = None
+    boundary = subject.ReadOnlyExecutionBoundary(bound_tools)
     unavailable = False
     result = None
     detail = b""
@@ -2985,8 +4565,8 @@ def escaped_session_behavior(subject):
             unavailable = True
         if not unavailable:
             program = (
-                "import os,sys,time\n"
-                "open(sys.argv[1], 'w').write('attempted')\n"
+                "import os,time\n"
+                "os.write(1,b'attempted\\n')\n"
                 "first = os.fork()\n"
                 "if first:\n"
                 "    os.waitpid(first, 0)\n"
@@ -2996,17 +4576,17 @@ def escaped_session_behavior(subject):
                 "if second:\n"
                 "    os._exit(0)\n"
                 "time.sleep(0.4)\n"
-                "open(sys.argv[2], 'w').write('escaped')\n"
+                "os.write(1,b'escaped\\n')\n"
                 "os._exit(0)\n"
             )
             command, executable = boundary.wrap([
                 sys.executable, "-I", "-S", "-c", program,
-                attempted, escaped,
             ])
             try:
                 result = subprocess.run(
                     command,
                     executable=executable,
+                    pass_fds=(boundary.guard.descriptor,),
                     cwd="/",
                     env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
                     stdin=subprocess.DEVNULL,
@@ -3021,7 +4601,7 @@ def escaped_session_behavior(subject):
             time.sleep(0.8)
             if result is None:
                 unavailable = False
-            elif result.returncode != 0 and not os.path.exists(attempted):
+            elif result.returncode != 0 and b"attempted\n" not in result.stdout:
                 detail = result.stdout + result.stderr
                 unavailable = any(
                     marker in detail
@@ -3031,22 +4611,20 @@ def escaped_session_behavior(subject):
                         b"Creating new namespace failed",
                     )
                 )
-        if not sys.platform.startswith("linux"):
-            safe = unavailable
-        else:
-            safe = (
-                not unavailable
-                and result is not None
-                and result.returncode == 0
-                and os.path.exists(attempted)
-                and not os.path.exists(escaped)
-            )
+        if unavailable:
+            print("BOUNDARY_UNAVAILABLE: descendant extinction was not exercised")
+        safe = (
+            not unavailable
+            and result is not None
+            and result.returncode == 0
+            and b"attempted\n" in result.stdout
+            and b"escaped\n" not in result.stdout
+        )
         if not safe:
             print(
                 "a setsid/double-fork descendant escaped containment: "
-                "unavailable={}, attempted={}, escaped={}, detail={!r}".format(
-                    unavailable, os.path.exists(attempted),
-                    os.path.exists(escaped), detail,
+                "unavailable={}, result={!r}, detail={!r}".format(
+                    unavailable, result, detail,
                 )
             )
             return False
@@ -3054,12 +4632,10 @@ def escaped_session_behavior(subject):
     finally:
         for tool in reversed(bound_tools):
             tool.close()
-        execution_tree.close()
-        data_tree.close()
 
 
 def generated_install_python_behavior(subject):
-    """Generated hook bytes use only the installer-owned executable path."""
+    """Generated hook bytes use installer-owned provenance metadata only."""
 
     marker = "/tmp/odysseus-generated-hook-marker"
     candidate = b"\n".join(
@@ -3072,34 +4648,947 @@ def generated_install_python_behavior(subject):
         )
     ) + b"\n"
     selected = "/tmp/pre commit;$(touch should-not-run)/python"
+    config_data = b"repos: []\n"
+    policy_data = b"raise SystemExit(0)\n"
+    runtime = {
+        "source": selected,
+        "source_digest": "a" * 64,
+        "interpreter": "/usr/bin/python3",
+        "interpreter_digest": "b" * 64,
+        "git": "/usr/bin/git",
+        "git_digest": "d" * 64,
+        "boundary": "/usr/bin/bwrap",
+        "boundary_digest": "c" * 64,
+        "repository": "/trusted/repository",
+        "git_directory": "/trusted/repository/.git",
+        "git_common": "/trusted/repository/.git",
+        "home": "/trusted/home",
+        "config_hex": config_data.hex(),
+        "config_digest": hashlib.sha256(config_data).hexdigest(),
+        "policy_hex": policy_data.hex(),
+        "policy_digest": hashlib.sha256(policy_data).hexdigest(),
+        "pyyaml_manifest_hex": (b"/trusted/yaml.py=" + b"c" * 64).hex(),
+        "closure_manifest_hex": subject.zlib.compress(
+            b"/trusted/site-packages/yaml/__init__.py\t" + b"c" * 64 + b"\n"
+        ).hex(),
+    }
     canonicalize = getattr(subject, "canonical_generated_hook", None)
     if canonicalize is None:
         print("generated hook canonicalization is missing")
         return False
     try:
-        result = canonicalize(candidate, "pre-push", selected)
+        result = canonicalize(candidate, "pre-push", runtime)
     except (OSError, subject.SetupError, UnicodeError) as error:
         print("metacharacter path was not encoded safely: {}".format(error))
         return False
     lines = result.decode("utf-8").splitlines()
-    if len(lines) != 20:
+    if len(lines) != 26:
         print("canonical generated hook has the wrong line count")
         return False
-    try:
-        assignment = shlex.split(lines[5], posix=True)
-    except ValueError:
-        assignment = []
-    exact = assignment == ["INSTALL_PYTHON=" + selected]
+    exact = subject._assignment(lines[6], "PRE_COMMIT_SOURCE") == selected
     candidate_absent = b"/untrusted" not in result and b"touch${IFS}" not in result
-    stable = subject.generated(result, "pre-push", selected)
+    stable = subject.generated(result, "pre-push", runtime)
     if not exact or not candidate_absent or not stable:
         print(
-            "generated assignment was not replaced exactly: "
-            "assignment={!r},candidate_absent={},stable={}".format(
-                assignment, candidate_absent, stable
+            "generated runtime was not replaced exactly: "
+            "source_exact={!r},candidate_absent={},stable={}".format(
+                exact, candidate_absent, stable
             )
         )
         return False
+    return True
+
+
+def trusted_hook_payload_behavior(subject, base):
+    """Published hooks carry trusted config and policy bytes, not live routes."""
+
+    config_path = os.path.join(base, "trusted-runtime-config")
+    policy_path = os.path.join(base, "trusted-runtime-policy.py")
+    config_data = b"repos: []\n"
+    policy_data = b"raise SystemExit(0)\n"
+    write_file(config_path, config_data)
+    write_file(policy_path, policy_data)
+    candidate = b"\n".join(
+        line.encode("utf-8")
+        for line in (
+            *subject.HEADER,
+            "INSTALL_PYTHON=/untrusted",
+            "ARGS=(hook-impl --config=.pre-commit-config.yaml --hook-type=pre-commit)",
+            *subject.TAIL,
+        )
+    ) + b"\n"
+    runtime = {
+        "source": "/trusted/pre-commit",
+        "source_digest": "a" * 64,
+        "interpreter": "/usr/bin/python3",
+        "interpreter_digest": "b" * 64,
+        "git": "/usr/bin/git",
+        "git_digest": "d" * 64,
+        "boundary": "/usr/bin/bwrap",
+        "boundary_digest": "c" * 64,
+        "repository": "/trusted/repository",
+        "git_directory": "/trusted/repository/.git",
+        "git_common": "/trusted/repository/.git",
+        "home": "/trusted/home",
+        "config_hex": config_data.hex(),
+        "config_digest": hashlib.sha256(config_data).hexdigest(),
+        "policy_hex": policy_data.hex(),
+        "policy_digest": hashlib.sha256(policy_data).hexdigest(),
+        "pyyaml_manifest_hex": b"/trusted/yaml.py=".hex() + b"c".hex() * 64,
+        "closure_manifest_hex": subject.zlib.compress(
+            b"/trusted/site-packages/yaml/__init__.py\t" + b"c" * 64 + b"\n"
+        ).hex(),
+    }
+    try:
+        hook = subject.canonical_generated_hook(candidate, "pre-commit", runtime)
+    except (OSError, subject.SetupError, UnicodeError) as error:
+        print("trusted hook payload was rejected: {}".format(error))
+        return False
+    write_file(config_path, b"repos:\n- repo: hostile\n")
+    write_file(policy_path, b"open('/tmp/hostile', 'w').close()\n")
+    lines = hook.decode("utf-8").splitlines()
+    values = {}
+    for name in (
+        "TRUSTED_BOUNDARY",
+        "TRUSTED_BOUNDARY_SHA256",
+        "TRUSTED_REPOSITORY",
+        "TRUSTED_GIT_DIRECTORY",
+        "TRUSTED_GIT_COMMON",
+        "TRUSTED_HOME",
+        "TRUSTED_CONFIG_HEX",
+        "TRUSTED_CONFIG_SHA256",
+        "TRUSTED_POLICY_HEX",
+        "TRUSTED_POLICY_SHA256",
+        "TRUSTED_PYYAML_MANIFEST_HEX",
+        "TRUSTED_CLOSURE_MANIFEST_HEX",
+    ):
+        matches = [subject._assignment(line, name) for line in lines]
+        matches = [value for value in matches if value is not None]
+        values[name] = matches[0] if len(matches) == 1 else None
+    safe = (
+        values["TRUSTED_BOUNDARY"] == runtime["boundary"]
+        and values["TRUSTED_BOUNDARY_SHA256"] == runtime["boundary_digest"]
+        and values["TRUSTED_REPOSITORY"] == runtime["repository"]
+        and values["TRUSTED_GIT_DIRECTORY"] == runtime["git_directory"]
+        and values["TRUSTED_GIT_COMMON"] == runtime["git_common"]
+        and values["TRUSTED_HOME"] == runtime["home"]
+        and values["TRUSTED_CONFIG_HEX"] == runtime["config_hex"]
+        and values["TRUSTED_CONFIG_SHA256"] == runtime["config_digest"]
+        and values["TRUSTED_POLICY_HEX"] == runtime["policy_hex"]
+        and values["TRUSTED_POLICY_SHA256"] == runtime["policy_digest"]
+        and values["TRUSTED_PYYAML_MANIFEST_HEX"]
+        == runtime["pyyaml_manifest_hex"]
+        and values["TRUSTED_CLOSURE_MANIFEST_HEX"]
+        == runtime["closure_manifest_hex"]
+        and subject.generated(hook, "pre-commit", runtime)
+        and b"--config=.pre-commit-config.yaml" not in hook
+    )
+    if not safe:
+        print(
+            "published hook still depends on candidate config/policy routes: "
+            "values={!r}, hook={!r}".format(values, hook[:512])
+        )
+        return False
+    return True
+
+
+def sealed_provider_mutation_behavior(subject, base):
+    """A deterministic post-bind mutation cannot change executed provider bytes."""
+
+    if not sys.platform.startswith("linux"):
+        print("NON_PROOF_SKIP: immutable provider memfds require Linux")
+        return None
+    provider_bin = os.path.join(base, "sealed-provider", "bin")
+    os.makedirs(provider_bin)
+    source = os.path.join(provider_bin, "pre-commit")
+    original = b"#!/usr/bin/python3\nfrom probe import VALUE\nprint(VALUE)\n"
+    replacement = b"#!/usr/bin/python3\nprint('REPLACED')\n"
+    write_file(source, original, 0o755)
+    interpreter = next(
+        candidate
+        for candidate in (os.path.realpath("/usr/bin/python3"), os.path.realpath(sys.executable))
+        if os.path.isfile(candidate)
+        and os.stat(candidate).st_uid == 0
+        and not stat.S_IMODE(os.stat(candidate).st_mode) & 0o022
+    )
+    with open(interpreter, "rb") as stream:
+        interpreter_digest = hashlib.sha256(stream.read()).hexdigest()
+    boundary = next(
+        (
+            candidate
+            for candidate in ("/usr/bin/bwrap", "/bin/bwrap")
+            if os.path.isfile(candidate)
+            and os.path.realpath(candidate) == os.path.abspath(candidate)
+            and os.stat(candidate).st_uid == 0
+            and not stat.S_IMODE(os.stat(candidate).st_mode) & 0o022
+        ),
+        None,
+    )
+    if boundary is None:
+        print("authoritative Linux containment provider is unavailable")
+        return False
+    with open(boundary, "rb") as stream:
+        boundary_digest = hashlib.sha256(stream.read()).hexdigest()
+    config = b"repos: []\n"
+    policy = b"raise SystemExit(0)\n"
+    manifest = b"/trusted/yaml.py=" + b"c" * 64
+    git_provider = os.path.realpath(shutil.which("git") or "/usr/bin/git")
+    with open(git_provider, "rb") as stream:
+        git_digest = hashlib.sha256(stream.read()).hexdigest()
+    closure_file = os.path.join(
+        base, "sealed-provider", "lib", "python3.11", "site-packages", "probe.py"
+    )
+    os.makedirs(os.path.dirname(closure_file))
+    closure_original = b"VALUE = 'ORIGINAL'\n"
+    closure_replacement = b"VALUE = 'REPLACED'\n"
+    write_file(closure_file, closure_original)
+    closure_manifest = subject.zlib.compress(
+        (closure_file + "\t" + hashlib.sha256(closure_original).hexdigest() + "\n").encode("utf-8")
+    ).hex()
+    libc = ctypes.CDLL(None, use_errno=True)
+    inotify_init1 = getattr(libc, "inotify_init1", None)
+    inotify_add_watch = getattr(libc, "inotify_add_watch", None)
+    if inotify_init1 is None or inotify_add_watch is None:
+        print("Linux inotify is unavailable for the post-bind mutation oracle")
+        return False
+    inotify_init1.argtypes = (ctypes.c_int,)
+    inotify_init1.restype = ctypes.c_int
+    inotify_add_watch.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32)
+    inotify_add_watch.restype = ctypes.c_int
+    watch = inotify_init1(os.O_CLOEXEC)
+    if watch < 0:
+        print("Linux inotify could not bind the provider mutation oracle")
+        return False
+    source_watch = inotify_add_watch(watch, os.fsencode(source), 0x10)
+    closure_watch = inotify_add_watch(watch, os.fsencode(closure_file), 0x10)
+    if watch < 0 or source_watch < 0 or closure_watch < 0:
+        if watch >= 0:
+            os.close(watch)
+        print("Linux inotify could not bind the provider mutation oracle")
+        return False
+    command = [
+        interpreter,
+        "-I",
+        "-S",
+        "-c",
+        subject.MANAGED_RUNTIME_BOOTSTRAP,
+        source,
+        hashlib.sha256(original).hexdigest(),
+        interpreter,
+        interpreter_digest,
+        git_provider,
+        git_digest,
+        boundary,
+        boundary_digest,
+        "pre-commit",
+        os.path.join(base, "hook"),
+        base,
+        base,
+        base,
+        base,
+        config.hex(),
+        hashlib.sha256(config).hexdigest(),
+        policy.hex(),
+        hashlib.sha256(policy).hexdigest(),
+        manifest.hex(),
+        closure_manifest,
+    ]
+    process = subprocess.Popen(
+        command,
+        cwd=base,
+        env=dict(os.environ),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    observed = set()
+    try:
+        deadline = time.monotonic() + 5
+        while len(observed) < 2 and time.monotonic() < deadline:
+            ready, _, _ = select.select([watch], [], [], max(0, deadline - time.monotonic()))
+            if not ready:
+                break
+            payload = os.read(watch, 4096)
+            offset = 0
+            while offset + 16 <= len(payload):
+                descriptor, _mask, _cookie, name_length = __import__("struct").unpack_from("iIII", payload, offset)
+                offset += 16 + name_length
+                if descriptor == source_watch and "source" not in observed:
+                    write_file(source, replacement, 0o755)
+                    observed.add("source")
+                if descriptor == closure_watch and "closure" not in observed:
+                    write_file(closure_file, closure_replacement)
+                    observed.add("closure")
+        stdout, stderr = process.communicate(timeout=15)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        stdout, stderr = process.communicate()
+    finally:
+        os.close(watch)
+    if observed != {"source", "closure"} or process.returncode != 0 or stdout != b"ORIGINAL\n":
+        print(
+            "post-bind provider mutation selected mutable bytes: "
+            "event={},status={},stdout={!r},stderr={!r}".format(
+                observed, process.returncode, stdout, stderr
+            )
+        )
+        return False
+    return True
+
+
+def managed_shell_entry_behavior(subject, base):
+    """Managed hooks enter through fixed privileged Bash before verification."""
+
+    if not sys.platform.startswith("linux"):
+        print("NON_PROOF_SKIP: installed managed shell boundary requires Linux")
+        return None
+
+    path_marker = os.path.join(base, "managed-path-shell-ran")
+    startup_marker = os.path.join(base, "managed-startup-ran")
+    source = os.path.join(base, "managed-entry-source")
+    source_data = b"#!/usr/bin/python3\nprint('odysseus-managed-source-ran')\n"
+    write_file(source, source_data, 0o755)
+    interpreter = next(
+        candidate
+        for candidate in (
+            os.path.realpath("/usr/bin/python3"),
+            os.path.realpath(sys.executable),
+        )
+        if os.path.isfile(candidate)
+        and os.stat(candidate).st_uid == 0
+        and not stat.S_IMODE(os.stat(candidate).st_mode) & 0o022
+    )
+    with open(interpreter, "rb") as stream:
+        interpreter_digest = hashlib.sha256(stream.read()).hexdigest()
+    git_provider = os.path.realpath(shutil.which("git") or "/usr/bin/git")
+    with open(git_provider, "rb") as stream:
+        git_digest = hashlib.sha256(stream.read()).hexdigest()
+    closure_file = os.path.join(
+        base, "managed-shell", "lib", "python3.11", "site-packages", "probe.py"
+    )
+    os.makedirs(os.path.dirname(closure_file))
+    write_file(closure_file, b"VALUE = 'sealed'\n")
+    closure_manifest = subject.zlib.compress(
+        (closure_file + "\t" + hashlib.sha256(b"VALUE = 'sealed'\n").hexdigest() + "\n").encode("utf-8")
+    ).hex()
+    boundary = "/usr/bin/bwrap"
+    boundary_digest = "c" * 64
+    if sys.platform.startswith("linux"):
+        boundary = next(
+            (
+                candidate
+                for candidate in ("/usr/bin/bwrap", "/bin/bwrap")
+                if os.path.isfile(candidate)
+                and os.path.realpath(candidate) == os.path.abspath(candidate)
+                and os.stat(candidate).st_uid == 0
+                and not stat.S_IMODE(os.stat(candidate).st_mode) & 0o022
+            ),
+            None,
+        )
+        if boundary is None:
+            print("authoritative Linux containment provider is unavailable")
+            return False
+        with open(boundary, "rb") as stream:
+            boundary_digest = hashlib.sha256(stream.read()).hexdigest()
+    runtime = {
+        "source": source,
+        "source_digest": hashlib.sha256(source_data).hexdigest(),
+        "interpreter": interpreter,
+        "interpreter_digest": interpreter_digest,
+        "git": git_provider,
+        "git_digest": git_digest,
+        "boundary": boundary,
+        "boundary_digest": boundary_digest,
+        "repository": base,
+        "git_directory": base,
+        "git_common": base,
+        "home": base,
+        "config_hex": b"repos: []\n".hex(),
+        "config_digest": hashlib.sha256(b"repos: []\n").hexdigest(),
+        "policy_hex": b"raise SystemExit(0)\n".hex(),
+        "policy_digest": hashlib.sha256(b"raise SystemExit(0)\n").hexdigest(),
+        "pyyaml_manifest_hex": (b"/trusted/yaml.py=" + b"c" * 64).hex(),
+        "closure_manifest_hex": closure_manifest,
+    }
+    candidate = b"\n".join(
+        line.encode("utf-8")
+        for line in (
+            *subject.HEADER,
+            "INSTALL_PYTHON=/untrusted",
+            "ARGS=(hook-impl --config=.pre-commit-config.yaml --hook-type=pre-commit)",
+            *subject.TAIL,
+        )
+    ) + b"\n"
+    hook = os.path.join(base, "managed-entry-hook")
+    write_file(
+        hook,
+        subject.canonical_generated_hook(candidate, "pre-commit", runtime),
+        0o755,
+    )
+    hostile = os.path.join(base, "managed-hostile-bin")
+    os.mkdir(hostile, 0o700)
+    write_file(
+        os.path.join(hostile, "bash"),
+        (
+            "#!/bin/sh\nprintf hostile > {}\nexit 97\n".format(
+                shlex.quote(path_marker)
+            )
+        ).encode("utf-8"),
+        0o755,
+    )
+    startup = os.path.join(base, "managed-startup")
+    write_file(
+        startup,
+        "printf hostile > {}\n".format(shlex.quote(startup_marker)).encode(
+            "utf-8"
+        ),
+    )
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "BASH_ENV": startup,
+            "ENV": startup,
+            "PATH": hostile + os.pathsep + "/usr/bin:/bin",
+        }
+    )
+    try:
+        result = subprocess.run(
+            [hook],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=environment,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print("managed hook entry could not be observed: {}".format(error))
+        return False
+    with open(hook, "rb") as stream:
+        first_line = stream.readline().rstrip(b"\n")
+    executed_or_closed = (
+        result.returncode == 0
+        and b"odysseus-managed-source-ran\n" in result.stdout
+    ) or (
+        result.returncode != 0
+        and any(
+            marker in result.stderr
+            for marker in (
+                b"descriptor-bound interpreter execution is unavailable",
+                b"immutable provider snapshots are unavailable",
+                b"cannot bind /usr/bin/bwrap",
+            )
+        )
+        and b"odysseus-managed-source-ran" not in result.stdout
+    )
+    safe = (
+        first_line == b"#!/bin/bash -p"
+        and not os.path.exists(path_marker)
+        and not os.path.exists(startup_marker)
+        and executed_or_closed
+    )
+    if not safe:
+        print(
+            "managed hook retained pre-verification shell authority: "
+            "line={!r},status={},path_marker={},startup_marker={},source_ran={},"
+            "stderr={!r}".format(
+                first_line,
+                result.returncode,
+                os.path.exists(path_marker),
+                os.path.exists(startup_marker),
+                b"odysseus-managed-source-ran" in result.stdout,
+                result.stderr,
+            )
+        )
+        return False
+    return True
+
+
+def managed_runtime_descriptor_behavior(subject, base):
+    """Execute the installed descriptor-bound runtime through real bubblewrap."""
+
+    bootstrap = subject.MANAGED_RUNTIME_BOOTSTRAP
+    signal_probe = r'''import signal
+import sys
+
+namespace = {}
+prefix, separator, _remainder = sys.argv[1].partition("\n(\n    source_path")
+if not separator:
+    raise SystemExit("cannot isolate managed-runtime definitions")
+exec(prefix, namespace)
+for signum in namespace["CANCELLATION_SIGNALS"]:
+    signal.signal(signum, signal.SIG_IGN)
+signal.pthread_sigmask(
+    signal.SIG_BLOCK, set(namespace["CANCELLATION_SIGNALS"])
+)
+limits = {}
+def setrlimit(kind, value):
+    limits[kind] = value
+def getrlimit(kind):
+    return limits.get(kind, (0, 0))
+namespace["resource"].setrlimit = setrlimit
+namespace["resource"].getrlimit = getrlimit
+namespace["establish_limits"]()
+handlers = all(
+    signal.getsignal(signum) is namespace["cancellation_handler"]
+    for signum in namespace["CANCELLATION_SIGNALS"]
+)
+mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+unblocked = all(
+    signum not in mask for signum in namespace["CANCELLATION_SIGNALS"]
+)
+print("{}|{}".format(handlers, unblocked))
+    '''
+    signal_result = subprocess.run(
+        [sys.executable, "-I", "-S", "-c", signal_probe, bootstrap],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=5,
+        check=False,
+    )
+    if signal_result.returncode != 0 or signal_result.stdout.strip() != b"True|True":
+        print(
+            "managed runtime inherited ignored or blocked cancellation signals: "
+            "status={},stdout={!r},stderr={!r}".format(
+                signal_result.returncode,
+                signal_result.stdout,
+                signal_result.stderr,
+            )
+        )
+        return False
+    if (
+        "--ro-bind-fd" not in bootstrap
+        or "/proc/self/fd" in bootstrap
+        or 'private_site_root = "/odysseus/provider/site-packages"' not in bootstrap
+        or '"--remount-ro", private_site_root' not in bootstrap
+        or 'trusted_config = "/odysseus/runtime/config.yaml"' not in bootstrap
+    ):
+        print("managed runtime retained a mutable or pathname-selected authority route")
+        return False
+    if not sys.platform.startswith("linux"):
+        print("NON_PROOF_SKIP: managed immutable runtime requires Linux")
+        return None
+
+    provider_bin = os.path.join(base, "managed-runtime", "bin")
+    os.makedirs(provider_bin)
+    repository = os.path.join(base, "managed-runtime-repository")
+    os.mkdir(repository, 0o700)
+    escape_directory = os.path.join(base, "managed-runtime-escape")
+    os.mkdir(escape_directory, 0o700)
+    escape_marker = os.path.join(escape_directory, "outside-mounted-tree")
+    write_file(escape_marker, b"host-only\n")
+    escape_relative = "../{}/{}".format(
+        os.path.basename(escape_directory), os.path.basename(escape_marker)
+    )
+    original_site_root = os.path.join(
+        repository,
+        ".pixi",
+        "envs",
+        "default",
+        "lib",
+        "python3.11",
+        "site-packages",
+    )
+    os.makedirs(os.path.join(original_site_root, "yaml"))
+    closure_payloads = {
+        os.path.join(original_site_root, "probe.py"): b"VALUE = 'sealed'\n",
+        os.path.join(original_site_root, "yaml", "__init__.py"): (
+            b"__version__ = '6.0.3'\n"
+        ),
+    }
+    for path, data in closure_payloads.items():
+        write_file(path, data)
+    hostile_sibling = os.path.join(original_site_root, "unsealed_sibling.py")
+    hostile_native = os.path.join(original_site_root, "unsealed_native.so")
+    write_file(hostile_sibling, b"VALUE = 'hostile'\n")
+    write_file(hostile_native, b"not a trusted native module\n")
+    closure_manifest = subject.zlib.compress(
+        "".join(
+            "{}\t{}\n".format(path, hashlib.sha256(data).hexdigest())
+            for path, data in sorted(closure_payloads.items())
+        ).encode("utf-8")
+    ).hex()
+    yaml_path = os.path.join(original_site_root, "yaml", "__init__.py")
+    pyyaml_manifest = (
+        "{}={}\n".format(
+            yaml_path, hashlib.sha256(closure_payloads[yaml_path]).hexdigest()
+        ).encode("utf-8").hex()
+    )
+    source = os.path.join(provider_bin, "pre-commit")
+    provider = """#!/usr/bin/python3
+import hashlib
+import importlib
+import os
+import resource
+import signal
+import sys
+
+config = next(value.split("=", 1)[1] for value in sys.argv if value.startswith("--config="))
+with open(config, "rb") as stream:
+    config_digest = hashlib.sha256(stream.read()).hexdigest()
+try:
+    with open("/etc/passwd", "rb") as stream:
+        etc_visible = "yes"
+except OSError:
+    etc_visible = "no"
+try:
+    with open("host-write-probe", "wb") as stream:
+        stream.write(b"unsafe")
+    repository_writable = "yes"
+except OSError:
+    repository_writable = "no"
+capability_escape = "no"
+for value in os.listdir("/proc/self/fd"):
+    try:
+        descriptor = int(value)
+    except ValueError:
+        continue
+    if descriptor < 3:
+        continue
+    try:
+        escaped = os.open(sys.argv[-2], os.O_RDONLY, dir_fd=descriptor)
+    except OSError:
+        continue
+    else:
+        os.close(escaped)
+        capability_escape = "yes"
+        break
+original_site_root = sys.argv[-1]
+sibling_visible = "yes" if os.path.exists(
+    os.path.join(original_site_root, "unsealed_sibling.py")
+) else "no"
+native_visible = "yes" if os.path.exists(
+    os.path.join(original_site_root, "unsealed_native.so")
+) else "no"
+sys.path.insert(0, original_site_root)
+try:
+    importlib.import_module("unsealed_sibling")
+except ImportError:
+    sibling_imported = "no"
+else:
+    sibling_imported = "yes"
+finally:
+    sys.path.pop(0)
+import probe
+values = (
+    config,
+    os.environ.get("ODYSSEUS_PRE_COMMIT_INTERPRETER", ""),
+    os.environ.get("ODYSSEUS_PRE_COMMIT_PROVIDER", ""),
+    os.environ.get("ODYSSEUS_EXECUTABLE_ORIGIN", ""),
+    os.environ.get("GIT_CONFIG_GLOBAL", ""),
+    os.environ.get("GIT_INDEX_FILE", ""),
+    str(bool(os.environ.get("ODYSSEUS_TRUSTED_POLICY_ROOT"))).lower(),
+    etc_visible,
+    repository_writable,
+    capability_escape,
+    config_digest,
+    probe.VALUE,
+    sibling_visible,
+    native_visible,
+    sibling_imported,
+    ",".join(
+        str(resource.getrlimit(getattr(resource, name))[0])
+        for name in ("RLIMIT_CPU", "RLIMIT_AS", "RLIMIT_NPROC", "RLIMIT_NOFILE", "RLIMIT_FSIZE")
+    ),
+    str(signal.alarm(0) > 0).lower(),
+)
+os.write(1, ("|".join(values) + "\\n").encode("utf-8"))
+"""
+    write_file(source, provider.encode("utf-8"), 0o755)
+    interpreter = next(
+        candidate
+        for candidate in (
+            os.path.realpath("/usr/bin/python3"),
+            os.path.realpath(sys.executable),
+        )
+        if os.path.isfile(candidate)
+        and os.stat(candidate).st_uid == 0
+        and not stat.S_IMODE(os.stat(candidate).st_mode) & 0o022
+    )
+    with open(source, "rb") as stream:
+        source_digest = hashlib.sha256(stream.read()).hexdigest()
+    with open(interpreter, "rb") as stream:
+        interpreter_digest = hashlib.sha256(stream.read()).hexdigest()
+    boundary = next(
+        (
+            candidate
+            for candidate in ("/usr/bin/bwrap", "/bin/bwrap")
+            if os.path.isfile(candidate)
+            and os.path.realpath(candidate) == os.path.abspath(candidate)
+            and os.stat(candidate).st_uid == 0
+            and not stat.S_IMODE(os.stat(candidate).st_mode) & 0o022
+        ),
+        None,
+    )
+    if boundary is None:
+        print("authoritative Linux containment provider is unavailable")
+        return False
+    with open(boundary, "rb") as stream:
+        boundary_digest = hashlib.sha256(stream.read()).hexdigest()
+
+    hostile = {
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES": os.path.join(base, "objects"),
+        "GIT_CEILING_DIRECTORIES": base,
+        "GIT_COMMON_DIR": os.path.join(base, "common"),
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "core.hooksPath",
+        "GIT_CONFIG_PARAMETERS": "'core.hooksPath'='hostile'",
+        "GIT_CONFIG_VALUE_0": os.path.join(base, "hooks"),
+        "GIT_CONFIG_GLOBAL": os.path.join(base, "global-config"),
+        "GIT_DIR": os.path.join(base, "git-dir"),
+        "GIT_EXEC_PATH": os.path.join(base, "exec-path"),
+        "GIT_GRAFT_FILE": os.path.join(base, "grafts"),
+        "GIT_INDEX_FILE": os.path.join(repository, "alternate-index"),
+        "GIT_NAMESPACE": "hostile",
+        "GIT_OBJECT_DIRECTORY": os.path.join(base, "object-directory"),
+        "GIT_REPLACE_REF_BASE": "refs/hostile/replace/",
+        "GIT_SHALLOW_FILE": os.path.join(base, "shallow"),
+        "GIT_WORK_TREE": os.path.join(base, "work-tree"),
+        "LD_LIBRARY_PATH": os.path.join(base, "loader"),
+        "LD_PRELOAD": os.path.join(base, "loader.so"),
+        "DYLD_INSERT_LIBRARIES": os.path.join(base, "loader.dylib"),
+        "PYTHONINSPECT": "1",
+        "PYTHONPYCACHEPREFIX": os.path.join(base, "pycache"),
+        "PYTHONSTARTUP": os.path.join(base, "startup.py"),
+        "PYTHONWARNINGS": "error::UserWarning:hostile.module",
+        "ODYSSEUS_MANAGED_PRE_COMMIT": "hostile",
+        "ODYSSEUS_PRE_COMMIT_INTERPRETER": os.path.join(base, "python"),
+        "ODYSSEUS_PRE_COMMIT_INTERPRETER_SHA256": "0" * 64,
+        "ODYSSEUS_PRE_COMMIT_PROVIDER": os.path.join(base, "pre-commit"),
+        "ODYSSEUS_PRE_COMMIT_PROVIDER_SHA256": "0" * 64,
+        "ODYSSEUS_PRE_COMMIT_POLICY_HEX": "00",
+        "ODYSSEUS_PRE_COMMIT_POLICY_SHA256": "0" * 64,
+        "ODYSSEUS_PYYAML_MANIFEST": "hostile",
+        "ODYSSEUS_TRUSTED_POLICY_ROOT": os.path.join(base, "hostile-policy"),
+    }
+    config_data = b"repos: []\n"
+    policy_data = b"raise SystemExit(0)\n"
+    git_provider = os.path.realpath(shutil.which("git") or "/usr/bin/git")
+    with open(git_provider, "rb") as stream:
+        git_digest = hashlib.sha256(stream.read()).hexdigest()
+    command = [
+        interpreter,
+        "-I",
+        "-S",
+        "-c",
+        subject.MANAGED_RUNTIME_BOOTSTRAP,
+        source,
+        source_digest,
+        interpreter,
+        interpreter_digest,
+        git_provider,
+        git_digest,
+        boundary,
+        boundary_digest,
+        "pre-commit",
+        os.path.join(repository, "hook"),
+        repository,
+        repository,
+        repository,
+        base,
+        config_data.hex(),
+        hashlib.sha256(config_data).hexdigest(),
+        policy_data.hex(),
+        hashlib.sha256(policy_data).hexdigest(),
+        pyyaml_manifest,
+        closure_manifest,
+        escape_relative,
+        original_site_root,
+    ]
+    environment = dict(os.environ)
+    environment.update(hostile)
+    result = subprocess.run(
+        command,
+        cwd=base,
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=15,
+        check=False,
+    )
+    expected_fields = (
+        (
+            "/odysseus/runtime/config.yaml",
+            "/odysseus/runtime/python",
+            "/odysseus/runtime/pre-commit",
+            "/odysseus/runtime/pre-commit",
+            "/dev/null",
+            hostile["GIT_INDEX_FILE"],
+            "false",
+            "no",
+            "no",
+            "no",
+            hashlib.sha256(config_data).hexdigest(),
+            "sealed",
+            "no",
+            "no",
+            "no",
+        )
+    )
+    try:
+        actual_fields = result.stdout.decode("utf-8").strip().split("|")
+        limits = [int(value) for value in actual_fields[15].split(",")]
+    except (UnicodeError, ValueError, IndexError):
+        actual_fields = []
+        limits = []
+    expected_limits = (10, 512 * 1024 * 1024, 128, 2048, 8 * 1024 * 1024)
+    safe = (
+        result.returncode == 0
+        and tuple(actual_fields[:15]) == expected_fields
+        and len(limits) == len(expected_limits)
+        and all(0 <= actual <= maximum for actual, maximum in zip(limits, expected_limits))
+        and actual_fields[16] == "false"
+        and not os.path.exists(os.path.join(repository, "host-write-probe"))
+    )
+    if not safe:
+        print(
+            "managed runtime did not consume its sealed descriptors inside the "
+            "real boundary: status={},stdout={!r},stderr={!r}".format(
+                result.returncode, result.stdout, result.stderr
+            )
+        )
+        return False
+
+    hanging_source = os.path.join(provider_bin, "pre-commit-hanging")
+    hanging_provider = b"""#!/usr/bin/python3
+import os
+import signal
+
+if os.fork() == 0:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    with open('/proc/self/status', 'r', encoding='ascii') as stream:
+        nspid = next(
+            line for line in stream if line.startswith('NSpid:')
+        ).split()[1]
+    os.write(1, ('descendant=' + nspid + '\\n').encode('ascii'))
+    while True:
+        signal.pause()
+while True:
+    signal.pause()
+"""
+    write_file(hanging_source, hanging_provider, 0o755)
+    hanging_digest = hashlib.sha256(hanging_provider).hexdigest()
+
+    def hanging_command(seconds):
+        selected = list(command)
+        selected[4] = bootstrap.replace(
+            "WALL_SECONDS = 30", "WALL_SECONDS = {}".format(seconds)
+        )
+        selected[5] = hanging_source
+        selected[6] = hanging_digest
+        return selected
+
+    def descendant_extinct(output):
+        match = re.search(rb"^descendant=(\d+)$", output, re.MULTILINE)
+        if match is None:
+            return False
+        pid = int(match.group(1))
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            time.sleep(0.01)
+        return False
+
+    try:
+        deadline_result = subprocess.run(
+            hanging_command(1),
+            cwd=base,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        print("managed runtime wall supervisor did not return")
+        return False
+    if (
+        deadline_result.returncode != 124
+        or b"wall-clock deadline exceeded" not in deadline_result.stderr
+        or not descendant_extinct(deadline_result.stdout)
+    ):
+        print(
+            "managed runtime deadline did not extinguish descendants: "
+            "status={},stdout={!r},stderr={!r}".format(
+                deadline_result.returncode,
+                deadline_result.stdout,
+                deadline_result.stderr,
+            )
+        )
+        return False
+
+    cancellation_signals = (
+        signal.SIGTERM, signal.SIGHUP, signal.SIGINT, signal.SIGQUIT
+    )
+    for inherited in ("ignored", "blocked"):
+        for cancel_signal in cancellation_signals:
+            def inherited_state():
+                if inherited == "ignored":
+                    for signum in cancellation_signals:
+                        signal.signal(signum, signal.SIG_IGN)
+                else:
+                    signal.pthread_sigmask(
+                        signal.SIG_BLOCK, set(cancellation_signals)
+                    )
+
+            process = subprocess.Popen(
+                hanging_command(5),
+                cwd=base,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                preexec_fn=inherited_state,
+            )
+            readable, _writable, _exceptional = select.select(
+                [process.stdout], [], [], 3
+            )
+            if not readable:
+                process.kill()
+                process.wait(timeout=2)
+                print(
+                    "managed runtime did not start under {} cancellation state".format(
+                        inherited
+                    )
+                )
+                return False
+            first_line = process.stdout.readline()
+            os.kill(process.pid, cancel_signal)
+            try:
+                remaining_out, cancel_error = process.communicate(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+                print(
+                    "managed runtime retained {} {} cancellation".format(
+                        inherited, signal.Signals(cancel_signal).name
+                    )
+                )
+                return False
+            cancel_out = first_line + remaining_out
+            if (
+                process.returncode != 128 + cancel_signal
+                or signal.Signals(cancel_signal).name.encode("ascii")
+                not in cancel_error
+                or not descendant_extinct(cancel_out)
+            ):
+                print(
+                    "managed runtime cancellation did not extinguish descendants: "
+                    "state={},signal={},status={},stdout={!r},stderr={!r}".format(
+                        inherited,
+                        signal.Signals(cancel_signal).name,
+                        process.returncode,
+                        cancel_out,
+                        cancel_error,
+                    )
+                )
+                return False
     return True
 
 
@@ -3119,7 +5608,10 @@ def independent_git_metadata_behavior(subject, base):
     original_git_value = subject.git_value
     original_run = subject.run
 
-    def forged_git_value(_git, _repo, args, _env, _timeout):
+    def forged_git_value(
+        _git, _repo, args, _env, _timeout, readonly_paths=()
+    ):
+        del readonly_paths
         if args == ["rev-parse", "--show-toplevel"]:
             return root
         if args in (
@@ -3129,7 +5621,8 @@ def independent_git_metadata_behavior(subject, base):
             return unrelated
         raise AssertionError(args)
 
-    def controlled_run(argv, _cwd, _env, _timeout):
+    def controlled_run(argv, _cwd, _env, _timeout, readonly_paths=()):
+        del readonly_paths
         if argv[-4:] == ["config", "--show-origin", "--get", "core.hooksPath"]:
             return (1, b"", b"")
         raise AssertionError(argv)
@@ -3158,6 +5651,207 @@ def independent_git_metadata_behavior(subject, base):
             "forged Git metadata selected an unrelated route: "
             "accepted={},error={!r},unchanged={}".format(
                 accepted, error, after == before
+            )
+        )
+        return False
+    return True
+
+
+def external_worktree_mount_behavior(subject, base):
+    """Bind an actual external worktree without replacing the run boundary."""
+
+    if not sys.platform.startswith("linux"):
+        print("NON_PROOF_SKIP: external-worktree containment requires Linux")
+        return None
+
+    source = tempfile.mkdtemp(prefix="external-worktree-source-", dir=base)
+    root = tempfile.mkdtemp(prefix="external-worktree-checkout-", dir=base)
+    os.rmdir(root)
+    clean = {
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "HOME": base,
+        "LANG": "C",
+        "LC_ALL": "C",
+        "PATH": "/usr/bin:/bin",
+        "TMPDIR": base,
+    }
+    setup_commands = (
+        [git, "-c", "init.templateDir=", "init", "-q", source],
+        [git, "-C", source, "config", "user.name", "Odysseus Test"],
+        [git, "-C", source, "config", "user.email", "test@example.invalid"],
+    )
+    for command in setup_commands:
+        result = subprocess.run(
+            command,
+            env=clean,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if result.returncode != 0:
+            print("external-worktree fixture failed: {!r}".format(result.stderr))
+            return False
+    write_file(os.path.join(source, "tracked"), b"tracked\n")
+    for command in (
+        [git, "-C", source, "add", "tracked"],
+        [git, "-C", source, "commit", "-qm", "fixture"],
+        [git, "-C", source, "worktree", "add", "-qb", "topic", root],
+    ):
+        result = subprocess.run(
+            command,
+            env=clean,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if result.returncode != 0:
+            print("external-worktree fixture failed: {!r}".format(result.stderr))
+            return False
+    config = os.path.join(root, ".pre-commit-config.yaml")
+    write_file(config, b"repos: []\n")
+
+    deadline = subject.OperationDeadline(20)
+    budget = subject.OperationBudget(deadline)
+    bound_tools = []
+    repo = None
+    error = None
+    namespace_only_proven = False
+    directory_capabilities_closed = False
+    namespace_parent = None
+    namespace_route = None
+    try:
+        try:
+            git_source = subject.BoundTool.open(os.path.realpath(git))
+            bound_tools.append(git_source)
+            boundary = subject.ReadOnlyExecutionBoundary(bound_tools, budget)
+            boundary.require()
+            git_bound = subject.bind_executable(
+                git_source, boundary.tree, "git", bound_tools, boundary
+            )
+            environment = subject.clean_env(
+                git_bound,
+                git_bound,
+                subject.SCRATCH_HOME,
+                subject.SCRATCH_CACHE,
+            )
+            namespace_path = "/odysseus/descriptor-only-{}".format(
+                os.path.basename(root)
+            )
+            namespace_absent = not os.path.lexists(namespace_path)
+            host_direct = subprocess.run(
+                [git, "-C", namespace_path, "rev-parse", "--show-toplevel"],
+                env=clean,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            namespace_parent = subject.BoundDir.open(
+                os.path.dirname(source), safe=True
+            )
+            namespace_route = subject.BoundDir.open_at(
+                namespace_parent.descriptor,
+                os.path.basename(source),
+                namespace_path,
+                safe=True,
+            )
+            namespace_value = subject.git_value(
+                git_bound,
+                namespace_path,
+                ["rev-parse", "--show-toplevel"],
+                environment,
+                budget,
+                (namespace_route,),
+            )
+            namespace_only_proven = (
+                namespace_absent
+                and host_direct.returncode != 0
+                and namespace_value == namespace_path
+            )
+            escape_directory = os.path.join(base, "descriptor-escape-target")
+            os.mkdir(escape_directory, 0o700)
+            write_file(os.path.join(escape_directory, "marker"), b"host-only\n")
+            escape_relative = "../{}/marker".format(
+                os.path.basename(escape_directory)
+            )
+            interpreter = os.path.realpath("/usr/bin/python3")
+            probe_path = os.path.join(source, "descriptor-probe.py")
+            write_file(
+                probe_path,
+                (
+                    "#!{}\n"
+                    "import os, sys\n"
+                    "escaped = False\n"
+                    "for value in os.listdir('/proc/self/fd'):\n"
+                    "    try:\n"
+                    "        descriptor = int(value)\n"
+                    "    except ValueError:\n"
+                    "        continue\n"
+                    "    if descriptor < 3:\n"
+                    "        continue\n"
+                    "    try:\n"
+                    "        opened = os.open(sys.argv[1], os.O_RDONLY, "
+                    "dir_fd=descriptor)\n"
+                    "    except OSError:\n"
+                    "        continue\n"
+                    "    os.close(opened)\n"
+                    "    escaped = True\n"
+                    "    break\n"
+                    "print('escape' if escaped else 'closed')\n"
+                ).format(interpreter).encode("utf-8"),
+                0o755,
+            )
+            probe_source = subject.BoundTool.open(probe_path)
+            bound_tools.append(probe_source)
+            probe_bound = subject.bind_executable(
+                probe_source,
+                boundary.tree,
+                "descriptor-probe",
+                bound_tools,
+                boundary,
+            )
+            probe_result = subject.run(
+                [probe_bound, escape_relative],
+                namespace_path,
+                environment,
+                budget,
+                readonly_paths=(namespace_route,),
+            )
+            directory_capabilities_closed = (
+                probe_result[0] == 0 and probe_result[1] == b"closed\n"
+            )
+            repo = subject.bind_repo(root, config, git_bound, environment, budget)
+        except (OSError, subject.SetupError, UnicodeError) as caught:
+            error = caught
+    finally:
+        if repo is not None:
+            repo.close()
+        if namespace_route is not None:
+            namespace_route.close()
+        if namespace_parent is not None:
+            namespace_parent.close()
+        for tool in reversed(bound_tools):
+            tool.close()
+    expected_common = os.path.realpath(os.path.join(source, ".git"))
+    complete = (
+        repo is not None
+        and namespace_only_proven
+        and directory_capabilities_closed
+        and repo.path == os.path.realpath(root)
+        and repo.common.path == expected_common
+        and repo.git_dir.path.startswith(expected_common + os.sep + "worktrees" + os.sep)
+    )
+    if error is not None or not complete:
+        print(
+            "external worktree metadata was not available through the real "
+            "boundary: error={!r},complete={},namespace_only={},fds_closed={}".format(
+                error,
+                complete,
+                namespace_only_proven,
+                directory_capabilities_closed,
             )
         )
         return False
@@ -3229,6 +5923,392 @@ def timeout_and_sigchld_preflight_behavior(subject, base):
     return True
 
 
+def aggregate_budget_behavior(subject, base):
+    """Parent-side discovery has aggregate count/byte limits and one deadline."""
+
+    required = (
+        "MAX_DIRECTORY_ENTRIES",
+        "MAX_CONFIGS",
+        "MAX_REPOSITORIES",
+        "MAX_CONFIG_BYTES",
+        "MAX_HOOK_ENTRIES",
+        "MAX_HOOK_BYTES",
+        "MAX_RUNTIME_SIBLINGS",
+        "MAX_RUNTIME_BYTES",
+        "OperationDeadline",
+        "OperationBudget",
+        "DiscoveryInventory",
+        "_bounded_directory_names",
+    )
+    missing = [name for name in required if not hasattr(subject, name)]
+    if missing:
+        print("installer aggregate budgets are missing: {!r}".format(missing))
+        return False
+    if subject.MAX_CONFIGS != subject.MAX_REPOSITORIES:
+        print("configuration and repository ceilings disagree")
+        return False
+    if max(
+        subject.MAX_CONFIGS,
+        subject.MAX_HOOK_ENTRIES,
+        subject.MAX_RUNTIME_SIBLINGS,
+    ) > 1024:
+        print("testable aggregate ceilings are unexpectedly unbounded")
+        return False
+
+    deadline = subject.OperationDeadline(10)
+    budget = subject.OperationBudget(deadline)
+    config_root = tempfile.mkdtemp(prefix="config-budget-", dir=base)
+    for index in range(subject.MAX_CONFIGS):
+        repo = os.path.join(config_root, "repo-{:04d}".format(index))
+        os.mkdir(repo)
+        write_file(os.path.join(repo, ".pre-commit-config.yaml"), b"repos: []\n")
+    count_boundary_accepted = (
+        len(subject.configs_under(config_root, budget)) == subject.MAX_CONFIGS
+    )
+    extra_repo = os.path.join(
+        config_root, "repo-{:04d}".format(subject.MAX_CONFIGS)
+    )
+    os.mkdir(extra_repo)
+    write_file(os.path.join(extra_repo, ".pre-commit-config.yaml"), b"repos: []\n")
+    count_rejected = False
+    try:
+        subject.configs_under(config_root, budget)
+    except subject.SetupError as error:
+        count_rejected = "configuration" in str(error) or "repository" in str(error)
+
+    byte_root = tempfile.mkdtemp(prefix="config-bytes-", dir=base)
+    oversized = os.path.join(byte_root, ".pre-commit-config.yaml")
+    with open(oversized, "wb") as stream:
+        stream.truncate(subject.MAX_CONFIG_BYTES)
+    byte_boundary_accepted = subject.configs_under(
+        byte_root, subject.OperationDeadline(10)
+    ) == [oversized]
+    with open(oversized, "r+b") as stream:
+        stream.truncate(subject.MAX_CONFIG_BYTES + 1)
+    bytes_rejected = False
+    try:
+        subject.configs_under(byte_root, subject.OperationDeadline(10))
+    except subject.SetupError as error:
+        bytes_rejected = "configuration byte" in str(error)
+
+    hooks_root = tempfile.mkdtemp(prefix="hook-budget-", dir=base)
+    for index in range(subject.MAX_HOOK_ENTRIES):
+        write_file(os.path.join(hooks_root, "hook-{:04d}".format(index)), b"x")
+    hooks = subject.BoundDir.open(hooks_root, safe=True)
+    hook_boundary_accepted = (
+        len(subject.inventory(hooks, subject.OperationDeadline(10)))
+        == subject.MAX_HOOK_ENTRIES
+    )
+    write_file(
+        os.path.join(hooks_root, "hook-{:04d}".format(subject.MAX_HOOK_ENTRIES)),
+        b"x",
+    )
+    hook_rejected = False
+    try:
+        try:
+            subject.inventory(hooks, subject.OperationDeadline(10))
+        except subject.SetupError as error:
+            hook_rejected = "hook inventory entry budget" in str(error)
+    finally:
+        hooks.close()
+
+    hook_bytes_root = tempfile.mkdtemp(prefix="hook-bytes-", dir=base)
+    chunk = subject.MAX_HOOK_BYTES // 4
+    for index in range(4):
+        write_file(os.path.join(hook_bytes_root, "part-{}".format(index)), b"x" * chunk)
+    byte_hooks = subject.BoundDir.open(hook_bytes_root, safe=True)
+    hook_byte_boundary_accepted = False
+    hook_bytes_rejected = False
+    try:
+        hook_byte_boundary_accepted = (
+            sum(len(item.data) for item in subject.inventory(
+                byte_hooks, subject.OperationDeadline(10)
+            ).values()) == subject.MAX_HOOK_BYTES
+        )
+        write_file(os.path.join(hook_bytes_root, "overflow"), b"x")
+        try:
+            subject.inventory(byte_hooks, subject.OperationDeadline(10))
+        except subject.SetupError as error:
+            hook_bytes_rejected = "hook inventory byte budget" in str(error)
+    finally:
+        byte_hooks.close()
+
+    shared_hooks_root = tempfile.mkdtemp(prefix="shared-hook-budget-", dir=base)
+    shared_left = os.path.join(shared_hooks_root, "left")
+    shared_right = os.path.join(shared_hooks_root, "right")
+    os.mkdir(shared_left)
+    os.mkdir(shared_right)
+    split = subject.MAX_HOOK_ENTRIES // 2
+    for index in range(split):
+        write_file(os.path.join(shared_left, "left-{:04d}".format(index)), b"x")
+    for index in range(subject.MAX_HOOK_ENTRIES - split):
+        write_file(os.path.join(shared_right, "right-{:04d}".format(index)), b"x")
+    left = subject.BoundDir.open(shared_left, safe=True)
+    right = subject.BoundDir.open(shared_right, safe=True)
+    shared_budget = subject.OperationBudget(subject.OperationDeadline(10))
+    shared_hook_boundary_accepted = False
+    shared_hook_rejected = False
+    try:
+        subject.inventory(left, shared_budget)
+        subject.inventory(right, shared_budget)
+        shared_hook_boundary_accepted = True
+        write_file(os.path.join(shared_right, "overflow"), b"x")
+        try:
+            subject.inventory(right, shared_budget)
+        except subject.SetupError as error:
+            shared_hook_rejected = "hook inventory entry budget" in str(error)
+    finally:
+        left.close()
+        right.close()
+
+    ledger_budget = subject.OperationBudget(subject.OperationDeadline(10))
+    repository_boundary_accepted = True
+    for index in range(subject.MAX_REPOSITORIES):
+        ledger_budget.charge_repository(
+            os.path.join(base, "ledger-repo-{:04d}".format(index))
+        )
+    repository_rejected = False
+    try:
+        ledger_budget.charge_repository(os.path.join(base, "ledger-repo-overflow"))
+    except subject.SetupError as error:
+        repository_rejected = "repository count budget" in str(error)
+    runtime_budget = subject.OperationBudget(subject.OperationDeadline(10))
+    runtime_budget.charge_runtime_file(
+        os.path.join(base, "runtime-boundary"),
+        (1, 2, 3),
+        subject.MAX_RUNTIME_BYTES,
+    )
+    runtime_byte_boundary_accepted = (
+        runtime_budget.runtime_bytes == subject.MAX_RUNTIME_BYTES
+    )
+    runtime_bytes_rejected = False
+    try:
+        runtime_budget.charge_runtime_file(
+            os.path.join(base, "runtime-overflow"), (4, 5, 6), 1
+        )
+    except subject.SetupError as error:
+        runtime_bytes_rejected = "runtime dependency byte budget" in str(error)
+
+    sibling_root = tempfile.mkdtemp(prefix="sibling-budget-", dir=base)
+    for index in range(subject.MAX_RUNTIME_SIBLINGS):
+        write_file(os.path.join(sibling_root, "sibling-{:04d}".format(index)), b"x")
+    directory = os.open(sibling_root, os.O_RDONLY | os.O_DIRECTORY)
+    sibling_boundary_accepted = (
+        len(subject._bounded_directory_names(
+            directory,
+            subject.MAX_RUNTIME_SIBLINGS,
+            "runtime sibling",
+            subject.OperationDeadline(10),
+        )) == subject.MAX_RUNTIME_SIBLINGS
+    )
+    write_file(
+        os.path.join(
+            sibling_root,
+            "sibling-{:04d}".format(subject.MAX_RUNTIME_SIBLINGS),
+        ),
+        b"x",
+    )
+    sibling_rejected = False
+    try:
+        try:
+            subject._bounded_directory_names(
+                directory,
+                subject.MAX_RUNTIME_SIBLINGS,
+                "runtime sibling",
+                subject.OperationDeadline(10),
+            )
+        except subject.SetupError as error:
+            sibling_rejected = "runtime sibling entry budget" in str(error)
+    finally:
+        os.close(directory)
+
+    directory_root = tempfile.mkdtemp(prefix="directory-budget-", dir=base)
+    for index in range(subject.MAX_DIRECTORY_ENTRIES - 1):
+        write_file(os.path.join(directory_root, "entry-{:04d}".format(index)), b"")
+    directory_config = os.path.join(directory_root, ".pre-commit-config.yaml")
+    write_file(directory_config, b"repos: []\n")
+    directory_boundary_accepted = subject.configs_under(
+        directory_root, subject.OperationDeadline(10)
+    ) == [directory_config]
+    write_file(os.path.join(directory_root, "overflow"), b"")
+    directory_rejected = False
+    try:
+        subject.configs_under(directory_root, subject.OperationDeadline(10))
+    except subject.SetupError as error:
+        directory_rejected = "discovery entry budget" in str(error)
+
+    receipt_root = tempfile.mkdtemp(prefix="discovery-receipt-", dir=base)
+    receipt_config = os.path.join(receipt_root, ".pre-commit-config.yaml")
+    write_file(receipt_config, b"repos: []\n")
+    receipt = subject.configs_under(
+        receipt_root,
+        subject.OperationBudget(subject.OperationDeadline(10)),
+    )
+    receipt_type_safe = isinstance(receipt, subject.DiscoveryInventory)
+    receipt.verify()
+    write_file(os.path.join(receipt_root, "late-entry"), b"late\n")
+    late_insertion_rejected = False
+    try:
+        receipt.verify()
+    except subject.SetupError as error:
+        late_insertion_rejected = "configuration discovery changed" in str(error)
+
+    safe = all(
+        (
+            count_boundary_accepted,
+            count_rejected,
+            byte_boundary_accepted,
+            bytes_rejected,
+            hook_boundary_accepted,
+            hook_rejected,
+            hook_byte_boundary_accepted,
+            hook_bytes_rejected,
+            shared_hook_boundary_accepted,
+            shared_hook_rejected,
+            repository_boundary_accepted,
+            repository_rejected,
+            runtime_byte_boundary_accepted,
+            runtime_bytes_rejected,
+            sibling_boundary_accepted,
+            sibling_rejected,
+            directory_boundary_accepted,
+            directory_rejected,
+            receipt_type_safe,
+            late_insertion_rejected,
+        )
+    )
+    if not safe:
+        print(
+            "installer aggregate bound was not enforced: count=({},{}), "
+            "config_bytes=({},{}), hooks=({},{}), hook_bytes=({},{}), "
+            "shared_hooks=({},{}), repositories=({},{}), runtime_bytes=({},{}), "
+            "siblings=({},{}), directories=({},{}), "
+            "receipt=({},{})".format(
+                count_boundary_accepted, count_rejected,
+                byte_boundary_accepted, bytes_rejected,
+                hook_boundary_accepted, hook_rejected,
+                hook_byte_boundary_accepted, hook_bytes_rejected,
+                shared_hook_boundary_accepted, shared_hook_rejected,
+                repository_boundary_accepted, repository_rejected,
+                runtime_byte_boundary_accepted, runtime_bytes_rejected,
+                sibling_boundary_accepted, sibling_rejected,
+                directory_boundary_accepted, directory_rejected,
+                receipt_type_safe, late_insertion_rejected,
+            )
+        )
+        return False
+
+    if not sys.platform.startswith("linux"):
+        print("NON_PROOF_SKIP: invocation-wide aggregate budgets require Linux")
+        return None
+
+    fixture = os.path.join(base, "install-bin", "pre-commit-fixture")
+
+    def graph(tag, marker_size, repositories=3):
+        root = tempfile.mkdtemp(prefix="main-budget-{}-".format(tag), dir=base)
+        os.makedirs(os.path.join(root, ".githooks"))
+        write_file(
+            os.path.join(root, ".githooks", "pre-push"),
+            b"#!/bin/sh\nexit 0\n",
+            0o755,
+        )
+        for index in range(repositories):
+            repo = root if index == 0 else os.path.join(root, "repo-{}".format(index))
+            if index:
+                os.mkdir(repo, 0o700)
+            initialized = subprocess.run(
+                [git, "-c", "init.templateDir=", "init", "-q", repo],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            if initialized.returncode != 0:
+                raise RuntimeError(
+                    "aggregate main fixture Git init failed: {!r}".format(
+                        initialized.stderr
+                    )
+                )
+            hook_types = "pre-push" if index == 0 else "commit-msg"
+            config = (
+                "# aggregate-main: {}-{}\n"
+                "default_install_hook_types: [{}]\n"
+                "repos: []\n"
+            ).format(tag, index, hook_types).encode("utf-8")
+            write_file(os.path.join(repo, ".pre-commit-config.yaml"), config)
+            write_file(
+                os.path.join(repo, ".git", "hooks", "budget-marker"),
+                bytes([65 + index]) * marker_size,
+            )
+        return root
+
+    def invoke(root, timeout, hook_entries, hook_bytes):
+        original_emit = subject.emit
+        original_entries = subject.MAX_HOOK_ENTRIES
+        original_bytes = subject.MAX_HOOK_BYTES
+        messages = []
+        subject.emit = lambda state, message: messages.append(
+            "{} {}".format(state, message)
+        )
+        subject.MAX_HOOK_ENTRIES = hook_entries
+        subject.MAX_HOOK_BYTES = hook_bytes
+        try:
+            status = subject.main(
+                [
+                    "--root",
+                    root,
+                    "--pre-commit",
+                    fixture,
+                    "--git",
+                    git,
+                    "--mode",
+                    "check",
+                    "--expected-version",
+                    "3.8.0",
+                    "--timeout",
+                    str(timeout),
+                ]
+            )
+        finally:
+            subject.emit = original_emit
+            subject.MAX_HOOK_ENTRIES = original_entries
+            subject.MAX_HOOK_BYTES = original_bytes
+        return status, "\n".join(messages)
+
+    count_root = graph("count", 1)
+    count_status, count_messages = invoke(count_root, 20, 2, 1024 * 1024)
+    byte_root = graph("bytes", 32)
+    byte_status, byte_messages = invoke(byte_root, 20, 128, 64)
+    time_root = graph("deadline", 1, repositories=1)
+    time_status, time_messages = invoke(
+        time_root, 0.000001, 128, 1024 * 1024
+    )
+    main_safe = (
+        count_status != 0
+        and "hook inventory entry budget exceeded" in count_messages
+        and byte_status != 0
+        and "hook inventory byte budget exceeded" in byte_messages
+        and time_status != 0
+        and (
+            "deadline" in time_messages.lower()
+            or "timed out" in time_messages.lower()
+        )
+    )
+    if not main_safe:
+        print(
+            "main invocation did not share aggregate budgets: "
+            "count=({}, {!r}), bytes=({}, {!r}), deadline=({}, {!r})".format(
+                count_status,
+                count_messages,
+                byte_status,
+                byte_messages,
+                time_status,
+                time_messages,
+            )
+        )
+    return main_safe
+
+
 def main(argv):
     if len(argv) != 5:
         raise SystemExit("usage: harness HELPER MODE BASE GIT")
@@ -3238,13 +6318,23 @@ def main(argv):
         "committed-publication": lambda: committed_publication_behavior(
             subject, base
         ),
+        "candidate-receipt-drift": lambda: candidate_receipt_drift_behavior(
+            subject, base
+        ),
+        "publication-commit-window": lambda: publication_commit_window_race_behavior(
+            subject, base
+        ),
         "processes": lambda: process_group_behavior(subject, base),
         "signals": lambda: signal_cancellation_behavior(subject, base),
+        "parent-death": lambda: parent_death_behavior(subject, base),
         "terminal-TERM": lambda: terminal_cancellation_behavior(
             helper, base, git, "SIGTERM"
         ),
         "terminal-HUP": lambda: terminal_cancellation_behavior(
             helper, base, git, "SIGHUP"
+        ),
+        "terminal-QUIT": lambda: terminal_cancellation_behavior(
+            helper, base, git, "SIGQUIT"
         ),
         "teardown-TERM": lambda: teardown_cancellation_behavior(
             subject, base, "SIGTERM"
@@ -3252,9 +6342,15 @@ def main(argv):
         "teardown-HUP": lambda: teardown_cancellation_behavior(
             subject, base, "SIGHUP"
         ),
+        "teardown-QUIT": lambda: teardown_cancellation_behavior(
+            subject, base, "SIGQUIT"
+        ),
         "observer-latch": lambda: observer_exit_latch_behavior(subject),
         "preservation": lambda: directory_preservation_behavior(subject, base),
         "short-write": lambda: short_write_behavior(subject, base, git),
+        "single-generation": lambda: single_generation_transaction_behavior(
+            subject
+        ),
         "descriptors": lambda: descriptor_behavior(subject, base),
         "descriptor-lifecycle": lambda: descriptor_lifecycle_behavior(subject, base),
         "acquisition-failures": lambda: acquisition_failure_behavior(
@@ -3262,6 +6358,12 @@ def main(argv):
         ),
         "named-route": lambda: named_route_behavior(subject, base),
         "tool-swap": lambda: tool_swap_behavior(subject, base, git),
+        "immutable-snapshot": lambda: immutable_snapshot_behavior(
+            subject, base
+        ),
+        "trusted-route-snapshot": lambda: trusted_route_snapshot_behavior(
+            subject, base
+        ),
         "interpreter-swap": lambda: interpreter_swap_behavior(
             subject, base, git
         ),
@@ -3278,20 +6380,37 @@ def main(argv):
         "runtime-sibling-swap": lambda: runtime_dependency_swap_behavior(
             subject, base
         ),
-        "cleanup-entry-races": lambda: cleanup_entry_race_behavior(
-            subject, base
+        "namespace-nested-cleanup": lambda: (
+            namespace_nested_cleanup_capability_behavior(subject)
         ),
-        "cleanup-root-races": lambda: cleanup_root_race_behavior(subject),
+        "namespace-root-cleanup": lambda: (
+            namespace_root_cleanup_capability_behavior(subject)
+        ),
+        "namespace-only-scratch": lambda: namespace_only_scratch_behavior(
+            subject, base, git
+        ),
         "escaped-session": lambda: escaped_session_behavior(subject),
         "generated-install-python": lambda: generated_install_python_behavior(
             subject
         ),
+        "trusted-hook-payload": lambda: trusted_hook_payload_behavior(subject, base),
+        "sealed-provider-mutation": lambda: sealed_provider_mutation_behavior(
+            subject, base
+        ),
+        "managed-shell-entry": lambda: managed_shell_entry_behavior(subject, base),
+        "managed-runtime-descriptor": lambda: managed_runtime_descriptor_behavior(
+            subject, base
+        ),
         "independent-git-metadata": lambda: independent_git_metadata_behavior(
+            subject, base
+        ),
+        "external-worktree-mounts": lambda: external_worktree_mount_behavior(
             subject, base
         ),
         "timeout-sigchld-preflight": lambda: timeout_and_sigchld_preflight_behavior(
             subject, base
         ),
+        "aggregate-budgets": lambda: aggregate_budget_behavior(subject, base),
         "untrusted-interpreter": lambda: untrusted_interpreter_behavior(
             subject, base
         ),
@@ -3302,7 +6421,8 @@ def main(argv):
     }
     if mode not in checks:
         raise SystemExit("unknown harness mode: {}".format(mode))
-    raise SystemExit(0 if checks[mode]() else 1)
+    result = checks[mode]()
+    raise SystemExit(77 if result is None else (0 if result else 1))
 
 
 if __name__ == "__main__":
@@ -3324,6 +6444,27 @@ if [ "$red_committed_publication_status" -eq 0 ]; then
 else
     sed 's/^/    /' "$TMP/red-committed-publication.out" >&2
     fail "a post-commit path changed or hid an active or recovery route"
+fi
+
+info "rejected candidates report their live descriptor-bound bytes"
+run_red_harness candidate-receipt-drift "$TMP/red-candidate-receipt-drift.out"
+red_candidate_receipt_drift_status=$?
+if [ "$red_candidate_receipt_drift_status" -eq 0 ]; then
+    pass "candidate failure receipts match the preserved object"
+else
+    sed 's/^/    /' "$TMP/red-candidate-receipt-drift.out" >&2
+    fail "candidate failure reported stale pre-mutation evidence"
+fi
+
+info "successful forward exchanges remain committed across same-UID races"
+run_red_harness publication-commit-window \
+    "$TMP/red-publication-commit-window.out"
+red_publication_commit_window_status=$?
+if [ "$red_publication_commit_window_status" -eq 0 ]; then
+    pass "replacement and mutation races cannot be reported as uncommitted"
+else
+    sed 's/^/    /' "$TMP/red-publication-commit-window.out" >&2
+    fail "a commit-window race hid a successful forward exchange"
 fi
 
 info "hook publication preserves directory mode and untouched entries"
@@ -3356,7 +6497,7 @@ else
     fail "leader exit was forgotten before group cleanup could reap it"
 fi
 
-info "SIGTERM, SIGHUP, and SIGINT cancel the complete in-flight process group"
+info "SIGTERM, SIGHUP, SIGINT, and SIGQUIT cancel the complete in-flight process group"
 run_red_harness signals "$TMP/red-signals.out"
 red_signal_status=$?
 if [ "$red_signal_status" -eq 0 ]; then
@@ -3366,7 +6507,20 @@ else
     fail "outer cancellation left an in-flight process-group member alive"
 fi
 
-for terminal_signal in TERM HUP; do
+info "a child-side Linux parent-death contract covers the pre-bubblewrap window"
+run_red_harness parent-death "$TMP/red-parent-death.out"
+red_parent_death_status=$?
+if [ "$red_parent_death_status" -eq 0 ]; then
+    pass "a pre-boundary child is extinct when its supervisor exits"
+elif [ "$red_parent_death_status" -eq 77 ] && \
+    grep -q '^NON_PROOF_SKIP:' "$TMP/red-parent-death.out"; then
+    info "SKIP (non-proof): Linux parent-death contract is unavailable on this host"
+else
+    sed 's/^/    /' "$TMP/red-parent-death.out" >&2
+    fail "a pre-boundary child survived its supervisor"
+fi
+
+for terminal_signal in TERM HUP QUIT; do
     signal_name="SIG$terminal_signal"
     info "$signal_name is terminal across teardown and repository aggregation"
     run_red_harness "terminal-$terminal_signal" \
@@ -3378,6 +6532,10 @@ for terminal_signal in TERM HUP; do
     if [ "$red_terminal_status" -eq 0 ] && \
         [ "$red_teardown_status" -eq 0 ]; then
         pass "$signal_name stops after cleanup without touching a later repository"
+    elif boundary_nonproof "$TMP/red-terminal-$terminal_signal.out" && \
+        { [ "$red_teardown_status" -eq 0 ] || \
+            boundary_nonproof "$TMP/red-teardown-$terminal_signal.out"; }; then
+        info "NON_PROOF: $signal_name teardown requires the Linux execution boundary"
     else
         sed 's/^/    /' "$TMP/red-terminal-$terminal_signal.out" >&2
         sed 's/^/    /' "$TMP/red-teardown-$terminal_signal.out" >&2
@@ -3389,10 +6547,20 @@ info "a permitted short write cannot become a valid truncated configuration"
 run_red_harness short-write "$TMP/red-short-write.out"
 red_short_write_status=$?
 if [ "$red_short_write_status" -eq 0 ]; then
-    pass "shadow configuration writes are exact or fail closed"
+    pass "sealed configuration writes are exact or fail closed"
 else
     sed 's/^/    /' "$TMP/red-short-write.out" >&2
     fail "a short write changed configuration semantics without a failure"
+fi
+
+info "hook discovery and environment installation share one namespace run"
+run_red_harness single-generation "$TMP/red-single-generation.out"
+red_single_generation_status=$?
+if [ "$red_single_generation_status" -eq 0 ]; then
+    pass "each repository generation is one sealed-input namespace transaction"
+else
+    sed 's/^/    /' "$TMP/red-single-generation.out" >&2
+    fail "generation escaped into host shadow helpers or multiple boundary runs"
 fi
 
 info "malformed repository aggregation keeps descriptor use bounded"
@@ -3440,9 +6608,37 @@ run_red_harness tool-swap "$TMP/red-tool-swap.out"
 red_tool_swap_status=$?
 if [ "$red_tool_swap_status" -eq 0 ]; then
     pass "tool execution remains bound to the verified executable bytes"
+elif [ "$red_tool_swap_status" -eq 77 ] && \
+    [ "$HOST_KERNEL" != Linux ] && \
+    grep -q '^NON_PROOF_SKIP:' "$TMP/red-tool-swap.out"; then
+    info "SKIP (non-proof): immutable tool routing requires Linux containment"
 else
     sed 's/^/    /' "$TMP/red-tool-swap.out" >&2
     fail "tool execution re-resolved a mutable path after verification"
+fi
+
+info "verified execution snapshots are immutable to their owning UID"
+run_red_harness immutable-snapshot "$TMP/red-immutable-snapshot.out"
+red_immutable_snapshot_status=$?
+if [ "$red_immutable_snapshot_status" -eq 0 ]; then
+    pass "verified execution bytes are sealed or the platform fails closed"
+else
+    sed 's/^/    /' "$TMP/red-immutable-snapshot.out" >&2
+    fail "a same-UID writer changed verified execution bytes in place"
+fi
+
+info "trusted system routes execute from exact sealed bytes"
+run_red_harness trusted-route-snapshot "$TMP/red-trusted-route-snapshot.out"
+red_trusted_route_snapshot_status=$?
+if [ "$red_trusted_route_snapshot_status" -eq 0 ]; then
+    pass "root-owned path trust does not replace exact-byte execution"
+elif [ "$red_trusted_route_snapshot_status" -eq 77 ] && \
+    [ "$HOST_KERNEL" != Linux ] && \
+    grep -q '^NON_PROOF_SKIP:' "$TMP/red-trusted-route-snapshot.out"; then
+    info "SKIP (non-proof): trusted-route snapshots require Linux containment"
+else
+    sed 's/^/    /' "$TMP/red-trusted-route-snapshot.out" >&2
+    fail "a verified system route was reopened by pathname at execution"
 fi
 
 info "a verified script cannot select replacement interpreter bytes"
@@ -3450,6 +6646,10 @@ run_red_harness interpreter-swap "$TMP/red-interpreter-swap.out"
 red_interpreter_swap_status=$?
 if [ "$red_interpreter_swap_status" -eq 0 ]; then
     pass "script execution remains bound to the verified interpreter bytes"
+elif [ "$red_interpreter_swap_status" -eq 77 ] && \
+    [ "$HOST_KERNEL" != Linux ] && \
+    grep -q '^NON_PROOF_SKIP:' "$TMP/red-interpreter-swap.out"; then
+    info "SKIP (non-proof): interpreter swaps require Linux containment"
 else
     sed 's/^/    /' "$TMP/red-interpreter-swap.out" >&2
     fail "script execution re-resolved a mutable shebang after verification"
@@ -3460,6 +6660,10 @@ run_red_harness execution-copy-write "$TMP/red-execution-copy-write.out"
 red_execution_copy_write_status=$?
 if [ "$red_execution_copy_write_status" -eq 0 ]; then
     pass "the executable copy remains read-only for its complete child lifetime"
+elif [ "$red_execution_copy_write_status" -eq 77 ] && \
+    [ "$HOST_KERNEL" != Linux ] && \
+    grep -q '^NON_PROOF_SKIP:' "$TMP/red-execution-copy-write.out"; then
+    info "SKIP (non-proof): executable-copy writes require Linux containment"
 else
     sed 's/^/    /' "$TMP/red-execution-copy-write.out" >&2
     fail "a child changed its executable copy and ran replacement bytes"
@@ -3470,6 +6674,10 @@ run_red_harness transitive-copy-write "$TMP/red-transitive-copy-write.out"
 red_transitive_copy_write_status=$?
 if [ "$red_transitive_copy_write_status" -eq 0 ]; then
     pass "the transitive git copy remains read-only for the child lifetime"
+elif [ "$red_transitive_copy_write_status" -eq 77 ] && \
+    [ "$HOST_KERNEL" != Linux ] && \
+    grep -q '^NON_PROOF_SKIP:' "$TMP/red-transitive-copy-write.out"; then
+    info "SKIP (non-proof): transitive-copy writes require Linux containment"
 else
     sed 's/^/    /' "$TMP/red-transitive-copy-write.out" >&2
     fail "a child changed the git copy on PATH and ran replacement bytes"
@@ -3479,7 +6687,7 @@ info "the execution boundary makes the host read-only and owns all descendants"
 run_red_harness boundary-policy "$TMP/red-boundary-policy.out"
 red_boundary_policy_status=$?
 if [ "$red_boundary_policy_status" -eq 0 ]; then
-    pass "the Linux boundary exposes one writable data tree and a PID namespace"
+    pass "the Linux boundary exposes only tmpfs scratch and read-only host bindings"
 else
     sed 's/^/    /' "$TMP/red-boundary-policy.out" >&2
     fail "the execution boundary left host writes or session escape available"
@@ -3490,6 +6698,10 @@ run_red_harness runtime-host-write "$TMP/red-runtime-host-write.out"
 red_runtime_host_write_status=$?
 if [ "$red_runtime_host_write_status" -eq 0 ]; then
     pass "runtime dependencies remain unchanged or execution fails closed"
+elif [ "$red_runtime_host_write_status" -eq 77 ] && \
+    [ "$HOST_KERNEL" != Linux ] && \
+    grep -q '^NON_PROOF_SKIP:' "$TMP/red-runtime-host-write.out"; then
+    info "SKIP (non-proof): runtime-host writes require Linux containment"
 else
     sed 's/^/    /' "$TMP/red-runtime-host-write.out" >&2
     fail "configured execution changed a host runtime dependency"
@@ -3500,29 +6712,52 @@ run_red_harness runtime-sibling-swap "$TMP/red-runtime-sibling-swap.out"
 red_runtime_sibling_swap_status=$?
 if [ "$red_runtime_sibling_swap_status" -eq 0 ]; then
     pass "runtime siblings execute from immutable copies and source swaps fail closed"
+elif [ "$red_runtime_sibling_swap_status" -eq 77 ] && \
+    [ "$HOST_KERNEL" != Linux ] && \
+    grep -q '^NON_PROOF_SKIP:' "$TMP/red-runtime-sibling-swap.out"; then
+    info "SKIP (non-proof): runtime-sibling swaps require Linux containment"
 else
     sed 's/^/    /' "$TMP/red-runtime-sibling-swap.out" >&2
     fail "an imported runtime sibling selected bytes from a mutable source route"
 fi
 
-info "nested cleanup preserves last-operation file and directory replacements"
-run_red_harness cleanup-entry-races "$TMP/red-cleanup-entry-races.out"
-red_cleanup_entry_races_status=$?
-if [ "$red_cleanup_entry_races_status" -eq 0 ]; then
-    pass "nested cleanup quarantines exact objects and preserves mismatches"
+info "nested scratch has no host-side last-operation cleanup capability"
+run_red_harness namespace-nested-cleanup \
+    "$TMP/red-namespace-nested-cleanup.out"
+red_namespace_nested_cleanup_status=$?
+if [ "$red_namespace_nested_cleanup_status" -eq 0 ]; then
+    pass "nested cleanup cannot remove a same-UID host replacement"
 else
-    sed 's/^/    /' "$TMP/red-cleanup-entry-races.out" >&2
-    fail "nested cleanup removed a replacement selected at the last operation"
+    sed 's/^/    /' "$TMP/red-namespace-nested-cleanup.out" >&2
+    fail "nested scratch retained a pathname-selected final cleanup operation"
 fi
 
-info "both managed-root cleanups preserve a last-operation replacement"
-run_red_harness cleanup-root-races "$TMP/red-cleanup-root-races.out"
-red_cleanup_root_races_status=$?
-if [ "$red_cleanup_root_races_status" -eq 0 ]; then
-    pass "managed roots are quarantined and revalidated before cleanup"
+info "managed scratch roots have no host-side last-operation cleanup capability"
+run_red_harness namespace-root-cleanup \
+    "$TMP/red-namespace-root-cleanup.out"
+red_namespace_root_cleanup_status=$?
+if [ "$red_namespace_root_cleanup_status" -eq 0 ]; then
+    pass "managed roots are reclaimed only with their private namespace"
 else
-    sed 's/^/    /' "$TMP/red-cleanup-root-races.out" >&2
-    fail "managed-root cleanup removed a replacement selected at the last operation"
+    sed 's/^/    /' "$TMP/red-namespace-root-cleanup.out" >&2
+    fail "managed scratch retained a pathname-selected root cleanup operation"
+fi
+
+info "live generation leaves no host scratch or pathname cleanup target"
+run_red_harness namespace-only-scratch "$TMP/red-namespace-only-scratch.out"
+red_namespace_only_scratch_status=$?
+if [ "$red_namespace_only_scratch_status" -eq 0 ]; then
+    pass "scratch teardown is kernel-owned and host final-name hooks are unreachable"
+elif grep -q '^BOUNDARY_UNAVAILABLE:' "$TMP/red-namespace-only-scratch.out"; then
+    if [ "$HOST_KERNEL" = Linux ]; then
+        sed 's/^/    /' "$TMP/red-namespace-only-scratch.out" >&2
+        fail "authoritative Linux mode lacked its required namespace boundary"
+    else
+        info "SKIP (non-proof): namespace containment is unavailable on $HOST_KERNEL"
+    fi
+else
+    sed 's/^/    /' "$TMP/red-namespace-only-scratch.out" >&2
+    fail "live main allocated host scratch or reached pathname-selected cleanup"
 fi
 
 info "setsid and double-fork descendants cannot outlive execution containment"
@@ -3530,19 +6765,78 @@ run_red_harness escaped-session "$TMP/red-escaped-session.out"
 red_escaped_session_status=$?
 if [ "$red_escaped_session_status" -eq 0 ]; then
     pass "escaped sessions are extinct before the execution boundary returns"
+elif grep -q '^BOUNDARY_UNAVAILABLE:' "$TMP/red-escaped-session.out"; then
+    if [ "$HOST_KERNEL" = Linux ]; then
+        sed 's/^/    /' "$TMP/red-escaped-session.out" >&2
+        fail "authoritative Linux mode lacked its required extinction boundary"
+    else
+        info "SKIP (non-proof): descendant extinction is unavailable on $HOST_KERNEL"
+    fi
 else
     sed 's/^/    /' "$TMP/red-escaped-session.out" >&2
     fail "a detached session survived the execution boundary"
 fi
 
-info "generated hooks publish only the installer-owned executable path"
+info "generated hooks publish only installer-owned provenance metadata"
 run_red_harness generated-install-python "$TMP/red-generated-install-python.out"
 red_generated_install_python_status=$?
 if [ "$red_generated_install_python_status" -eq 0 ]; then
-    pass "metacharacter paths are encoded and candidate shell text is discarded"
+    pass "metacharacter paths are encoded and candidate runtime text is discarded"
 else
     sed 's/^/    /' "$TMP/red-generated-install-python.out" >&2
-    fail "candidate-generated INSTALL_PYTHON shell text reached publication"
+    fail "candidate-generated runtime shell text reached publication"
+fi
+
+info "installed hooks carry immutable trusted config and policy payloads"
+run_red_harness trusted-hook-payload "$TMP/red-trusted-hook-payload.out"
+red_trusted_hook_payload_status=$?
+if [ "$red_trusted_hook_payload_status" -eq 0 ]; then
+    pass "candidate config and policy replacement cannot redirect the installed hook"
+else
+    sed 's/^/    /' "$TMP/red-trusted-hook-payload.out" >&2
+    fail "installed hook retained candidate config or policy authority"
+fi
+
+info "post-bind mutation cannot change selected provider bytes"
+run_red_harness sealed-provider-mutation \
+    "$TMP/red-sealed-provider-mutation.out"
+red_sealed_provider_status=$?
+if [ "$red_sealed_provider_status" -eq 0 ]; then
+    pass "installed runtime executes an immutable provider snapshot"
+elif [ "$red_sealed_provider_status" -eq 77 ] && \
+    grep -q '^NON_PROOF_SKIP:' "$TMP/red-sealed-provider-mutation.out"; then
+    info "SKIP (non-proof): immutable provider execution requires Linux"
+else
+    sed 's/^/    /' "$TMP/red-sealed-provider-mutation.out" >&2
+    fail "installed runtime selected mutable provider bytes"
+fi
+
+info "installed managed hooks have no ambient pre-verification shell boundary"
+run_red_harness managed-shell-entry "$TMP/red-managed-shell-entry.out"
+red_managed_shell_entry_status=$?
+if [ "$red_managed_shell_entry_status" -eq 0 ]; then
+    pass "managed hooks enter through fixed privileged Bash before verification"
+elif [ "$red_managed_shell_entry_status" -eq 77 ] && \
+    [ "$HOST_KERNEL" != Linux ] && \
+    grep -q '^NON_PROOF_SKIP:' "$TMP/red-managed-shell-entry.out"; then
+    info "SKIP (non-proof): installed managed shell boundary requires Linux"
+else
+    sed 's/^/    /' "$TMP/red-managed-shell-entry.out" >&2
+    fail "managed hooks retained ambient shell authority before verification"
+fi
+
+info "installed managed hooks execute the bound interpreter with scrubbed Git state"
+run_red_harness managed-runtime-descriptor \
+    "$TMP/red-managed-runtime-descriptor.out"
+red_managed_runtime_descriptor_status=$?
+if [ "$red_managed_runtime_descriptor_status" -eq 0 ]; then
+    pass "managed hooks preserve the alternate index without ambient Git authority"
+elif [ "$red_managed_runtime_descriptor_status" -eq 77 ] && \
+    grep -q '^NON_PROOF_SKIP:' "$TMP/red-managed-runtime-descriptor.out"; then
+    info "SKIP (non-proof): managed immutable runtime requires Linux"
+else
+    sed 's/^/    /' "$TMP/red-managed-runtime-descriptor.out" >&2
+    fail "managed hooks reopened an interpreter path or retained ambient Git state"
 fi
 
 info "repository metadata is bound independently of selected Git output"
@@ -3555,6 +6849,19 @@ else
     fail "selected Git output retained authority over repository metadata"
 fi
 
+info "external worktree metadata is mounted for every selected Git call"
+run_red_harness external-worktree-mounts "$TMP/red-external-worktree-mounts.out"
+red_external_worktree_mounts_status=$?
+if [ "$red_external_worktree_mounts_status" -eq 0 ]; then
+    pass "external gitdir and common-dir routes stay visible inside containment"
+elif [ "$red_external_worktree_mounts_status" -eq 77 ] && \
+    grep -q '^NON_PROOF_SKIP:' "$TMP/red-external-worktree-mounts.out"; then
+    info "SKIP (non-proof): external-worktree containment requires Linux"
+else
+    sed 's/^/    /' "$TMP/red-external-worktree-mounts.out" >&2
+    fail "selected Git lost the independently bound external worktree metadata"
+fi
+
 info "deadlines and child ownership fail closed before process creation"
 run_red_harness timeout-sigchld-preflight "$TMP/red-timeout-sigchld.out"
 red_timeout_sigchld_status=$?
@@ -3565,14 +6872,32 @@ else
     fail "an unsafe budget or child-observer state reached process creation"
 fi
 
-info "mutable interpreter and runtime closures fail closed"
+info "installer enumeration shares one deadline and aggregate count/byte bounds"
+run_red_harness aggregate-budgets "$TMP/red-aggregate-budgets.out"
+red_aggregate_budget_status=$?
+if [ "$red_aggregate_budget_status" -eq 0 ]; then
+    pass "late boundary+1 entries and bytes fail within one operation deadline"
+elif [ "$red_aggregate_budget_status" -eq 77 ] && \
+    grep -q '^NON_PROOF_SKIP:' "$TMP/red-aggregate-budgets.out" && \
+    [ "$HOST_KERNEL" != Linux ]; then
+    info "SKIP (non-proof): invocation-wide aggregate budgets require Linux"
+else
+    sed 's/^/    /' "$TMP/red-aggregate-budgets.out" >&2
+    fail "installer parent aggregation remained unbounded"
+fi
+
+info "Pixi-owned providers execute only from authenticated immutable closures"
 run_red_harness untrusted-interpreter "$TMP/red-untrusted-interpreter.out"
 red_untrusted_interpreter_status=$?
 if [ "$red_untrusted_interpreter_status" -eq 0 ]; then
-    pass "a mutable interpreter/runtime closure is rejected before execution"
+    pass "the exact Pixi provider and transitive import closure are sealed"
+elif [ "$red_untrusted_interpreter_status" -eq 77 ] && \
+    [ "$HOST_KERNEL" != Linux ] && \
+    grep -q '^NON_PROOF_SKIP:' "$TMP/red-untrusted-interpreter.out"; then
+    info "SKIP (non-proof): sealed Pixi provider execution requires Linux"
 else
     sed 's/^/    /' "$TMP/red-untrusted-interpreter.out" >&2
-    fail "a mutable interpreter/runtime closure retained execution authority"
+    fail "the Pixi provider retained mutable or incomplete import authority"
 fi
 
 info "host resource limits bound every selected process"
@@ -3590,6 +6915,10 @@ run_red_harness external-write-channels "$TMP/red-external-write-channels.out"
 red_external_write_channels_status=$?
 if [ "$red_external_write_channels_status" -eq 0 ]; then
     pass "loopback and host IPC canaries receive no selected bytes"
+elif [ "$red_external_write_channels_status" -eq 77 ] && \
+    [ "$HOST_KERNEL" != Linux ] && \
+    grep -q '^NON_PROOF_SKIP:' "$TMP/red-external-write-channels.out"; then
+    info "SKIP (non-proof): external-channel containment requires Linux"
 else
     sed 's/^/    /' "$TMP/red-external-write-channels.out" >&2
     fail "selected code reached an external network or IPC write channel"
@@ -3601,6 +6930,8 @@ make_repo "$SOURCE_REPO"
 write_config "$SOURCE_REPO" 'pre-commit pre-push' sourced-wrapper
 run_installer "$SOURCE_REPO" true 3.8.0 "$TMP/sourced-prime.out"
 sourced_prime_status=$?
+# The child shell, not this suite, owns these positional expansions.
+# shellcheck disable=SC2016
 env \
     PATH="$INSTALL_BIN:/usr/bin:/bin" \
     HOME="$TMP/ambient-home" \
@@ -3616,6 +6947,8 @@ env \
     ' _ "$SOURCE_REPO/$INSTALL_WRAPPER_REL" \
     > "$TMP/sourced-success.out" 2>&1
 sourced_success_status=$?
+# The child shell, not this suite, owns these positional expansions.
+# shellcheck disable=SC2016
 env \
     PATH="$INSTALL_BIN:/usr/bin:/bin" \
     HOME="$TMP/ambient-home" \
@@ -3637,6 +6970,8 @@ if [ "$sourced_prime_status" -eq 0 ] &&
     grep -q '^after-success status=0 fail=0$' "$TMP/sourced-success.out" &&
     grep -q '^after-failure status=0 fail=1$' "$TMP/sourced-failure.out"; then
     pass "sourced success and failure return to the caller with exact counters"
+elif boundary_nonproof "$TMP/sourced-prime.out"; then
+    info "NON_PROOF: sourced installer execution requires the Linux boundary"
 else
     sed 's/^/    /' "$TMP/sourced-success.out" >&2
     sed 's/^/    /' "$TMP/sourced-failure.out" >&2

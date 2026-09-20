@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -190,7 +191,12 @@ class _SlowNatsFixture:
 
 class CaptureNatsEventTest(unittest.TestCase):
     def _run(
-        self, root: Path, port: int, *, capture_timeout: str = "2"
+        self,
+        root: Path,
+        port: int,
+        *,
+        capture_timeout: str = "2",
+        host: str = "127.0.0.1",
     ) -> subprocess.CompletedProcess[str]:
         directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
         try:
@@ -199,7 +205,7 @@ class CaptureNatsEventTest(unittest.TestCase):
                     sys.executable,
                     str(_HELPER),
                     "--host",
-                    "127.0.0.1",
+                    host,
                     "--port",
                     str(port),
                     "--subject",
@@ -227,6 +233,88 @@ class CaptureNatsEventTest(unittest.TestCase):
             )
         finally:
             os.close(directory_fd)
+
+    def test_host_must_be_numeric_before_any_connection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with _NatsFixture(
+                root / "ready", allow_no_connection=True
+            ) as server:
+                result = self._run(root, server.port, host="localhost")
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("numeric", result.stderr.lower())
+            self.assertFalse((root / "ready").exists())
+
+    def test_one_deadline_interrupts_evidence_publication(self) -> None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("capture_nats_event", _HELPER)
+        if spec is None or spec.loader is None:
+            self.fail("could not load capture helper")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        class FakeSocket:
+            def __init__(self) -> None:
+                self._payload = bytearray(
+                    b'INFO {"auth_required":false}\r\nPONG\r\n'
+                )
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def settimeout(self, _timeout: float) -> None:
+                return None
+
+            def sendall(self, _value: bytes) -> None:
+                return None
+
+            def recv(self, maximum: int) -> bytes:
+                value = bytes(self._payload[:maximum])
+                del self._payload[:maximum]
+                return value
+
+        args = SimpleNamespace(
+            host="127.0.0.1",
+            port=4222,
+            subject="hi.tasks.team-1.task-1.updated",
+            event="task.updated",
+            team_id="team-1",
+            task_id="task-1",
+            evidence_dir_fd=None,
+            ready_name=None,
+            output_name=None,
+            ready_fd=10,
+            output_fd=11,
+            timeout=0.05,
+        )
+
+        def stalled_publication(_descriptor: int, _value: bytes) -> None:
+            time.sleep(0.5)
+
+        started = time.monotonic()
+        with (
+            patch.object(module, "_parse_args", return_value=args),
+            patch.object(
+                module,
+                "_connect_numeric",
+                return_value=FakeSocket(),
+                create=True,
+            ),
+            patch.object(
+                module,
+                "_publish_descriptor",
+                side_effect=stalled_publication,
+            ),
+            self.assertRaisesRegex(TimeoutError, "timed out"),
+        ):
+            module.main()
+
+        self.assertLess(time.monotonic() - started, 0.3)
 
     def test_fragmented_exact_event_is_captured(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

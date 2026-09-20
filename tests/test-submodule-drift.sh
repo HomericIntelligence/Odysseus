@@ -132,7 +132,7 @@ write_inventory() {
     case "$mode" in
         current|partial-tree|partial-symref|partial-upstream|mismatched-head|\
         extra-tree|extra-symref|extra-upstream|drift|behind|ahead|diverged|\
-        hang-remote|flood-remote|zero-oid|hang-repo|pipe-eof-repo|\
+        hang-remote|flood-remote|escaped-remote|cancel-remote|zero-oid|hang-repo|pipe-eof-repo|\
         flood-repo|slow-total|swap-publisher|\
         swap-submodule|\
         swap-gitmodules|symlink-gitmodules)
@@ -451,6 +451,102 @@ sys.stdout.write("x" * (300 * 1024))
 PY
         exit 0
     fi
+    if [ "${GIT_MODE:-current}" = escaped-remote ]; then
+        /usr/bin/python3 -I -S -c '
+import os
+import signal
+import time
+
+heartbeat = os.environ["DETACHED_HEARTBEAT_FILE"]
+stop = os.environ["DETACHED_STOP_FILE"]
+identity = os.environ["DETACHED_IDENTITY_FILE"]
+
+def fork_after_cleanup_starts(_number, _frame):
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    ready_read, ready_write = os.pipe()
+    child = os.fork()
+    if child:
+        os.close(ready_write)
+        os.read(ready_read, 1)
+        os._exit(0)
+    os.close(ready_read)
+    os.setsid()
+    detached = os.fork()
+    if detached:
+        os._exit(0)
+    os.setsid()
+    for descriptor in (0, 1, 2):
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+    with open(f"/proc/{os.getpid()}/stat", "rb", buffering=0) as stream:
+        stat_line = stream.read(65537)
+    closing = stat_line.rfind(b")")
+    start_time = int(stat_line[closing + 2 :].split()[19])
+    with open(identity, "w", encoding="ascii") as stream:
+        stream.write(f"{os.getpid()} {start_time}\n")
+    count = 0
+    with open(heartbeat, "w", encoding="ascii") as stream:
+        stream.write(f"{count:020d}\n")
+    os.write(ready_write, b"1")
+    os.close(ready_write)
+    while not os.path.exists(stop):
+        count += 1
+        with open(heartbeat, "w", encoding="ascii") as stream:
+            stream.write(f"{count:020d}\n")
+        time.sleep(0.01)
+    os._exit(0)
+
+signal.signal(signal.SIGTERM, fork_after_cleanup_starts)
+while True:
+    signal.pause()
+'
+    fi
+    if [ "${GIT_MODE:-current}" = cancel-remote ]; then
+        exec /usr/bin/python3 -I -S - \
+            "${CANCEL_IDENTITY_FILE:?}" \
+            "${CANCEL_HEARTBEAT_FILE:?}" <<'PY'
+import os
+import signal
+import sys
+import time
+
+
+identity_path, heartbeat_path = sys.argv[1:]
+
+
+def process_start_time(process_id):
+    with open(f"/proc/{process_id}/stat", "rb", buffering=0) as stream:
+        content = stream.read(65537)
+    closing = content.rfind(b")")
+    return int(content[closing + 2:].split()[19])
+
+
+for number in (signal.SIGHUP, signal.SIGINT, signal.SIGQUIT, signal.SIGTERM):
+    signal.signal(number, signal.SIG_IGN)
+descendant = os.fork()
+if descendant == 0:
+    for descriptor in (0, 1, 2):
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+    while True:
+        with open(heartbeat_path, "ab", buffering=0) as stream:
+            stream.write(b"x")
+        time.sleep(0.02)
+runner = os.getppid()
+with open(identity_path, "w", encoding="ascii") as stream:
+    stream.write(
+        f"{runner} {process_start_time(runner)} "
+        f"{os.getpid()} {process_start_time(os.getpid())} "
+        f"{descendant} {process_start_time(descendant)}\n"
+    )
+while True:
+    time.sleep(1)
+PY
+    fi
     if [ "${GIT_MODE:-current}" = zero-oid ]; then
         printf '%s\n' \
             'ref: refs/heads/main HEAD' \
@@ -630,9 +726,9 @@ replacements = {
     "TRUSTED_PYTHON=/usr/bin/python3": f"TRUSTED_PYTHON={sys.argv[3]}",
     "TRUSTED_DATE=/bin/date": f"TRUSTED_DATE={sys.argv[2].rsplit('/', 1)[0]}/date",
     "GIT_CALL_TIMEOUT_SECONDS=20": "GIT_CALL_TIMEOUT_SECONDS=2",
-    "GIT_RUNNER_TEST_ENV_KEYS=()": "GIT_RUNNER_TEST_ENV_KEYS=(GIT_LOG ASSERT_CLEAN_GIT_ENV DESCENDANT_PID_FILE HOSTILE_HOME FIXTURE_ROOT REAL_GIT REAL_GIT_DELEGATE REAL_FIXTURE_ROOT REAL_FIXTURE_LOCAL REAL_ROOT_GITDIR_TARGET REAL_ROOT_GITDIR_BACKUP REAL_LOCAL_GITDIR_TARGET REAL_LOCAL_GITDIR_BACKUP REAL_SWAP_MARKER REAL_UPSTREAM ROOT_COMMIT ROOT_GITDIR_TARGET ROOT_GITDIR_BACKUP ROOT_COMMON_TARGET ROOT_COMMON_BACKUP ROOT_CONFIG_PATH LOCAL_GITDIR_TARGET LOCAL_GITDIR_BACKUP LOCAL_CONFIG_PATH GIT_MODE PUBLISHER_PATH PUBLISHER_MARKER RUNNER_DESCENDANT_PID_FILE RUNNER_LEADER_PID_FILE RUNNER_ORDER_FILE RUNNER_POST_POPEN_FAILURE RUNNER_READY_FILE)",
+    "GIT_RUNNER_TEST_ENV_KEYS=()": "GIT_RUNNER_TEST_ENV_KEYS=(GIT_LOG ASSERT_CLEAN_GIT_ENV CANCEL_HEARTBEAT_FILE CANCEL_IDENTITY_FILE DESCENDANT_PID_FILE DETACHED_HEARTBEAT_FILE DETACHED_STOP_FILE DETACHED_IDENTITY_FILE HOSTILE_HOME FIXTURE_ROOT REAL_GIT REAL_GIT_DELEGATE REAL_FIXTURE_ROOT REAL_FIXTURE_LOCAL REAL_ROOT_GITDIR_TARGET REAL_ROOT_GITDIR_BACKUP REAL_LOCAL_GITDIR_TARGET REAL_LOCAL_GITDIR_BACKUP REAL_SWAP_MARKER REAL_UPSTREAM ROOT_COMMIT ROOT_GITDIR_TARGET ROOT_GITDIR_BACKUP ROOT_COMMON_TARGET ROOT_COMMON_BACKUP ROOT_CONFIG_PATH LOCAL_GITDIR_TARGET LOCAL_GITDIR_BACKUP LOCAL_CONFIG_PATH GIT_MODE PUBLISHER_PATH PUBLISHER_MARKER RUNNER_CANCEL_POPEN_RECEIPT RUNNER_CANCEL_RELEASE_FILE RUNNER_DESCENDANT_PID_FILE RUNNER_LEADER_PID_FILE RUNNER_ORDER_FILE RUNNER_POST_POPEN_FAILURE RUNNER_READY_FILE)",
     "PYTHON_RUNNER_TEST_ENV_KEYS=()": "PYTHON_RUNNER_TEST_ENV_KEYS=(PYTHON_LOG PYTHON_MODE REAL_PYTHON SLOW_BOUNDARY_MARKER)",
-    "DATE_RUNNER_TEST_ENV_KEYS=()": "DATE_RUNNER_TEST_ENV_KEYS=(DATE_MODE GITHUB_OUTPUT FIXTURE_ROOT SLOW_BOUNDARY_MARKER TEST_SWAP_ORIGINAL TEST_SWAP_VICTIM)",
+    "DATE_RUNNER_TEST_ENV_KEYS=()": "DATE_RUNNER_TEST_ENV_KEYS=(DATE_MODE FIXTURE_ROOT SLOW_BOUNDARY_MARKER TEST_SWAP_ORIGINAL TEST_SWAP_VICTIM)",
 }
 for original, replacement in replacements.items():
     if text.count(original) != 1:
@@ -655,10 +751,6 @@ case "${DATE_MODE:-}" in
         printf '%s\n' 'not-a-utc-timestamp'
         exit 0
         ;;
-    swap-output)
-        mv "$GITHUB_OUTPUT" "$TEST_SWAP_ORIGINAL"
-        ln -s "$TEST_SWAP_VICTIM" "$GITHUB_OUTPUT"
-        ;;
     swap-report)
         if [ -e "$FIXTURE_ROOT/drift-report.json" ] \
             || [ -L "$FIXTURE_ROOT/drift-report.json" ]; then
@@ -678,7 +770,7 @@ chmod +x "$FAKE_BIN/date"
 run_drift() {
     local shell_bin="${1:-/bin/bash}"
     local checker_path="${CHECKER_PATH:-$FIXTURE/scripts/check-submodule-drift.sh}"
-    shift || :
+    if [ "$#" -gt 0 ]; then shift; fi
     : > "$GIT_LOG"
     : > "$PYTHON_LOG"
     set +e
@@ -705,12 +797,19 @@ run_drift() {
         LOCAL_GITDIR_BACKUP="${LOCAL_GITDIR_BACKUP:-}" \
         LOCAL_CONFIG_PATH="${LOCAL_CONFIG_PATH:-}" \
         GIT_MODE="${GIT_MODE:-current}" \
+        CANCEL_HEARTBEAT_FILE="${CANCEL_HEARTBEAT_FILE:-}" \
+        CANCEL_IDENTITY_FILE="${CANCEL_IDENTITY_FILE:-}" \
+        DETACHED_HEARTBEAT_FILE="${DETACHED_HEARTBEAT_FILE:-}" \
+        DETACHED_STOP_FILE="${DETACHED_STOP_FILE:-}" \
+        DETACHED_IDENTITY_FILE="${DETACHED_IDENTITY_FILE:-}" \
         PYTHON_MODE="${PYTHON_MODE:-}" \
         DATE_MODE="${DATE_MODE:-}" \
         SLOW_BOUNDARY_MARKER="${SLOW_BOUNDARY_MARKER:-}" \
         RUNNER_DESCENDANT_PID_FILE="${RUNNER_DESCENDANT_PID_FILE:-}" \
         RUNNER_LEADER_PID_FILE="${RUNNER_LEADER_PID_FILE:-}" \
         RUNNER_ORDER_FILE="${RUNNER_ORDER_FILE:-}" \
+        RUNNER_CANCEL_POPEN_RECEIPT="${RUNNER_CANCEL_POPEN_RECEIPT:-}" \
+        RUNNER_CANCEL_RELEASE_FILE="${RUNNER_CANCEL_RELEASE_FILE:-}" \
         RUNNER_POST_POPEN_FAILURE="${RUNNER_POST_POPEN_FAILURE:-}" \
         RUNNER_READY_FILE="${RUNNER_READY_FILE:-}" \
         TEST_SWAP_ORIGINAL="${TEST_SWAP_ORIGINAL:-}" \
@@ -724,6 +823,27 @@ run_drift() {
     )"
     DRIFT_STATUS=$?
     set -e
+}
+
+linux_process_identity_is_active() {
+    /usr/bin/python3 -I -S - "$1" "$2" <<'PY'
+import sys
+
+process_id = int(sys.argv[1])
+expected_start_time = int(sys.argv[2])
+try:
+    with open(f"/proc/{process_id}/stat", "rb", buffering=0) as stream:
+        content = stream.read(65537)
+except (FileNotFoundError, ProcessLookupError):
+    raise SystemExit(1)
+closing = content.rfind(b")")
+if closing < 1:
+    raise SystemExit(2)
+fields = content[closing + 2 :].split()
+if len(fields) <= 19:
+    raise SystemExit(2)
+raise SystemExit(0 if int(fields[19]) == expected_start_time else 1)
+PY
 }
 
 real_git() {
@@ -776,6 +896,26 @@ else
     fail "the real-Git fixture inherited ambient discovery or commit dates"
 fi
 REAL_GIT="$REAL_GIT_COMMAND"
+
+if [ "$(/usr/bin/uname -s)" != Linux ]; then
+    info "remote process containment fails closed outside Linux"
+    GIT_MODE=current run_drift "$CHECKER_SHELL"
+    if [ "$DRIFT_STATUS" -eq 2 ] \
+        && grep -q 'exact remote Git process containment is Linux-only' \
+            <<<"$DRIFT_OUTPUT"; then
+        pass "an unsupported host cannot perform a remote drift read"
+    else
+        printf 'status=%s output=%s\n' "$DRIFT_STATUS" "$DRIFT_OUTPUT" >&2
+        fail "an unsupported host accepted a remote drift read"
+    fi
+    pass "the complete remote-containment matrix is explicitly Linux-only"
+    summary
+    suite_completed=1
+    if exit_code; then
+        exit 0
+    fi
+    exit 1
+fi
 
 info "the canonical checker runs under selected Bash $CHECKER_BASH_VERSION"
 ASSERT_IMMUTABLE_ROOT=1 GIT_MODE=current run_drift "$CHECKER_SHELL"
@@ -899,7 +1039,7 @@ if [ "$DRIFT_STATUS" -eq 0 ] \
     pass "Git commands ignore ambient repository and URL routing"
 else
     printf '%s\n' "$DRIFT_OUTPUT" >&2
-    grep -F 'unclean Git environment' "$GIT_LOG" >&2 || :
+    if ! grep -F 'unclean Git environment' "$GIT_LOG" >&2; then :; fi
     fail "an ambient Git setting reached a trusted Git command"
 fi
 
@@ -1055,6 +1195,184 @@ else
     fail "an ls-remote output flood did not reach the bounded failure"
 fi
 
+if [ "$(uname -s)" = Linux ]; then
+    write_inventory escaped-remote
+    DETACHED_HEARTBEAT_FILE="$TMP/detached-remote-heartbeat"
+    DETACHED_STOP_FILE="$TMP/detached-remote-stop"
+    DETACHED_IDENTITY_FILE="$TMP/detached-remote-identity"
+    heartbeat_snapshot="$TMP/detached-remote-heartbeat.snapshot"
+    rm -f "$DETACHED_HEARTBEAT_FILE" "$DETACHED_STOP_FILE" \
+        "$DETACHED_IDENTITY_FILE" "$heartbeat_snapshot"
+    GIT_MODE=escaped-remote run_drift "$CHECKER_SHELL"
+    for _ in $(seq 1 40); do
+        [ -s "$DETACHED_HEARTBEAT_FILE" ] \
+            && [ -s "$DETACHED_IDENTITY_FILE" ] && break
+        sleep 0.025
+    done
+    cp -- "$DETACHED_HEARTBEAT_FILE" "$heartbeat_snapshot"
+    read -r detached_pid detached_start_time < "$DETACHED_IDENTITY_FILE"
+    sleep 0.25
+    heartbeat_is_stable=false
+    if cmp -s "$heartbeat_snapshot" "$DETACHED_HEARTBEAT_FILE"; then
+        heartbeat_is_stable=true
+    fi
+    identity_is_extinct=false
+    for _ in $(seq 1 40); do
+        if ! linux_process_identity_is_active \
+            "$detached_pid" "$detached_start_time"; then
+            identity_is_extinct=true
+            break
+        fi
+        sleep 0.025
+    done
+    : > "$DETACHED_STOP_FILE"
+    if [ "$DRIFT_STATUS" -eq 2 ] \
+        && [ "$heartbeat_is_stable" = true ] \
+        && [ "$identity_is_extinct" = true ] \
+        && grep -Eq 'timed out|detached descendant|containment' <<<"$DRIFT_OUTPUT"; then
+        pass "a remote child forked during cleanup is extinguished before return"
+    else
+        printf 'status=%s pid=%s start=%s stable=%s extinct=%s output=%s\n' \
+            "$DRIFT_STATUS" "${detached_pid:-missing}" \
+            "${detached_start_time:-missing}" "$heartbeat_is_stable" \
+            "$identity_is_extinct" "$DRIFT_OUTPUT" >&2
+        fail "a remote child forked during cleanup escaped containment"
+    fi
+    unset DETACHED_HEARTBEAT_FILE DETACHED_STOP_FILE DETACHED_IDENTITY_FILE
+else
+    pass "detached remote containment proof is Linux-only (explicitly skipped)"
+fi
+
+info "fatal runner cancellation extinguishes its exact Git process tree"
+cancel_checker="$FIXTURE/scripts/check-submodule-drift-cancel.sh"
+cp "$FIXTURE/scripts/check-submodule-drift.sh" "$cancel_checker"
+/usr/bin/python3 -I -S - "$cancel_checker" <<'PY'
+from pathlib import Path
+import sys
+
+
+path = Path(sys.argv[1])
+source = path.read_text(encoding="utf-8")
+timeout_entry = "GIT_CALL_TIMEOUT_SECONDS=2"
+if source.count(timeout_entry) != 1:
+    raise SystemExit("Git runner cancellation timeout seam changed")
+source = source.replace(timeout_entry, "GIT_CALL_TIMEOUT_SECONDS=10")
+entry = """try:
+    if process_scope is not None:
+        process_scope.track_root(process.pid)"""
+replacement = """try:
+    if requires_exact_containment and os.environ.get("RUNNER_CANCEL_POPEN_RECEIPT"):
+        receipt_path = os.environ["RUNNER_CANCEL_POPEN_RECEIPT"]
+        release_path = os.environ["RUNNER_CANCEL_RELEASE_FILE"]
+        descriptor = os.open(
+            receipt_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+            0o600,
+        )
+        os.close(descriptor)
+        while not os.path.exists(release_path):
+            time.sleep(0.005)
+    if process_scope is not None:
+        process_scope.track_root(process.pid)"""
+if source.count(entry) != 1:
+    raise SystemExit("Git runner cancellation acquisition seam changed")
+path.write_text(source.replace(entry, replacement), encoding="utf-8")
+PY
+cancellation_failures=0
+for cancellation_signal in TERM HUP QUIT; do
+    cancel_identity="$TMP/cancel-$cancellation_signal.identity"
+    cancel_heartbeat="$TMP/cancel-$cancellation_signal.heartbeat"
+    cancel_receipt="$TMP/cancel-$cancellation_signal.popen"
+    cancel_release="$TMP/cancel-$cancellation_signal.release"
+    cancel_status_file="$TMP/cancel-$cancellation_signal.status"
+    cancel_output_file="$TMP/cancel-$cancellation_signal.output"
+    rm -f "$cancel_identity" "$cancel_heartbeat" "$cancel_receipt" \
+        "$cancel_release" "$cancel_status_file" "$cancel_output_file"
+    : > "$cancel_heartbeat"
+    (
+        CHECKER_PATH="$cancel_checker" \
+        GIT_MODE=cancel-remote \
+        CANCEL_IDENTITY_FILE="$cancel_identity" \
+        CANCEL_HEARTBEAT_FILE="$cancel_heartbeat" \
+        RUNNER_CANCEL_POPEN_RECEIPT="$cancel_receipt" \
+        RUNNER_CANCEL_RELEASE_FILE="$cancel_release" \
+            run_drift "$CHECKER_SHELL"
+        printf '%s\n' "$DRIFT_STATUS" > "$cancel_status_file"
+        printf '%s' "$DRIFT_OUTPUT" > "$cancel_output_file"
+    ) &
+    cancel_wrapper=$!
+    for _ in $(seq 1 300); do
+        [ -s "$cancel_identity" ] && [ -e "$cancel_receipt" ] && break
+        sleep 0.01
+    done
+    cancel_finished_promptly=false
+    cancel_status=missing
+    cancel_output=""
+    if [ -s "$cancel_identity" ] && [ -e "$cancel_receipt" ]; then
+        read -r runner_pid runner_start leader_pid leader_start \
+            descendant_pid descendant_start < "$cancel_identity"
+        if linux_process_identity_is_active "$runner_pid" "$runner_start"; then
+            if ! kill -"$cancellation_signal" "$runner_pid" 2>/dev/null; then :; fi
+        fi
+        : > "$cancel_release"
+        # The private checker uses a 10-second Git timeout. This two-second
+        # deadline proves signal cancellation, not ordinary timeout cleanup.
+        cancel_cleanup_deadline=$((SECONDS + 2))
+        while [ "$SECONDS" -lt "$cancel_cleanup_deadline" ]; do
+            if [ -s "$cancel_status_file" ] \
+                && ! linux_process_identity_is_active "$leader_pid" "$leader_start" \
+                && ! linux_process_identity_is_active \
+                    "$descendant_pid" "$descendant_start"; then
+                cancel_finished_promptly=true
+                break
+            fi
+            sleep 0.01
+        done
+    fi
+    if [ -e "$cancel_receipt" ]; then : > "$cancel_release"; fi
+    if [ "$cancel_finished_promptly" != true ]; then
+        cancellation_failures=$((cancellation_failures + 1))
+        if [ -n "${descendant_pid:-}" ] \
+            && linux_process_identity_is_active \
+                "$descendant_pid" "$descendant_start"; then
+            if ! kill -KILL "$descendant_pid" 2>/dev/null; then :; fi
+        fi
+        if [ -n "${leader_pid:-}" ] \
+            && linux_process_identity_is_active "$leader_pid" "$leader_start"; then
+            if ! kill -KILL "$leader_pid" 2>/dev/null; then :; fi
+        fi
+        if [ -n "${runner_pid:-}" ] \
+            && linux_process_identity_is_active "$runner_pid" "$runner_start"; then
+            if ! kill -KILL "$runner_pid" 2>/dev/null; then :; fi
+        fi
+    fi
+    set +e
+    wait "$cancel_wrapper"
+    set -e
+    if [ -s "$cancel_status_file" ]; then
+        cancel_status="$(cat "$cancel_status_file")"
+        cancel_output="$(cat "$cancel_output_file")"
+    fi
+    if [ "$cancel_status" != 2 ] \
+        || ! grep -Eq "RunnerCancellation: received SIG$cancellation_signal" \
+            <<<"$cancel_output"; then
+        cancellation_failures=$((cancellation_failures + 1))
+    fi
+    cancel_snapshot="$cancel_heartbeat.snapshot"
+    cp -- "$cancel_heartbeat" "$cancel_snapshot"
+    sleep 0.05
+    if ! cmp -s "$cancel_snapshot" "$cancel_heartbeat"; then
+        cancellation_failures=$((cancellation_failures + 1))
+    fi
+    unset runner_pid runner_start leader_pid leader_start \
+        descendant_pid descendant_start
+done
+if [ "$cancellation_failures" -eq 0 ]; then
+    pass "SIGTERM, SIGHUP, and SIGQUIT leave no Git leader or descendant"
+else
+    fail "fatal runner cancellation leaked a Git leader or descendant"
+fi
+
 write_inventory zero-oid
 GIT_MODE=zero-oid run_drift "$CHECKER_SHELL"
 if [ "$DRIFT_STATUS" -eq 2 ] \
@@ -1077,7 +1395,8 @@ for bounded_mode in hang-repo pipe-eof-repo flood-repo; do
     descendant_stopped=true
     if [ "$bounded_mode" = pipe-eof-repo ]; then
         descendant_stopped=false
-        descendant_pid="$(cat "$DESCENDANT_PID_FILE" 2>/dev/null || :)"
+        descendant_pid=""
+        if ! descendant_pid=$(cat "$DESCENDANT_PID_FILE" 2>/dev/null); then :; fi
         if [[ "$descendant_pid" =~ ^[0-9]+$ ]]; then
             for _ in $(seq 1 20); do
                 if ! kill -0 "$descendant_pid" 2>/dev/null; then
@@ -1108,7 +1427,8 @@ RUNNER_ORDER_FILE="$TMP/runner-order" \
 RUNNER_DESCENDANT_PID_FILE="$TMP/runner-order-descendant.pid" \
 GIT_MODE=leader-order run_drift "$CHECKER_SHELL"
 order_descendant_stopped=false
-order_descendant_pid="$(cat "$TMP/runner-order-descendant.pid" 2>/dev/null || :)"
+order_descendant_pid=""
+if ! order_descendant_pid=$(cat "$TMP/runner-order-descendant.pid" 2>/dev/null); then :; fi
 if [[ "$order_descendant_pid" =~ ^[0-9]+$ ]]; then
     for _ in $(seq 1 40); do
         if ! kill -0 "$order_descendant_pid" 2>/dev/null; then
@@ -1118,8 +1438,10 @@ if [[ "$order_descendant_pid" =~ ^[0-9]+$ ]]; then
         sleep 0.05
     done
 fi
+runner_order=""
+if ! runner_order=$(cat "$TMP/runner-order" 2>/dev/null); then :; fi
 if [ "$DRIFT_STATUS" -eq 0 ] \
-    && [ "$(cat "$TMP/runner-order" 2>/dev/null || :)" = term-before-reap ] \
+    && [ "$runner_order" = term-before-reap ] \
     && [ "$order_descendant_stopped" = true ]; then
     pass "Git receives TERM and KILL before its leader is reaped"
 else
@@ -1160,8 +1482,10 @@ RUNNER_READY_FILE="$TMP/runner-ready" \
 RUNNER_LEADER_PID_FILE="$TMP/runner-leader.pid" \
 RUNNER_DESCENDANT_PID_FILE="$TMP/runner-descendant.pid" \
 GIT_MODE=post-popen-exception run_drift "$CHECKER_SHELL"
-runner_leader_pid="$(cat "$TMP/runner-leader.pid" 2>/dev/null || :)"
-runner_descendant_pid="$(cat "$TMP/runner-descendant.pid" 2>/dev/null || :)"
+runner_leader_pid=""
+if ! runner_leader_pid=$(cat "$TMP/runner-leader.pid" 2>/dev/null); then :; fi
+runner_descendant_pid=""
+if ! runner_descendant_pid=$(cat "$TMP/runner-descendant.pid" 2>/dev/null); then :; fi
 post_popen_tree_stopped=false
 process_is_active() {
     local process_state
@@ -1185,18 +1509,25 @@ fi
 if [ "$DRIFT_STATUS" -eq 2 ] && [ "$post_popen_tree_stopped" = true ]; then
     pass "a post-Popen exception cannot leak the Git process tree"
 else
+    runner_leader_state=""
+    if ! runner_leader_state=$(
+        /bin/ps -o stat= -p "$runner_leader_pid" 2>/dev/null
+    ); then :; fi
+    runner_descendant_state=""
+    if ! runner_descendant_state=$(
+        /bin/ps -o stat= -p "$runner_descendant_pid" 2>/dev/null
+    ); then :; fi
     printf 'status=%s leader=%s descendant=%s leader_state=%s descendant_state=%s output=%s\n' \
         "$DRIFT_STATUS" "$runner_leader_pid" "$runner_descendant_pid" \
-        "$(/bin/ps -o stat= -p "$runner_leader_pid" 2>/dev/null || :)" \
-        "$(/bin/ps -o stat= -p "$runner_descendant_pid" 2>/dev/null || :)" \
+        "$runner_leader_state" "$runner_descendant_state" \
         "$DRIFT_OUTPUT" >&2
     fail "a post-Popen exception leaked an owned Git process"
 fi
 if [[ "$runner_leader_pid" =~ ^[0-9]+$ ]] \
     && process_is_active "$runner_leader_pid"; then
-    kill -TERM -- "-$runner_leader_pid" 2>/dev/null || :
+    if ! kill -TERM -- "-$runner_leader_pid" 2>/dev/null; then :; fi
     sleep 0.2
-    kill -KILL -- "-$runner_leader_pid" 2>/dev/null || :
+    if ! kill -KILL -- "-$runner_leader_pid" 2>/dev/null; then :; fi
 fi
 
 info "process-group permission failures cannot become successful cleanup"
@@ -1215,7 +1546,11 @@ for call in (
 ):
     if source.count(call) != 1:
         raise SystemExit(f"Git runner signal seam changed: {call}")
-    source = source.replace(call, 'raise PermissionError("controlled denial")')
+    denial = (
+        f"{call} if profile != 'git' else "
+        "(_ for _ in ()).throw(PermissionError('controlled denial'))"
+    )
+    source = source.replace(call, denial)
 path.write_text(source, encoding="utf-8")
 PY
 rm -f "$TMP/permission-leader.pid" "$TMP/permission-ready"
@@ -1223,7 +1558,8 @@ CHECKER_PATH="$permission_checker" \
 RUNNER_READY_FILE="$TMP/permission-ready" \
 RUNNER_LEADER_PID_FILE="$TMP/permission-leader.pid" \
 GIT_MODE=permission-denied run_drift "$CHECKER_SHELL"
-permission_leader_pid="$(cat "$TMP/permission-leader.pid" 2>/dev/null || :)"
+permission_leader_pid=""
+if ! permission_leader_pid=$(cat "$TMP/permission-leader.pid" 2>/dev/null); then :; fi
 if [ "$DRIFT_STATUS" -eq 2 ] \
     && grep -q 'could not terminate Git process group: controlled denial' \
         <<<"$DRIFT_OUTPUT" \
@@ -1231,6 +1567,14 @@ if [ "$DRIFT_STATUS" -eq 2 ] \
     && ! process_is_active "$permission_leader_pid"; then
     pass "a live leader makes process-group permission denial fail closed"
 else
+    permission_leader_state=""
+    if ! permission_leader_state=$(
+        /bin/ps -o stat= -p "$permission_leader_pid" 2>/dev/null
+    ); then :; fi
+    printf 'status=%s leader=%s state=%s output=%s\n' \
+        "$DRIFT_STATUS" "$permission_leader_pid" \
+        "$permission_leader_state" \
+        "$DRIFT_OUTPUT" >&2
     fail "process-group permission denial was accepted as cleanup"
 fi
 
@@ -1630,17 +1974,30 @@ PY
     rm -f "$FIXTURE/drift-report.json"
 done
 
-info "CI mode publishes drift for downstream matrix consumption"
-: > "$TMP/github-output"
+info "CI metadata is emitted to stdout without mutating runner output files"
+printf '%s\n' 'runner-owned-output' > "$TMP/github-output"
 GITHUB_OUTPUT="$TMP/github-output" GIT_MODE=behind \
     run_drift "$CHECKER_SHELL" --ci
 if [ "$DRIFT_STATUS" -eq 0 ] \
-    && grep -Fxq 'has_drift=true' "$TMP/github-output" \
+    && [ "$(cat "$TMP/github-output")" = runner-owned-output ] \
+    && grep -Fxq 'has_drift=true' <<<"$DRIFT_OUTPUT" \
     && "$REAL_PYTHON" -I -S -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["submodules"][0]["status"] == "behind"' \
         "$FIXTURE/drift-report.json"; then
-    pass "reported drift remains consumable by the scheduled matrix"
+    pass "CI output is reviewable without writing an existing runner sink"
 else
-    fail "reported drift stopped or omitted the scheduled matrix contract"
+    fail "CI metadata still depended on mutating the runner output file"
+fi
+rm -f "$FIXTURE/drift-report.json" "$TMP/github-output"
+
+info "CI mode prints the current-state value for downstream capture"
+GIT_MODE=current run_drift "$CHECKER_SHELL" --ci
+if [ "$DRIFT_STATUS" -eq 0 ] \
+    && grep -Fxq 'has_drift=false' <<<"$DRIFT_OUTPUT" \
+    && "$REAL_PYTHON" -I -S -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["drift_count"] == 0' \
+        "$FIXTURE/drift-report.json"; then
+    pass "current-state metadata remains available for explicit caller capture"
+else
+    fail "current-state metadata was not printed with its complete report"
 fi
 
 rm -f "$FIXTURE/drift-report.json"
@@ -1661,7 +2018,7 @@ if [ "$DRIFT_STATUS" -eq 2 ] \
 else
     fail "unavailable evidence became a successful CI report"
 fi
-rm -f "$FIXTURE/drift-report.json" "$TMP/github-output"
+rm -f "$FIXTURE/drift-report.json"
 
 info "CI publication code must be an owner-controlled direct file"
 chmod 0666 "$FIXTURE/scripts/safe_report_publish.py"
@@ -1717,68 +2074,7 @@ if [ "$DRIFT_STATUS" -eq 0 ] \
 else
     fail "report publication was incomplete, invalid, or not isolated"
 fi
-
-info "GitHub output publication rejects a pre-existing symlink"
-printf '%s\n' preserve-me > "$TMP/github-output-victim"
-ln -s "$TMP/github-output-victim" "$TMP/github-output"
-GITHUB_OUTPUT="$TMP/github-output" GIT_MODE=current run_drift "$CHECKER_SHELL" --ci
-if [ "$DRIFT_STATUS" -eq 2 ] \
-    && [ "$(cat "$TMP/github-output-victim")" = preserve-me ]; then
-    pass "a symlinked GitHub output cannot redirect workflow data"
-else
-    fail "GitHub output publication followed a pre-existing symlink"
-fi
-rm "$TMP/github-output"
-
-info "GitHub output publication rejects a non-regular file"
-mkfifo "$TMP/github-output"
-GITHUB_OUTPUT="$TMP/github-output" GIT_MODE=current run_drift "$CHECKER_SHELL" --ci
-if [ "$DRIFT_STATUS" -eq 2 ] && [ -p "$TMP/github-output" ]; then
-    pass "a non-regular GitHub output cannot receive workflow data"
-else
-    fail "GitHub output publication accepted a non-regular file"
-fi
-rm "$TMP/github-output"
-
-info "a direct regular GitHub output receives an exact append"
-printf '%s\n' initial-output > "$TMP/github-output"
-printf '%s\n' initial-output has_drift=false > "$TMP/expected-github-output"
-GITHUB_OUTPUT="$TMP/github-output" GIT_MODE=current run_drift "$CHECKER_SHELL" --ci
-if [ "$DRIFT_STATUS" -eq 0 ] \
-    && cmp -s "$TMP/expected-github-output" "$TMP/github-output"; then
-    pass "GitHub output append is complete and exact"
-else
-    fail "GitHub output append was unavailable or divergent"
-fi
-
-info "GitHub output publication rebinds after its initial identity check"
-printf '%s\n' initial-output > "$TMP/github-output"
-printf '%s\n' preserve-me > "$TMP/swap-victim"
-DATE_MODE=swap-output GITHUB_OUTPUT="$TMP/github-output" \
-TEST_SWAP_ORIGINAL="$TMP/github-output-original" \
-TEST_SWAP_VICTIM="$TMP/swap-victim" \
-GIT_MODE=current run_drift "$CHECKER_SHELL" --ci
-if [ "$DRIFT_STATUS" -eq 2 ] \
-    && [ "$(cat "$TMP/swap-victim")" = preserve-me ] \
-    && [ "$(cat "$TMP/github-output-original")" = initial-output ]; then
-    pass "a post-binding pathname swap cannot redirect workflow data"
-else
-    fail "GitHub output publication did not rebind its opened pathname"
-fi
-rm "$TMP/github-output"
-
-info "GitHub output requires one linked regular file"
-printf '%s\n' initial-output > "$TMP/github-output-origin"
-ln "$TMP/github-output-origin" "$TMP/github-output"
-GITHUB_OUTPUT="$TMP/github-output" GIT_MODE=current \
-    run_drift "$CHECKER_SHELL" --ci
-if [ "$DRIFT_STATUS" -eq 2 ] \
-    && [ "$(cat "$TMP/github-output-origin")" = initial-output ]; then
-    pass "a multiply linked GitHub output is rejected before append"
-else
-    fail "GitHub output accepted a multiply linked file"
-fi
-rm "$TMP/github-output" "$TMP/github-output-origin"
+rm -f "$FIXTURE/drift-report.json"
 
 info "CI report publication rebinds after its initial identity check"
 printf '%s\n' preserve-me > "$TMP/report-victim"

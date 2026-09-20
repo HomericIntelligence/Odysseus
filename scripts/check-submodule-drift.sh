@@ -12,20 +12,20 @@
 # Usage:
 #   check-submodule-drift.sh           Print a human-readable table.
 #   check-submodule-drift.sh --ci      Also write drift-report.json and emit
-#                                      has_drift=<bool> to $GITHUB_OUTPUT.
+#                                      has_drift=<bool> to stdout.
 #
 # Exit codes:
 #   0  No drift — all submodule pins match their upstream default branch.
 #   1  Drift detected — one or more submodule pins differ from upstream.
 #   2  Usage or environment error (network failure, bad arguments, etc.).
 # In --ci mode, a complete published report exits 0 even when drift exists.
-# Consumers use has_drift=true and drift-report.json to continue the matrix.
+# Consumers capture the stdout has_drift value and use drift-report.json.
 #
 # Used by both the GitHub Actions workflow and `just check-submodule-drift`.
 
 # Imported Bash functions must not replace the builtins used below.
-unset -f -- builtin cd command declare eval exec exit local printf pwd read \
-  return set shift source test trap type unset '[' 2>/dev/null || :
+if ! unset -f -- builtin cd command declare eval exec exit local printf pwd read \
+  return set shift source test trap type unset '[' 2>/dev/null; then :; fi
 set -uo pipefail
 
 # Scrub file-producing diagnostics and dynamic-loader controls before the
@@ -47,11 +47,8 @@ PROCESS_CALL_TIMEOUT_SECONDS=20
 PYTHON_MAX_OUTPUT_BYTES=2097152
 DATE_MAX_OUTPUT_BYTES=4096
 TOTAL_OPERATION_TIMEOUT_SECONDS=120
-# shellcheck disable=SC2034  # Indirectly consumed through a nameref.
 GIT_RUNNER_TEST_ENV_KEYS=()
-# shellcheck disable=SC2034  # Indirectly consumed through a nameref.
 PYTHON_RUNNER_TEST_ENV_KEYS=()
-# shellcheck disable=SC2034  # Indirectly consumed through a nameref.
 DATE_RUNNER_TEST_ENV_KEYS=()
 if [ ! -x "$TRUSTED_PYTHON" ] || [ ! -x "$TRUSTED_GIT" ] \
   || [ ! -x "$TRUSTED_ENV" ] || [ ! -x "$TRUSTED_DATE" ]; then
@@ -63,11 +60,20 @@ OPERATION_DEADLINE_NS=""
 
 append_test_environment() {
   local destination_name="$1" keys_name="$2" key
-  local -n destination="$destination_name"
-  local -n keys="$keys_name"
-  for key in "${keys[@]}"; do
+  local keys=()
+  case "$keys_name" in
+    GIT_RUNNER_TEST_ENV_KEYS) keys=("${GIT_RUNNER_TEST_ENV_KEYS[@]+"${GIT_RUNNER_TEST_ENV_KEYS[@]}"}") ;;
+    PYTHON_RUNNER_TEST_ENV_KEYS) keys=("${PYTHON_RUNNER_TEST_ENV_KEYS[@]+"${PYTHON_RUNNER_TEST_ENV_KEYS[@]}"}") ;;
+    DATE_RUNNER_TEST_ENV_KEYS) keys=("${DATE_RUNNER_TEST_ENV_KEYS[@]+"${DATE_RUNNER_TEST_ENV_KEYS[@]}"}") ;;
+    *) return 2 ;;
+  esac
+  case "$destination_name" in test_environment|deadline_environment) ;; *) return 2 ;; esac
+  for key in "${keys[@]+"${keys[@]}"}"; do
     if [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] && [ -n "${!key+x}" ]; then
-      destination+=("$key=${!key}")
+      case "$destination_name" in
+        test_environment) test_environment+=("$key=${!key}") ;;
+        deadline_environment) deadline_environment+=("$key=${!key}") ;;
+      esac
     fi
   done
 }
@@ -81,16 +87,23 @@ bounded_process() {
   if [ "$keys_name" != PYTHON_RUNNER_TEST_ENV_KEYS ]; then
     append_test_environment test_environment PYTHON_RUNNER_TEST_ENV_KEYS
   fi
-  local -n runner_keys="$keys_name"
-  for key in "${runner_keys[@]}"; do
+  local runner_keys=()
+  case "$keys_name" in
+    GIT_RUNNER_TEST_ENV_KEYS) runner_keys=("${GIT_RUNNER_TEST_ENV_KEYS[@]+"${GIT_RUNNER_TEST_ENV_KEYS[@]}"}") ;;
+    PYTHON_RUNNER_TEST_ENV_KEYS) runner_keys=("${PYTHON_RUNNER_TEST_ENV_KEYS[@]+"${PYTHON_RUNNER_TEST_ENV_KEYS[@]}"}") ;;
+    DATE_RUNNER_TEST_ENV_KEYS) runner_keys=("${DATE_RUNNER_TEST_ENV_KEYS[@]+"${DATE_RUNNER_TEST_ENV_KEYS[@]}"}") ;;
+    *) return 2 ;;
+  esac
+  for key in "${runner_keys[@]+"${runner_keys[@]}"}"; do
     if [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
       test_keys="${test_keys}${test_keys:+,}${key}"
     fi
   done
   "$TRUSTED_ENV" -i HOME=/dev/null PATH=/usr/bin:/bin LC_ALL=C TZ=UTC \
-    "${test_environment[@]}" "$TRUSTED_PYTHON" -I -S - \
+    "${test_environment[@]+"${test_environment[@]}"}" "$TRUSTED_PYTHON" -I -S - \
     "$OPERATION_DEADLINE_NS" "$call_timeout" "$output_limit" \
     "$profile" "$input_mode" "$test_keys" "$@" 4<&0 <<'PY'
+import ctypes
 import os
 import select
 import selectors
@@ -124,6 +137,7 @@ command_label = {
     "date": "date command",
 }[profile]
 process_label = {"git": "Git", "python": "Python", "date": "date"}[profile]
+requires_exact_containment = profile == "git" and "ls-remote" in argv[1:]
 child_environment = {
     "HOME": "/dev/null",
     "LC_ALL": "C",
@@ -178,6 +192,235 @@ runner_failure = None
 cleanup_failure = None
 status = None
 leader_observer = {"kind": None, "queue": None, "seen": False}
+
+
+def linux_process_identity(process_id):
+    try:
+        with open(f"/proc/{process_id}/stat", "rb", buffering=0) as stream:
+            content = stream.read(65537)
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    if len(content) > 65536:
+        raise RuntimeError("Linux process identity exceeded its byte ceiling")
+    closing = content.rfind(b")")
+    if closing < 1:
+        raise RuntimeError("Linux process identity is malformed")
+    fields = content[closing + 2 :].split()
+    if len(fields) <= 19:
+        raise RuntimeError("Linux process identity is incomplete")
+    try:
+        return process_id, int(fields[19])
+    except ValueError as error:
+        raise RuntimeError("Linux process identity is malformed") from error
+
+
+def linux_child_pids(process_id):
+    task_root = f"/proc/{process_id}/task"
+    try:
+        task_ids = tuple(
+            entry
+            for entry in os.listdir(task_root)
+            if entry.isdecimal()
+        )
+    except (FileNotFoundError, ProcessLookupError):
+        return set()
+    children = set()
+    for task_id in task_ids:
+        try:
+            with open(
+                f"{task_root}/{task_id}/children", "rb", buffering=0
+            ) as stream:
+                content = stream.read(1048577)
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        if len(content) > 1048576:
+            raise RuntimeError("Linux child inventory exceeded its byte ceiling")
+        for value in content.split():
+            if not value.isdigit():
+                raise RuntimeError("Linux child inventory is malformed")
+            child = int(value)
+            if child > 1:
+                children.add(child)
+    return children
+
+
+class LinuxProcessScope:
+    """Bind descendants by kernel identity, including reparented sessions."""
+
+    def __init__(self):
+        if not callable(getattr(os, "pidfd_open", None)) or not callable(
+            getattr(signal, "pidfd_send_signal", None)
+        ):
+            raise RuntimeError("Linux pidfd containment is unavailable")
+        library = ctypes.CDLL(None, use_errno=True)
+        prctl = getattr(library, "prctl", None)
+        if prctl is None:
+            raise RuntimeError("Linux subreaper containment is unavailable")
+        prctl.argtypes = [
+            ctypes.c_int,
+            ctypes.c_ulong,
+            ctypes.c_ulong,
+            ctypes.c_ulong,
+            ctypes.c_ulong,
+        ]
+        prctl.restype = ctypes.c_int
+        ctypes.set_errno(0)
+        if prctl(36, 1, 0, 0, 0) != 0:
+            error_number = ctypes.get_errno() or 1
+            raise OSError(
+                error_number, "could not enable Linux subreaper containment"
+            )
+        state = ctypes.c_int(0)
+        ctypes.set_errno(0)
+        if prctl(37, ctypes.addressof(state), 0, 0, 0) != 0:
+            error_number = ctypes.get_errno() or 1
+            raise OSError(
+                error_number, "could not verify Linux subreaper containment"
+            )
+        if state.value != 1:
+            raise RuntimeError("Linux subreaper containment is not active")
+        self.supervisor = os.getpid()
+        self.baseline = {
+            identity
+            for child in linux_child_pids(self.supervisor)
+            if (identity := linux_process_identity(child)) is not None
+        }
+        self.owned = {}
+
+    def _track(self, process_id, *, root=False):
+        identity = linux_process_identity(process_id)
+        if identity is None or (not root and identity in self.baseline):
+            return False
+        previous = self.owned.get(process_id)
+        if previous is not None and previous[0] == identity[1]:
+            return False
+        if previous is not None:
+            os.close(previous[1])
+        try:
+            descriptor = os.pidfd_open(process_id, 0)
+        except ProcessLookupError:
+            return False
+        rebound = linux_process_identity(process_id)
+        if rebound != identity:
+            os.close(descriptor)
+            if rebound is None:
+                return False
+            raise RuntimeError("Linux process identity changed while binding")
+        self.owned[process_id] = (identity[1], descriptor)
+        return True
+
+    def track_root(self, process_id):
+        if not self._track(process_id, root=True):
+            raise RuntimeError("could not bind the command leader")
+
+    def discover(self):
+        discovered = False
+        while True:
+            candidates = set(linux_child_pids(self.supervisor))
+            for process_id, (start_time, _descriptor) in tuple(
+                self.owned.items()
+            ):
+                if linux_process_identity(process_id) == (
+                    process_id,
+                    start_time,
+                ):
+                    candidates.update(linux_child_pids(process_id))
+            changed = False
+            for process_id in candidates:
+                changed = self._track(process_id) or changed
+            discovered = discovered or changed
+            if not changed:
+                return discovered
+
+    @staticmethod
+    def _exited(descriptor):
+        ready, _writable, _exceptional = select.select(
+            [descriptor], [], [], 0
+        )
+        return bool(ready)
+
+    def live_snapshot(self):
+        return tuple(
+            (process_id, descriptor)
+            for process_id, (_start_time, descriptor) in self.owned.items()
+            if not self._exited(descriptor)
+        )
+
+    def live(self):
+        self.discover()
+        live = self.live_snapshot()
+        if live:
+            return live
+        # Close the fork-after-inventory race only after every bound parent is
+        # exited and consecutive adopted-child rescans find no new identity.
+        unchanged_scans = 0
+        while unchanged_scans < 2:
+            changed = self.discover()
+            live = self.live_snapshot()
+            if live:
+                return live
+            unchanged_scans = 0 if changed else unchanged_scans + 1
+        return ()
+
+    def live_descendants(self, leader):
+        return tuple(item for item in self.live() if item[0] != leader)
+
+    @staticmethod
+    def _send(descriptor, signal_number):
+        try:
+            signal.pidfd_send_signal(descriptor, signal_number, None, 0)
+        except ProcessLookupError:
+            pass
+
+    def terminate_all(self, grace):
+        cleanup_error = None
+        for signal_number, interval in (
+            (signal.SIGTERM, max(0.0, grace)),
+            (signal.SIGKILL, max(0.1, grace)),
+        ):
+            deadline = time.monotonic() + interval
+            while True:
+                try:
+                    live = self.live()
+                except BaseException as error:
+                    cleanup_error = cleanup_error or error
+                    live = tuple(
+                        (process_id, descriptor)
+                        for process_id, (_start, descriptor) in self.owned.items()
+                        if not self._exited(descriptor)
+                    )
+                if not live:
+                    break
+                for _process_id, descriptor in live:
+                    try:
+                        self._send(descriptor, signal_number)
+                    except BaseException as error:
+                        cleanup_error = cleanup_error or error
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.01)
+        if self.live():
+            raise RuntimeError(
+                "owned descendant processes survived containment cleanup"
+            ) from cleanup_error
+        if cleanup_error is not None:
+            raise RuntimeError(
+                "descendant containment cleanup failed"
+            ) from cleanup_error
+
+    def reap_adopted(self, leader):
+        for process_id in tuple(self.owned):
+            if process_id == leader:
+                continue
+            try:
+                os.waitpid(process_id, os.WNOHANG)
+            except ChildProcessError:
+                pass
+
+    def close(self):
+        for _start_time, descriptor in self.owned.values():
+            os.close(descriptor)
+        self.owned.clear()
 
 
 def prepare_leader_observer(process_id):
@@ -241,6 +484,67 @@ def close_leader_observer():
         queue.close()
 
 
+process_scope = None
+if sys.platform.startswith("linux"):
+    try:
+        process_scope = LinuxProcessScope()
+    except BaseException as error:
+        print(
+            f"error: exact process containment is unavailable: {error}",
+            file=sys.stderr,
+        )
+        raise SystemExit(125) from error
+elif requires_exact_containment:
+    print(
+        "error: exact remote Git process containment is Linux-only",
+        file=sys.stderr,
+    )
+    raise SystemExit(125)
+
+mask_signals = getattr(signal, "pthread_sigmask", None)
+set_wakeup_descriptor = getattr(signal, "set_wakeup_fd", None)
+guarded_signals = {
+    candidate
+    for name in ("SIGHUP", "SIGINT", "SIGQUIT", "SIGTERM")
+    if isinstance((candidate := getattr(signal, name, None)), int)
+}
+if mask_signals is None or set_wakeup_descriptor is None or not guarded_signals:
+    if process_scope is not None:
+        process_scope.close()
+    print(
+        "error: controlled runner cancellation is unavailable",
+        file=sys.stderr,
+    )
+    raise SystemExit(125)
+
+
+class RunnerCancellation(Exception):
+    """A fatal caller signal converted into owned-tree cleanup."""
+
+
+cancellation_signal = [None]
+
+
+def request_cancellation(signal_number, _frame):
+    cancellation_signal[0] = signal_number
+
+
+def raise_if_cancelled():
+    if cancellation_signal[0] is None:
+        return
+    raise RunnerCancellation(
+        f"received {signal.Signals(cancellation_signal[0]).name}"
+    )
+
+
+cancellation_read, cancellation_write = os.pipe()
+for descriptor in (cancellation_read, cancellation_write):
+    os.set_blocking(descriptor, False)
+    os.set_inheritable(descriptor, False)
+set_wakeup_descriptor(cancellation_write)
+for signal_number in guarded_signals:
+    signal.signal(signal_number, request_cancellation)
+
 try:
     process = subprocess.Popen(
         argv,
@@ -252,6 +556,8 @@ try:
         start_new_session=True,
     )
 except OSError as error:
+    if process_scope is not None:
+        process_scope.close()
     print(
         f"error: could not start trusted {process_label}: {error}",
         file=sys.stderr,
@@ -259,12 +565,16 @@ except OSError as error:
     raise SystemExit(127) from error
 
 try:
+    if process_scope is not None:
+        process_scope.track_root(process.pid)
     prepare_leader_observer(process.pid)
+    raise_if_cancelled()
     if process.stdout is None or process.stderr is None:
         raise RuntimeError(f"trusted {process_label} output pipes are unavailable")
     if input_mode == "forward" and process.stdin is None:
         raise RuntimeError(f"trusted {process_label} input pipe is unavailable")
     selector = selectors.DefaultSelector()
+    selector.register(cancellation_read, selectors.EVENT_READ, "cancel")
     if process.stdin is not None:
         if input_data:
             os.set_blocking(process.stdin.fileno(), False)
@@ -273,7 +583,10 @@ try:
             process.stdin.close()
     selector.register(process.stdout, selectors.EVENT_READ, "stdout")
     selector.register(process.stderr, selectors.EVENT_READ, "stderr")
-    while selector.get_map():
+    while any(
+        key.data != "cancel" for key in selector.get_map().values()
+    ):
+        raise_if_cancelled()
         remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
         if remaining <= 0:
             failure = (
@@ -292,6 +605,13 @@ try:
             break
         for key, _ in events:
             stream = key.fileobj
+            if key.data == "cancel":
+                try:
+                    os.read(cancellation_read, 65536)
+                except BlockingIOError:
+                    pass
+                raise_if_cancelled()
+                continue
             if key.data == "stdin":
                 try:
                     written = os.write(
@@ -319,8 +639,11 @@ try:
                 )
                 break
             buffers[key.data].extend(chunk)
+        if process_scope is not None:
+            process_scope.discover()
         if failure is not None:
             break
+    raise_if_cancelled()
     if failure is None:
         # Let a child that closed both output pipes finish exiting without
         # polling or reaping it; its PID remains reserved through both signals.
@@ -330,11 +653,19 @@ try:
         )
         if grace:
             time.sleep(grace)
+        if process_scope is not None:
+            detached_descendants = process_scope.live_descendants(process.pid)
+            if requires_exact_containment and detached_descendants:
+                runner_failure = (
+                    f"{command_label} left a detached descendant process running"
+                )
 except BaseException as error:
     runner_failure = (
         f"{command_label} runner failed: {type(error).__name__}: {error}"
     )
 finally:
+    mask_signals(signal.SIG_BLOCK, guarded_signals)
+    set_wakeup_descriptor(-1)
     if selector is not None:
         try:
             selector.close()
@@ -397,6 +728,13 @@ finally:
         cleanup_failure = cleanup_failure or (
             f"could not kill {process_label} process group: {error}"
         )
+    if process_scope is not None:
+        try:
+            process_scope.terminate_all(0.05 if profile == "git" else 0.01)
+        except BaseException as error:
+            cleanup_failure = cleanup_failure or (
+                f"could not contain trusted {process_label} descendants: {error}"
+            )
     if group_permission_errors:
         leader_exited = False
         try:
@@ -436,6 +774,19 @@ finally:
         cleanup_failure = cleanup_failure or (
             f"could not reap trusted {process_label}: {error}"
         )
+    if process_scope is not None:
+        try:
+            process_scope.reap_adopted(process.pid)
+        except BaseException as error:
+            cleanup_failure = cleanup_failure or (
+                f"could not reap trusted {process_label} descendants: {error}"
+            )
+        try:
+            process_scope.close()
+        except BaseException as error:
+            cleanup_failure = cleanup_failure or (
+                f"could not close trusted {process_label} containment: {error}"
+            )
     for stream in (process.stdout, process.stderr):
         if stream is not None and not stream.closed:
             try:
@@ -444,6 +795,13 @@ finally:
                 cleanup_failure = cleanup_failure or (
                     f"could not close trusted {process_label} output: {error}"
                 )
+    for descriptor in (cancellation_read, cancellation_write):
+        try:
+            os.close(descriptor)
+        except OSError as error:
+            cleanup_failure = cleanup_failure or (
+                f"could not close cancellation descriptor: {error}"
+            )
 
 if cleanup_failure is not None:
     print(f"error: {cleanup_failure}", file=sys.stderr)
@@ -493,7 +851,7 @@ usage() {
     'Compare each canonical submodule pin with its upstream default branch.' \
     '' \
     'Options:' \
-    '  --ci       Publish a validated drift report and has_drift output.' \
+    '  --ci       Publish a validated report and print has_drift to stdout.' \
     '  -h, --help Print this help and exit.' \
     '' \
     'Exit codes:' \
@@ -558,7 +916,7 @@ deadline_environment=()
 append_test_environment deadline_environment PYTHON_RUNNER_TEST_ENV_KEYS
 OPERATION_DEADLINE_NS=$("$TRUSTED_ENV" -i \
   HOME=/dev/null PATH=/usr/bin:/bin LC_ALL=C TZ=UTC \
-  "${deadline_environment[@]}" "$TRUSTED_PYTHON" -I -S -c \
+  "${deadline_environment[@]+"${deadline_environment[@]}"}" "$TRUSTED_PYTHON" -I -S -c \
   'import sys,time; print(time.monotonic_ns() + int(sys.argv[1]) * 1_000_000_000)' \
   "$TOTAL_OPERATION_TIMEOUT_SECONDS") || {
   printf 'error: submodule drift operation deadline unavailable\n' >&2
@@ -1470,14 +1828,6 @@ if [ "$CI_MODE" -eq 1 ]; then
 
   report_binding=$(publisher_call \
     bind "$report_path" replace) || exit 2
-  output_binding=""
-  if [ -n "${GITHUB_OUTPUT:-}" ]; then
-    output_binding=$(publisher_call \
-      bind "$GITHUB_OUTPUT" append) || exit 2
-    publisher_call \
-      distinct "$report_binding" "$output_binding" || exit 2
-  fi
-
   generated_at=$(isolated_date -u +%Y-%m-%dT%H:%M:%SZ) || {
     printf 'error: could not generate report timestamp\n' >&2
     exit 2
@@ -1511,15 +1861,7 @@ if [ "$CI_MODE" -eq 1 ]; then
   fi
   has_drift="false"
   [ "$drift_count" -gt 0 ] && has_drift="true"
-  if [ -n "${GITHUB_OUTPUT:-}" ]; then
-    if ! printf 'has_drift=%s\n' "$has_drift" \
-      | publisher_call publish "$GITHUB_OUTPUT" append \
-        "$output_binding"; then
-      exit 2
-    fi
-  else
-    printf 'has_drift=%s\n' "$has_drift"
-  fi
+  printf 'has_drift=%s\n' "$has_drift"
 fi
 
 # Network errors take precedence so CI fails visibly rather than silently.

@@ -1,21 +1,53 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Native pre-push signature boundary.
 #
 # pre-commit captures pre-push stdin before it invokes a migrated
 # `pre-push.legacy` hook.  Installing this file as that legacy hook therefore
 # preserves the complete multi-ref transaction for the repository verifier;
 # a configured pre-commit hook does not receive that stream.
-set -euo pipefail
+set -eu
 
-if ! repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
-    echo "ERROR: cannot resolve the repository root for signature verification" >&2
+git_binary=/usr/bin/git
+verifier_path=scripts/check-push-signatures.sh
+
+if [ ! -x "$git_binary" ]; then
+    echo "ERROR: fixed Git executable is unavailable at $git_binary" >&2
     exit 1
 fi
 
-verifier="$repo_root/scripts/check-push-signatures.sh"
-if [[ ! -f "$verifier" ]]; then
-    echo "ERROR: signed-commit verifier is unavailable at $verifier" >&2
+if ! head_oid=$(PATH=/usr/bin:/bin "$git_binary" rev-parse --verify 'HEAD^{commit}' 2>/dev/null); then
+    echo "ERROR: cannot resolve HEAD for signature verification" >&2
     exit 1
 fi
 
-exec bash "$verifier" "$@"
+if ! tree_entry=$(PATH=/usr/bin:/bin "$git_binary" ls-tree "$head_oid" -- "$verifier_path"); then
+    echo "ERROR: cannot resolve the signed-commit verifier in HEAD" >&2
+    exit 1
+fi
+
+tab=$(printf '\t')
+mode=${tree_entry%% *}
+entry_tail=${tree_entry#* }
+object_type=${entry_tail%% *}
+entry_tail=${entry_tail#* }
+verifier_oid=${entry_tail%%"$tab"*}
+listed_path=${entry_tail#*"$tab"}
+if [ "$mode" != 100755 ] || [ "$object_type" != blob ] ||
+    [ -z "$verifier_oid" ] || [ "$listed_path" != "$verifier_path" ]; then
+    echo "ERROR: signed-commit verifier is not one executable blob in HEAD" >&2
+    exit 1
+fi
+
+if ! verifier_source=$(PATH=/usr/bin:/bin "$git_binary" cat-file blob "$verifier_oid"); then
+    echo "ERROR: cannot read the signed-commit verifier from HEAD" >&2
+    exit 1
+fi
+if [ -z "$verifier_source" ]; then
+    echo "ERROR: signed-commit verifier in HEAD is empty" >&2
+    exit 1
+fi
+
+# Bash privileged mode ignores BASH_ENV, exported functions, SHELLOPTS, and
+# other caller startup controls. The source text above is bound to one blob
+# from one resolved HEAD commit and is not reopened by pathname.
+exec /bin/bash -p -c "$verifier_source" "HEAD:$verifier_path" "$@"

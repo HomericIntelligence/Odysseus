@@ -513,6 +513,7 @@ replacements = {
     ODYSSEUS_TEST_HOOK_DIRECTORY_READY ODYSSEUS_TEST_HOOK_DIRECTORY_RELEASE
     ODYSSEUS_TEST_LINUX_FALLBACK ODYSSEUS_TEST_LINUX_FALLBACK_DIRECTORY
     ODYSSEUS_TEST_LINUX_FALLBACK_DRIVER ODYSSEUS_TEST_LINUX_FALLBACK_MARKER
+    ODYSSEUS_TEST_LINUX_FALLBACK_ERRNO
     ODYSSEUS_TEST_MALFORMED_RECEIPT ODYSSEUS_TEST_PREINSTALL_DRIVER
     ODYSSEUS_TEST_PREINSTALL_MARKER ODYSSEUS_TEST_PUBLICATION_BARRIER
     ODYSSEUS_TEST_PUBLICATION_DRIVER ODYSSEUS_TEST_PUBLICATION_READY
@@ -587,7 +588,9 @@ class LinkAt:
                 or flags != 0x1000
             ):
                 raise SystemExit("unexpected AT_EMPTY_PATH publication")
-            ctypes.set_errno(errno.EPERM)
+            ctypes.set_errno(getattr(errno, os.environ.get(
+                "ODYSSEUS_TEST_LINUX_FALLBACK_ERRNO", "EPERM"
+            )))
             return -1
         expected_source = os.fsencode(f"/proc/self/fd/{fallback_descriptor}")
         if (
@@ -1324,11 +1327,13 @@ fi
 reset_destinations
 
 info "ordinary-user Linux publication falls back without losing descriptor binding"
+for fallback_errno in EPERM EACCES ENOENT; do
 write_valid_inventory
 reset_destinations
 linux_fallback_marker="$fixture_root/linux-fallback.executed"
 linux_fallback_destination="$fixture_repo/.git/modules/control/Alpha/hooks/pre-commit"
 export ODYSSEUS_TEST_LINUX_FALLBACK=1
+export ODYSSEUS_TEST_LINUX_FALLBACK_ERRNO="$fallback_errno"
 export ODYSSEUS_TEST_TARGET_DESTINATION="$linux_fallback_destination"
 export ODYSSEUS_TEST_LINUX_FALLBACK_DRIVER="$fixture_bin/python-linux-fallback-driver.py"
 export ODYSSEUS_TEST_LINUX_FALLBACK_MARKER="$linux_fallback_marker"
@@ -1338,17 +1343,19 @@ linux_fallback_status=$propagator_status
 unset ODYSSEUS_TEST_LINUX_FALLBACK ODYSSEUS_TEST_TARGET_DESTINATION
 unset ODYSSEUS_TEST_LINUX_FALLBACK_DRIVER ODYSSEUS_TEST_LINUX_FALLBACK_MARKER
 unset ODYSSEUS_TEST_LINUX_FALLBACK_DIRECTORY
+unset ODYSSEUS_TEST_LINUX_FALLBACK_ERRNO
 if [ "$linux_fallback_status" -eq 0 ] \
     && [ "$(cat "$linux_fallback_marker" 2>/dev/null)" = 'ordinary-user fallback' ] \
     && cmp -s "$fixture_repo/.githooks/pre-commit" \
         "$fixture_repo/.git/modules/control/Alpha/hooks/pre-commit" \
     && cmp -s "$fixture_repo/.githooks/pre-commit" \
         "$fixture_repo/.git/modules/shared/Beta/hooks/pre-commit"; then
-    pass "EPERM uses the proc-fd fallback and verifies the published inode"
+    pass "$fallback_errno uses the proc-fd fallback and verifies the published inode"
 else
     cat "$fixture_root/stderr" >&2
     fail "AT_EMPTY_PATH privilege failure prevented safe publication"
 fi
+done
 if [ "$(uname -s)" != Linux ] || [ "$(id -u)" -eq 0 ]; then
     printf '%s\n' \
         '[INFO] real unprivileged O_TMPFILE publication remains a Linux CI boundary' >&2
@@ -1477,8 +1484,9 @@ for bounded_mode in hang-status pipe-eof-status flood-status; do
     descendant_stopped=true
     if [ "$bounded_mode" = pipe-eof-status ]; then
         descendant_stopped=false
-        descendant_pid="$(cat "$ODYSSEUS_TEST_DESCENDANT_PID_FILE" \
-            2>/dev/null || :)"
+        descendant_pid=""
+        if ! descendant_pid=$(cat "$ODYSSEUS_TEST_DESCENDANT_PID_FILE" \
+            2>/dev/null); then :; fi
         if [[ "$descendant_pid" =~ ^[0-9]+$ ]]; then
             for _ in $(seq 1 20); do
                 if ! kill -0 "$descendant_pid" 2>/dev/null; then
@@ -1511,7 +1519,8 @@ export ODYSSEUS_TEST_DESCENDANT_PID_FILE ODYSSEUS_TEST_ORDER_MARKER
 rm -f "$ODYSSEUS_TEST_DESCENDANT_PID_FILE" "$ODYSSEUS_TEST_ORDER_MARKER"
 run_propagator success-eof-order --dry-run
 order_descendant_stopped=false
-order_descendant_pid="$(cat "$ODYSSEUS_TEST_DESCENDANT_PID_FILE" 2>/dev/null || :)"
+order_descendant_pid=""
+if ! order_descendant_pid=$(cat "$ODYSSEUS_TEST_DESCENDANT_PID_FILE" 2>/dev/null); then :; fi
 if [[ "$order_descendant_pid" =~ ^[0-9]+$ ]]; then
     for _ in $(seq 1 20); do
         if ! kill -0 "$order_descendant_pid" 2>/dev/null; then
@@ -1521,9 +1530,11 @@ if [[ "$order_descendant_pid" =~ ^[0-9]+$ ]]; then
         sleep 0.05
     done
 fi
+order_marker=""
+if ! order_marker=$(cat "$ODYSSEUS_TEST_ORDER_MARKER" 2>/dev/null); then :; fi
 if [ "$propagator_status" -eq 0 ] \
     && [ "$order_descendant_stopped" = true ] \
-    && [ "$(cat "$ODYSSEUS_TEST_ORDER_MARKER" 2>/dev/null || :)" = reserved ]; then
+    && [ "$order_marker" = reserved ]; then
     pass "the leader PID remains reserved until its process group is extinct"
 else
     fail "the Git leader was reaped before process-group termination"
@@ -1553,7 +1564,8 @@ rm -f "$ODYSSEUS_TEST_DESCENDANT_PID_FILE"
 PROPAGATOR_PATH="$exception_subject" run_propagator exception-cleanup --dry-run
 exception_pid=""
 for _ in $(seq 1 20); do
-    exception_pid="$(cat "$ODYSSEUS_TEST_DESCENDANT_PID_FILE" 2>/dev/null || :)"
+    exception_pid=""
+    if ! exception_pid=$(cat "$ODYSSEUS_TEST_DESCENDANT_PID_FILE" 2>/dev/null); then :; fi
     [[ "$exception_pid" =~ ^[0-9]+$ ]] && break
     sleep 0.05
 done
@@ -1561,7 +1573,7 @@ exception_process_stopped=true
 if [[ "$exception_pid" =~ ^[0-9]+$ ]] \
     && kill -0 "$exception_pid" 2>/dev/null; then
     exception_process_stopped=false
-    /bin/kill -TERM -- "-$exception_pid" 2>/dev/null || :
+    if ! /bin/kill -TERM -- "-$exception_pid" 2>/dev/null; then :; fi
 fi
 if [ "$propagator_status" -ne 0 ] \
     && [ "$exception_process_stopped" = true ]; then

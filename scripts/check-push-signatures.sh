@@ -5,14 +5,38 @@ set -euo pipefail
 ZERO_SHA=0000000000000000000000000000000000000000
 COMMITS_TO_CHECK=()
 SAW_PUSH_REF=false
-REMOTE_NAME="${1:-}"
-REMOTE_LOCATION="${2:-}"
 DESTINATION_TIPS=()
 DESTINATION_SNAPSHOT_LOADED=false
 
+GIT_BINARY=/usr/bin/git
+if [[ "${1:-}" == --odysseus-test-git ]]; then
+    if [[ "${ODYSSEUS_SIGNATURE_TEST_MODE:-}" != 1 ]]; then
+        echo "ERROR: test Git seam is disabled" >&2
+        exit 1
+    fi
+    if [[ "$#" -lt 3 || -z "${2:-}" || "${3:-}" != -- ]]; then
+        echo "ERROR: malformed test Git seam" >&2
+        exit 1
+    fi
+    GIT_BINARY=$2
+    shift 3
+fi
+
+if [[ ! -f "$GIT_BINARY" || ! -x "$GIT_BINARY" ]]; then
+    echo "ERROR: explicit commit-signature policy is required; Git is unavailable" >&2
+    exit 1
+fi
+
+REMOTE_NAME="${1:-}"
+REMOTE_LOCATION="${2:-}"
+
+run_git() {
+    BASH_ENV='' ENV='' PATH=/usr/bin:/bin "$GIT_BINARY" "$@"
+}
+
 default_remote_ref() {
     local resolved
-    if resolved=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null); then
+    if resolved=$(run_git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null); then
         printf '%s\n' "${resolved#refs/remotes/}"
     else
         printf '%s\n' origin/main
@@ -25,7 +49,7 @@ add_range() {
 
 add_revisions() {
     local commits sha known duplicate
-    commits=$(git rev-list "$@")
+    commits=$(run_git rev-list "$@")
     for sha in $commits; do
         duplicate=false
         for known in "${COMMITS_TO_CHECK[@]-}"; do
@@ -49,7 +73,7 @@ load_destination_tips() {
         echo "ERROR: pre-push remote identity is required for a new ref" >&2
         exit 1
     fi
-    if ! listing=$(git ls-remote --refs -- "$REMOTE_LOCATION"); then
+    if ! listing=$(run_git ls-remote --refs -- "$REMOTE_LOCATION"); then
         echo "ERROR: could not snapshot destination refs for $REMOTE_NAME" >&2
         exit 1
     fi
@@ -104,11 +128,11 @@ while IFS=' ' read -r local_ref local_sha remote_ref remote_sha extra; do
 done
 
 if [[ "$SAW_PUSH_REF" != true ]]; then
-    if upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
+    if upstream=$(run_git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
         add_range "$upstream..HEAD"
     else
         default_ref=$(default_remote_ref)
-        if ! base=$(git merge-base HEAD "$default_ref" 2>/dev/null); then
+        if ! base=$(run_git merge-base HEAD "$default_ref" 2>/dev/null); then
             add_revisions HEAD
         else
             add_range "$base..HEAD"
@@ -119,7 +143,7 @@ fi
 failed=()
 for sha in "${COMMITS_TO_CHECK[@]-}"; do
     [[ -n "$sha" ]] || continue
-    if ! status=$(git log -1 --format='%G?' "$sha"); then
+    if ! status=$(run_git log -1 --format='%G?' "$sha"); then
         echo "ERROR: could not verify the signature for commit $sha" >&2
         exit 1
     fi

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+import ctypes
+import errno
 import hashlib
 import hmac
 import io
@@ -20,6 +22,7 @@ import os
 import platform
 import re
 import selectors
+import secrets
 import shutil
 import signal
 import stat
@@ -42,6 +45,7 @@ MAX_PARSER_ARCHIVE_BYTES = 32 * 1024 * 1024
 MAX_PARSER_BINARY_BYTES = 64 * 1024 * 1024
 MAX_PARSER_OUTPUT_BYTES = 256 * 1024
 MAX_CONFIG_BYTES = 1_048_576
+MAX_CERTIFICATE_BYTES = 1_048_576
 TERM_GRACE_SECONDS = 0.5
 KILL_GRACE_SECONDS = 1.0
 _OPEN_TO_CLOSE = {"{": "}", "[": "]", "(": ")"}
@@ -132,6 +136,23 @@ class CommandResult:
     stderr: str
 
 
+def _run_cleanup_actions(
+    *actions: Callable[[], None],
+    pending_primary: BaseException | None = None,
+) -> None:
+    """Attempt every cleanup and keep an active primary failure authoritative."""
+    primary = sys.exc_info()[1] or pending_primary
+    first_cleanup_error: BaseException | None = None
+    for action in actions:
+        try:
+            action()
+        except BaseException as error:
+            if first_cleanup_error is None:
+                first_cleanup_error = error
+    if primary is None and first_cleanup_error is not None:
+        raise first_cleanup_error
+
+
 @dataclass
 class BoundExecutable:
     """One selected executable copied to an owner-private snapshot."""
@@ -144,6 +165,8 @@ class BoundExecutable:
     snapshot_state: os.stat_result
     directory_state: os.stat_result
     digest: bytes
+    parent_descriptor: int = -1
+    snapshot_directory_name: str = ""
     interpreter: BoundExecutable | None = None
 
     @property
@@ -164,16 +187,18 @@ class BoundExecutable:
             )
         descriptor = os.open(
             self.snapshot_name,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
             dir_fd=self.directory_descriptor,
         )
         try:
-            content = bytearray()
-            while True:
-                chunk = os.read(descriptor, 1024 * 1024)
-                if not chunk:
-                    break
-                content.extend(chunk)
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise RuntimeError(
+                    f"private executable snapshot is not regular: {self.name}"
+                )
+            digest, _ = _read_executable_digest(descriptor, self.name)
             current = os.fstat(descriptor)
         finally:
             os.close(descriptor)
@@ -183,24 +208,134 @@ class BoundExecutable:
             or current.st_nlink != 1
             or stat.S_IMODE(current.st_mode) != 0o500
             or not _same_file_state(self.snapshot_state, current)
-            or hashlib.sha256(content).digest() != self.digest
+            or not hmac.compare_digest(digest, self.digest)
         ):
             raise RuntimeError(f"private executable snapshot changed: {self.name}")
         if self.interpreter is not None:
             self.interpreter.verify()
 
     def close(self) -> None:
-        try:
-            os.fchmod(self.directory_descriptor, 0o700)
-            os.unlink(self.snapshot_name, dir_fd=self.directory_descriptor)
-            if _directory_path_matches(
-                self.directory_descriptor, self.snapshot_directory
-            ):
-                os.rmdir(self.snapshot_directory)
-        finally:
-            os.close(self.directory_descriptor)
-            if self.interpreter is not None:
-                self.interpreter.close()
+        def cleanup_snapshot() -> None:
+            _cleanup_private_snapshot(
+                self.directory_descriptor,
+                self.snapshot_directory,
+                self.snapshot_name,
+                self.snapshot_state,
+            )
+
+        def cleanup_snapshot_directory() -> None:
+            if self.parent_descriptor >= 0 and self.snapshot_directory_name:
+                _quarantine_owned_entry(
+                    self.parent_descriptor,
+                    self.snapshot_directory_name,
+                    os.fstat(self.directory_descriptor),
+                    is_directory=True,
+                )
+
+        actions: list[Callable[[], None]] = [
+            cleanup_snapshot,
+            cleanup_snapshot_directory,
+            lambda: os.close(self.directory_descriptor),
+        ]
+        if self.parent_descriptor >= 0:
+            actions.append(lambda: os.close(self.parent_descriptor))
+        if self.interpreter is not None:
+            actions.append(self.interpreter.close)
+        _run_cleanup_actions(*actions)
+
+
+@dataclass
+class BoundConfigInput:
+    """One unlinked, read-only config snapshot inherited by the parser."""
+
+    descriptor: int
+    state: os.stat_result
+    digest: bytes
+    size: int
+    label: str
+    maximum_size: int = MAX_CONFIG_BYTES
+
+    @property
+    def path(self) -> str:
+        return f"/proc/self/fd/{self.descriptor}"
+
+    def verify(self) -> None:
+        current = os.fstat(self.descriptor)
+        if (
+            not stat.S_ISREG(current.st_mode)
+            or current.st_uid != os.geteuid()
+            or current.st_nlink != 0
+            or stat.S_IMODE(current.st_mode) != 0o400
+            or not _same_file_state(self.state, current)
+        ):
+            raise RuntimeError(f"bound config snapshot changed: {self.label}")
+        content = bytearray()
+        offset = 0
+        while len(content) <= self.maximum_size:
+            chunk = os.pread(
+                self.descriptor,
+                min(65_536, self.maximum_size + 1 - len(content)),
+                offset,
+            )
+            if not chunk:
+                break
+            content.extend(chunk)
+            offset += len(chunk)
+        if (
+            len(content) != self.size
+            or len(content) > self.maximum_size
+            or not hmac.compare_digest(
+                hashlib.sha256(content).digest(), self.digest
+            )
+        ):
+            raise RuntimeError(f"bound config snapshot bytes changed: {self.label}")
+
+    def close(self) -> None:
+        os.close(self.descriptor)
+
+
+@dataclass
+class BoundCertificateFiles:
+    """Anonymous certificate fixtures retained through one parser run."""
+
+    certificate: BoundConfigInput
+    key: BoundConfigInput
+    workspace: Path
+    workspace_descriptor: int
+    owns_workspace_descriptor: bool = False
+
+    @property
+    def inputs(self) -> tuple[BoundConfigInput, BoundConfigInput]:
+        return (self.certificate, self.key)
+
+    @property
+    def descriptors(self) -> tuple[int, int]:
+        return (self.certificate.descriptor, self.key.descriptor)
+
+    def __getitem__(self, field: str) -> Path:
+        if field in {"cert_file", "ca_file"}:
+            return Path(self.certificate.path)
+        if field == "key_file":
+            return Path(self.key.path)
+        raise KeyError(field)
+
+    def verify(self) -> None:
+        _verify_private_directory(
+            self.workspace,
+            self.workspace_descriptor,
+            require_empty=True,
+        )
+        for bound in self.inputs:
+            bound.verify()
+
+    def close(self) -> None:
+        actions: list[Callable[[], None]] = [
+            self.certificate.close,
+            self.key.close,
+        ]
+        if self.owns_workspace_descriptor:
+            actions.append(lambda: os.close(self.workspace_descriptor))
+        _run_cleanup_actions(*actions)
 
 
 # Validation toolchain only: this does not select or mutate a deployed broker.
@@ -326,47 +461,11 @@ def _download_deadline(seconds: float) -> Iterator[float]:
 
 
 def _read_config(path: Path) -> str:
-    flags = os.O_RDONLY
-    flags |= getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_NOFOLLOW", 0)
-    flags |= getattr(os, "O_NONBLOCK", 0)
+    source = BoundConfigSource.open(path)
     try:
-        descriptor = os.open(path, flags)
-    except OSError as exc:
-        raise ConfigStructureError(
-            f"{path} must be a readable regular non-symlink file: {exc.strerror}"
-        ) from exc
-    try:
-        file_stat = os.fstat(descriptor)
-        if not stat.S_ISREG(file_stat.st_mode):
-            raise ConfigStructureError(
-                f"{path} must be a readable regular non-symlink file"
-            )
-        if file_stat.st_size > MAX_CONFIG_BYTES:
-            raise ConfigStructureError(
-                f"{path} exceeds the {MAX_CONFIG_BYTES}-byte limit"
-            )
-        content = bytearray()
-        while len(content) <= MAX_CONFIG_BYTES:
-            chunk = os.read(
-                descriptor,
-                min(65_536, MAX_CONFIG_BYTES + 1 - len(content)),
-            )
-            if not chunk:
-                break
-            content.extend(chunk)
-        if len(content) > MAX_CONFIG_BYTES:
-            raise ConfigStructureError(
-                f"{path} exceeds the {MAX_CONFIG_BYTES}-byte limit"
-            )
-    except OSError as exc:
-        raise ConfigStructureError(f"cannot read {path}: {exc}") from exc
+        return source.text
     finally:
-        os.close(descriptor)
-    try:
-        return content.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise ConfigStructureError(f"{path} is not valid UTF-8: {exc}") from exc
+        source.close()
 
 
 def _tokenize(text: str) -> list[Token]:
@@ -467,6 +566,8 @@ def _delimiter_pairs(tokens: Sequence[Token]) -> dict[int, int]:
     pairs: dict[int, int] = {}
     stack: list[int] = []
     for index, token in enumerate(tokens):
+        if token.kind != "symbol":
+            continue
         if token.value in _OPEN_TO_CLOSE:
             stack.append(index)
         elif token.value in _CLOSE_TO_OPEN:
@@ -484,21 +585,22 @@ def _direct_entries(
     while index < end:
         token = tokens[index]
         if token.kind != "atom":
-            if token.value in _OPEN_TO_CLOSE:
+            if token.kind == "symbol" and token.value in _OPEN_TO_CLOSE:
                 index = pairs[index] + 1
             else:
                 index += 1
             continue
 
         value_index = index + 1
-        if value_index < end and tokens[value_index].value in ("=", ":"):
+        if (value_index < end and tokens[value_index].kind == "symbol"
+                and tokens[value_index].value in ("=", ":")):
             value_index += 1
         if value_index >= end:
             index += 1
             continue
 
         value_token = tokens[value_index]
-        if value_token.value in _OPEN_TO_CLOSE:
+        if value_token.kind == "symbol" and value_token.value in _OPEN_TO_CLOSE:
             value_end = pairs[value_index]
             entries.append(
                 Entry(token.value, value_index + 1, value_end, value_token.value)
@@ -879,57 +981,56 @@ def _remote_auth_valid(
     )
 
 
-def _parse_auth_file(path: Path) -> tuple[list[Token], dict[int, int]]:
-    text = _read_config(path)
+def _parse_auth_source(source: BoundConfigSource) -> tuple[list[Token], dict[int, int]]:
+    text = source.text
     if not text.strip():
-        raise ConfigStructureError(f"{path} is empty")
+        raise ConfigStructureError(f"{source.path} is empty")
     tokens = _tokenize(text)
     return tokens, _delimiter_pairs(tokens)
 
 
-def validate_auth(leaf_path: Path, server_path: Path) -> list[str]:
-    """Return authentication contract failures for a leaf and server config."""
-
+def _validate_leaf_auth(
+    leaf_path: Path,
+    leaf_tokens: list[Token],
+    leaf_pairs: dict[int, int],
+) -> list[str]:
     errors: list[str] = []
-    try:
-        leaf_tokens, leaf_pairs = _parse_auth_file(leaf_path)
-    except ConfigStructureError as exc:
-        errors.append(str(exc))
+    root = _direct_entries(leaf_tokens, leaf_pairs, 0, len(leaf_tokens))
+    local_names = _root_scalar_names(root)
+    if _contains_directive(leaf_tokens, "include"):
+        errors.append(f"{leaf_path} contains an uninspected include directive")
+    leafnodes = _named(root, "leafnodes")
+    remotes: list[Entry] = []
+    if len(leafnodes) != 1:
+        errors.append(f"{leaf_path} must have exactly one leafnodes block")
     else:
-        root = _direct_entries(leaf_tokens, leaf_pairs, 0, len(leaf_tokens))
-        local_names = _root_scalar_names(root)
-        if _contains_directive(leaf_tokens, "include"):
-            errors.append(f"{leaf_path} contains an uninspected include directive")
-        leafnodes = _named(root, "leafnodes")
-        remotes: list[Entry] = []
-        if len(leafnodes) != 1:
-            errors.append(f"{leaf_path} must have exactly one leafnodes block")
-        else:
-            leaf_fields = _scope_entries(leaf_tokens, leaf_pairs, leafnodes[0])
-            remotes_entries = _named(leaf_fields, "remotes")
-            if len(remotes_entries) == 1:
-                remotes = _remote_maps(leaf_tokens, leaf_pairs, remotes_entries[0])
-        if len(leafnodes) == 1 and not remotes:
-            errors.append(f"{leaf_path} has no leafnode remotes")
-        elif remotes and not all(
-            _remote_auth_valid(
-                leaf_tokens,
-                leaf_pairs,
-                remote,
-                local_names=local_names,
-            )
-            for remote in remotes
-        ):
-            errors.append(
-                f"{leaf_path} has an ambiguous, unsupported, or unauthenticated remote"
-            )
+        leaf_fields = _scope_entries(leaf_tokens, leaf_pairs, leafnodes[0])
+        remotes_entries = _named(leaf_fields, "remotes")
+        if len(remotes_entries) == 1:
+            remotes = _remote_maps(leaf_tokens, leaf_pairs, remotes_entries[0])
+    if len(leafnodes) == 1 and not remotes:
+        errors.append(f"{leaf_path} has no leafnode remotes")
+    elif remotes and not all(
+        _remote_auth_valid(
+            leaf_tokens,
+            leaf_pairs,
+            remote,
+            local_names=local_names,
+        )
+        for remote in remotes
+    ):
+        errors.append(
+            f"{leaf_path} has an ambiguous, unsupported, or unauthenticated remote"
+        )
+    return errors
 
-    try:
-        server_tokens, server_pairs = _parse_auth_file(server_path)
-    except ConfigStructureError as exc:
-        errors.append(str(exc))
-        return errors
 
+def _validate_server_auth(
+    server_path: Path,
+    server_tokens: list[Token],
+    server_pairs: dict[int, int],
+) -> list[str]:
+    errors: list[str] = []
     root = _direct_entries(server_tokens, server_pairs, 0, len(server_tokens))
     local_names = _root_scalar_names(root)
     if _contains_directive(server_tokens, "include"):
@@ -1012,8 +1113,171 @@ def validate_auth(leaf_path: Path, server_path: Path) -> list[str]:
     return errors
 
 
+def validate_auth(leaf_path: Path, server_path: Path) -> list[str]:
+    """Return authentication failures after exact-source revalidation."""
+
+    errors: list[str] = []
+    sources: list[BoundConfigSource] = []
+    try:
+        try:
+            leaf_source = BoundConfigSource.open(leaf_path)
+            sources.append(leaf_source)
+            leaf_tokens, leaf_pairs = _parse_auth_source(leaf_source)
+        except ConfigStructureError as exc:
+            errors.append(str(exc))
+        else:
+            errors.extend(_validate_leaf_auth(leaf_path, leaf_tokens, leaf_pairs))
+
+        try:
+            server_source = BoundConfigSource.open(server_path)
+            sources.append(server_source)
+            server_tokens, server_pairs = _parse_auth_source(server_source)
+        except ConfigStructureError as exc:
+            errors.append(str(exc))
+        else:
+            errors.extend(
+                _validate_server_auth(server_path, server_tokens, server_pairs)
+            )
+
+        for source in sources:
+            try:
+                source.verify()
+            except ConfigStructureError as exc:
+                errors.append(str(exc))
+        return errors
+    finally:
+        _run_cleanup_actions(*(source.close for source in reversed(sources)))
+
+
 def _same_object(left: os.stat_result, right: os.stat_result) -> bool:
     return left.st_dev == right.st_dev and left.st_ino == right.st_ino
+
+
+def _rename_noreplace(directory: int, source: str, destination: str) -> None:
+    """Atomically rename one direct entry without replacing another entry."""
+    library = ctypes.CDLL(None, use_errno=True)
+    source_bytes = os.fsencode(source)
+    destination_bytes = os.fsencode(destination)
+    if sys.platform.startswith("linux") and hasattr(library, "renameat2"):
+        operation = library.renameat2
+        operation.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        operation.restype = ctypes.c_int
+        result = operation(
+            directory,
+            source_bytes,
+            directory,
+            destination_bytes,
+            1,
+        )
+    elif hasattr(library, "renameatx_np"):
+        operation = library.renameatx_np
+        operation.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        operation.restype = ctypes.c_int
+        result = operation(
+            directory,
+            source_bytes,
+            directory,
+            destination_bytes,
+            0x00000004,
+        )
+    else:
+        raise RuntimeError("atomic no-replace cleanup is unavailable")
+    if result != 0:
+        number = ctypes.get_errno()
+        raise OSError(number, os.strerror(number), source)
+
+
+def _restore_quarantined_entry(
+    directory: int,
+    quarantine: str,
+    original: str,
+) -> None:
+    """Restore an entry moved before its identity could be established."""
+    try:
+        _rename_noreplace(directory, quarantine, original)
+    except FileExistsError:
+        return
+    os.fsync(directory)
+
+
+def _quarantine_owned_entry(
+    directory: int,
+    name: str,
+    expected: os.stat_result,
+    *,
+    is_directory: bool = False,
+) -> bool:
+    """Atomically isolate and delete only the exact expected direct entry."""
+    quarantine = ".odysseus-cleanup-" + secrets.token_hex(16)
+    try:
+        _rename_noreplace(directory, name, quarantine)
+    except FileNotFoundError:
+        return False
+    moved = os.stat(quarantine, dir_fd=directory, follow_symlinks=False)
+    if not _same_object(expected, moved):
+        _restore_quarantined_entry(directory, quarantine, name)
+        return False
+    try:
+        if is_directory:
+            flags = (
+                os.O_RDONLY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            descriptor = os.open(quarantine, flags, dir_fd=directory)
+            try:
+                opened = os.fstat(descriptor)
+                if (
+                    not stat.S_ISDIR(opened.st_mode)
+                    or not _same_object(expected, opened)
+                    or os.listdir(descriptor)
+                ):
+                    _restore_quarantined_entry(directory, quarantine, name)
+                    return False
+                os.rmdir(quarantine, dir_fd=directory)
+            except BaseException:
+                try:
+                    _restore_quarantined_entry(directory, quarantine, name)
+                finally:
+                    try:
+                        os.close(descriptor)
+                    except BaseException:
+                        pass
+                raise
+            else:
+                os.close(descriptor)
+        else:
+            terminal = os.stat(quarantine, dir_fd=directory, follow_symlinks=False)
+            if (
+                not stat.S_ISREG(terminal.st_mode)
+                or not _same_object(expected, terminal)
+                or terminal.st_uid != os.geteuid()
+                or terminal.st_nlink != 1
+            ):
+                _restore_quarantined_entry(directory, quarantine, name)
+                return False
+            os.unlink(quarantine, dir_fd=directory)
+        os.fsync(directory)
+        return True
+    except BaseException:
+        try:
+            _restore_quarantined_entry(directory, quarantine, name)
+        except (FileExistsError, FileNotFoundError):
+            pass
+        raise
 
 
 def _same_file_state(left: os.stat_result, right: os.stat_result) -> bool:
@@ -1031,6 +1295,322 @@ def _same_file_state(left: os.stat_result, right: os.stat_result) -> bool:
     return all(getattr(left, field) == getattr(right, field) for field in fields)
 
 
+def _same_directory_state(left: os.stat_result, right: os.stat_result) -> bool:
+    """Compare security-relevant directory identity without volatile contents."""
+    fields = ("st_dev", "st_ino", "st_uid", "st_gid", "st_mode")
+    return all(getattr(left, field) == getattr(right, field) for field in fields)
+
+
+@dataclass(frozen=True)
+class _ConfigDirectoryLink:
+    parent_descriptor: int
+    name: str
+    child_descriptor: int
+    state: os.stat_result
+
+
+@dataclass(frozen=True)
+class _ConfigLexicalLink:
+    path: Path
+    state: os.stat_result
+
+
+@dataclass
+class BoundConfigSource:
+    """One exact config and its retained lexical directory route."""
+
+    path: Path
+    descriptor: int
+    state: os.stat_result
+    content: bytes
+    directory_descriptors: list[int]
+    links: list[_ConfigDirectoryLink]
+    lexical_links: list[_ConfigLexicalLink]
+    root_state: os.stat_result
+
+    @classmethod
+    def open(cls, path: Path) -> BoundConfigSource:
+        required = ("O_CLOEXEC", "O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK")
+        missing = [name for name in required if not hasattr(os, name)]
+        if missing:
+            raise ConfigStructureError(
+                "safe NATS config opening is unavailable: " + ", ".join(missing)
+            )
+        requested = Path(os.path.abspath(path))
+        if not requested.name or requested.name in {".", ".."}:
+            raise ConfigStructureError(f"{path} has an invalid file name")
+        try:
+            lexical_links: list[_ConfigLexicalLink] = []
+            lexical_path = Path(os.path.sep)
+            for component in requested.parent.parts[1:]:
+                lexical_path /= component
+                link_state = os.lstat(lexical_path)
+                if not (
+                    stat.S_ISDIR(link_state.st_mode)
+                    or stat.S_ISLNK(link_state.st_mode)
+                ):
+                    raise ConfigStructureError(
+                        f"{path} has a non-directory parent route component"
+                    )
+                lexical_links.append(
+                    _ConfigLexicalLink(lexical_path, link_state)
+                )
+            absolute = requested.parent.resolve(strict=True) / requested.name
+        except OSError as error:
+            raise ConfigStructureError(
+                f"{path} has an unavailable parent route: {error}"
+            ) from error
+        directory_flags = (
+            os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+        )
+        file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
+        directories: list[int] = []
+        links: list[_ConfigDirectoryLink] = []
+        descriptor = -1
+        try:
+            current = os.open(os.path.sep, directory_flags)
+            directories.append(current)
+            root_state = os.fstat(current)
+            if not stat.S_ISDIR(root_state.st_mode):
+                raise ConfigStructureError("the filesystem root is not a directory")
+            for component in absolute.parent.parts[1:]:
+                child = os.open(component, directory_flags, dir_fd=current)
+                child_state = os.fstat(child)
+                if not stat.S_ISDIR(child_state.st_mode):
+                    os.close(child)
+                    raise ConfigStructureError(
+                        f"{path} has a non-directory route component"
+                    )
+                links.append(
+                    _ConfigDirectoryLink(
+                        current,
+                        component,
+                        child,
+                        child_state,
+                    )
+                )
+                directories.append(child)
+                current = child
+            descriptor = os.open(absolute.name, file_flags, dir_fd=current)
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_uid != os.geteuid()
+                or opened.st_nlink != 1
+            ):
+                raise ConfigStructureError(
+                    f"{path} must be an owner-bound singly linked regular "
+                    "non-symlink file"
+                )
+            if opened.st_size > MAX_CONFIG_BYTES:
+                raise ConfigStructureError(
+                    f"{path} exceeds the {MAX_CONFIG_BYTES}-byte limit"
+                )
+            content = bytearray()
+            while len(content) <= MAX_CONFIG_BYTES:
+                chunk = os.read(
+                    descriptor,
+                    min(65_536, MAX_CONFIG_BYTES + 1 - len(content)),
+                )
+                if not chunk:
+                    break
+                content.extend(chunk)
+            if len(content) > MAX_CONFIG_BYTES:
+                raise ConfigStructureError(
+                    f"{path} exceeds the {MAX_CONFIG_BYTES}-byte limit"
+                )
+            after = os.fstat(descriptor)
+            named = os.stat(
+                absolute.name,
+                dir_fd=current,
+                follow_symlinks=False,
+            )
+            if (
+                not stat.S_ISREG(named.st_mode)
+                or named.st_uid != os.geteuid()
+                or named.st_nlink != 1
+                or not _same_file_state(opened, after)
+                or not _same_file_state(after, named)
+            ):
+                raise ConfigStructureError(f"{path} changed while it was read")
+            bound = cls(
+                path=requested,
+                descriptor=descriptor,
+                state=after,
+                content=bytes(content),
+                directory_descriptors=directories,
+                links=links,
+                lexical_links=lexical_links,
+                root_state=root_state,
+            )
+            bound.verify()
+            descriptor = -1
+            directories = []
+            return bound
+        except ConfigStructureError:
+            raise
+        except OSError as error:
+            raise ConfigStructureError(
+                f"{path} must be a readable regular non-symlink file: {error}"
+            ) from error
+        finally:
+            actions: list[Callable[[], None]] = []
+            if descriptor >= 0:
+                actions.append(lambda: os.close(descriptor))
+            actions.extend(
+                lambda item=item: os.close(item) for item in reversed(directories)
+            )
+            _run_cleanup_actions(*actions)
+
+    @property
+    def text(self) -> str:
+        try:
+            return self.content.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ConfigStructureError(
+                f"{self.path} is not valid UTF-8: {error}"
+            ) from error
+
+    def verify(self) -> None:
+        """Revalidate the descriptor, bytes, dentry, and lexical parent route."""
+        try:
+            parent = self.directory_descriptors[-1]
+
+            def read_content() -> bytes:
+                observed = bytearray()
+                offset = 0
+                while len(observed) <= MAX_CONFIG_BYTES:
+                    chunk = os.pread(
+                        self.descriptor,
+                        min(65_536, MAX_CONFIG_BYTES + 1 - len(observed)),
+                        offset,
+                    )
+                    if not chunk:
+                        break
+                    observed.extend(chunk)
+                    offset += len(chunk)
+                if len(observed) > MAX_CONFIG_BYTES:
+                    raise ConfigStructureError(
+                        f"{self.path} changed during validation"
+                    )
+                return bytes(observed)
+
+            def verify_route() -> None:
+                if not _same_directory_state(
+                    self.root_state,
+                    os.fstat(self.directory_descriptors[0]),
+                ):
+                    raise ConfigStructureError(
+                        f"{self.path} parent route changed during validation"
+                    )
+                for link in self.lexical_links:
+                    direct = os.lstat(link.path)
+                    if not _same_directory_state(link.state, direct):
+                        raise ConfigStructureError(
+                            f"{self.path} parent route changed during validation"
+                        )
+                for link in self.links:
+                    direct = os.stat(
+                        link.name,
+                        dir_fd=link.parent_descriptor,
+                        follow_symlinks=False,
+                    )
+                    opened = os.fstat(link.child_descriptor)
+                    if (
+                        not stat.S_ISDIR(direct.st_mode)
+                        or not _same_directory_state(link.state, direct)
+                        or not _same_directory_state(link.state, opened)
+                    ):
+                        raise ConfigStructureError(
+                            f"{self.path} parent route changed during validation"
+                        )
+
+            current = os.fstat(self.descriptor)
+            named = os.stat(
+                self.path.name,
+                dir_fd=parent,
+                follow_symlinks=False,
+            )
+            first_observation = read_content()
+            after_first_read = os.fstat(self.descriptor)
+            second_observation = read_content()
+            after_second_read = os.fstat(self.descriptor)
+            final_named = os.stat(
+                self.path.name,
+                dir_fd=parent,
+                follow_symlinks=False,
+            )
+            if (
+                not stat.S_ISREG(current.st_mode)
+                or current.st_uid != os.geteuid()
+                or current.st_nlink != 1
+                or not _same_file_state(self.state, current)
+                or not _same_file_state(current, named)
+                or not _same_file_state(current, after_first_read)
+                or not _same_file_state(after_first_read, after_second_read)
+                or not _same_file_state(after_second_read, final_named)
+                or not hmac.compare_digest(first_observation, self.content)
+                or not hmac.compare_digest(second_observation, self.content)
+            ):
+                raise ConfigStructureError(
+                    f"{self.path} changed during validation"
+                )
+            verify_route()
+            terminal = os.fstat(self.descriptor)
+            terminal_named = os.stat(
+                self.path.name,
+                dir_fd=parent,
+                follow_symlinks=False,
+            )
+            if (
+                not _same_file_state(after_second_read, terminal)
+                or not _same_file_state(terminal, terminal_named)
+            ):
+                raise ConfigStructureError(
+                    f"{self.path} changed during validation"
+                )
+            verify_route()
+        except ConfigStructureError:
+            raise
+        except OSError as error:
+            raise ConfigStructureError(
+                f"{self.path} changed during validation: {error}"
+            ) from error
+
+    def close(self) -> None:
+        actions: list[Callable[[], None]] = []
+        if self.descriptor >= 0:
+            descriptor = self.descriptor
+            self.descriptor = -1
+            actions.append(lambda: os.close(descriptor))
+        directories = list(reversed(self.directory_descriptors))
+        self.directory_descriptors.clear()
+        self.links.clear()
+        self.lexical_links.clear()
+        actions.extend(lambda item=item: os.close(item) for item in directories)
+        _run_cleanup_actions(*actions)
+
+
+def _read_executable_digest(descriptor: int, label: str) -> tuple[bytes, int]:
+    """Hash one executable stream without reading beyond its byte ceiling."""
+    digest = hashlib.sha256()
+    total = 0
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    while total <= MAX_PARSER_BINARY_BYTES:
+        chunk = os.read(
+            descriptor,
+            min(1024 * 1024, MAX_PARSER_BINARY_BYTES + 1 - total),
+        )
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_PARSER_BINARY_BYTES:
+            raise RuntimeError(f"{label} exceeds the executable size limit")
+        digest.update(chunk)
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    return digest.digest(), total
+
+
 def _directory_path_matches(descriptor: int, path: str | Path) -> bool:
     try:
         current = os.stat(path, follow_symlinks=False)
@@ -1038,6 +1618,32 @@ def _directory_path_matches(descriptor: int, path: str | Path) -> bool:
         return False
     return stat.S_ISDIR(current.st_mode) and _same_object(
         current, os.fstat(descriptor)
+    )
+
+
+def _cleanup_private_snapshot(
+    directory: int,
+    path: str | Path,
+    name: str,
+    created: os.stat_result | None,
+    *,
+    parent_descriptor: int = -1,
+    directory_name: str = "",
+    directory_state: os.stat_result | None = None,
+) -> None:
+    """Remove owned snapshot entries without deleting replacement objects."""
+    del path
+
+    def restore_directory_mode() -> None:
+        os.fchmod(directory, 0o700)
+
+    def remove_owned_leaf() -> None:
+        if created is not None:
+            _quarantine_owned_entry(directory, name, created)
+
+    _run_cleanup_actions(
+        restore_directory_mode,
+        remove_owned_leaf,
     )
 
 
@@ -1104,11 +1710,21 @@ def _bind_executable(
     expected_sha256: str | None = None,
 ) -> BoundExecutable:
     """Copy one stable executable selection to a private snapshot."""
-    selected = str(path)
-    before = os.stat(selected, follow_symlinks=True)
-    source = os.open(selected, os.O_RDONLY)
+    selected = os.fspath(path)
+    before = os.stat(selected, follow_symlinks=False)
+    source = os.open(
+        selected,
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0),
+    )
     snapshot_directory = ""
+    snapshot_directory_name = ""
+    parent_descriptor = -1
     directory_descriptor = -1
+    snapshot_name = "executable"
+    snapshot_state: os.stat_result | None = None
     interpreter: BoundExecutable | None = None
     try:
         opened = os.fstat(source)
@@ -1153,19 +1769,40 @@ def _bind_executable(
                 )
             interpreter = candidate_interpreter
 
-        snapshot_directory = tempfile.mkdtemp(prefix=f"odysseus-{name}-")
-        os.chmod(snapshot_directory, 0o700)
-        directory_descriptor = os.open(
-            snapshot_directory,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        snapshot_directory = os.path.abspath(
+            tempfile.mkdtemp(prefix=f"odysseus-{name}-")
         )
-        snapshot_name = "executable"
+        snapshot_directory_name = os.path.basename(snapshot_directory)
+        os.chmod(snapshot_directory, 0o700)
+        parent_descriptor = os.open(
+            os.path.dirname(snapshot_directory),
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        directory_descriptor = os.open(
+            snapshot_directory_name,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent_descriptor,
+        )
+        direct_directory = os.stat(
+            snapshot_directory_name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if not _same_object(direct_directory, os.fstat(directory_descriptor)):
+            raise RuntimeError(f"private executable directory changed: {name}")
         snapshot = os.open(
             snapshot_name,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
             0o400,
             dir_fd=directory_descriptor,
         )
+        snapshot_state = os.fstat(snapshot)
         source_digest = hashlib.sha256()
         size = 0
         try:
@@ -1219,23 +1856,28 @@ def _bind_executable(
         os.chmod(snapshot_path, 0o500)
         snapshot_reader = os.open(
             snapshot_name,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
             dir_fd=directory_descriptor,
         )
-        snapshot_digest = hashlib.sha256()
         try:
-            while True:
-                chunk = os.read(snapshot_reader, 1024 * 1024)
-                if not chunk:
-                    break
-                snapshot_digest.update(chunk)
+            if not stat.S_ISREG(os.fstat(snapshot_reader).st_mode):
+                raise RuntimeError(
+                    f"private executable snapshot is not regular: {name}"
+                )
+            snapshot_digest, _ = _read_executable_digest(
+                snapshot_reader,
+                f"private {name} snapshot",
+            )
             snapshot_state = os.fstat(snapshot_reader)
         finally:
             os.close(snapshot_reader)
         if (
             not snapshot_signed
             and not hmac.compare_digest(
-                source_digest.digest(), snapshot_digest.digest()
+                source_digest.digest(), snapshot_digest
             )
         ):
             raise RuntimeError(f"private executable snapshot differs: {name}")
@@ -1248,35 +1890,53 @@ def _bind_executable(
             snapshot_name=snapshot_name,
             snapshot_state=snapshot_state,
             directory_state=os.fstat(directory_descriptor),
-            digest=snapshot_digest.digest(),
+            digest=snapshot_digest,
+            parent_descriptor=parent_descriptor,
+            snapshot_directory_name=snapshot_directory_name,
             interpreter=interpreter,
         )
         bound.verify()
+        parent_descriptor = -1
         directory_descriptor = -1
         snapshot_directory = ""
         interpreter = None
         return bound
     finally:
-        os.close(source)
+        actions: list[Callable[[], None]] = [lambda: os.close(source)]
         if directory_descriptor >= 0:
-            os.fchmod(directory_descriptor, 0o700)
-            try:
-                os.unlink("executable", dir_fd=directory_descriptor)
-            except FileNotFoundError:
-                pass
-            os.close(directory_descriptor)
-        if snapshot_directory:
-            try:
-                os.rmdir(snapshot_directory)
-            except FileNotFoundError:
-                pass
+            def cleanup_snapshot_directory() -> None:
+                if parent_descriptor >= 0 and snapshot_directory_name:
+                    _quarantine_owned_entry(
+                        parent_descriptor,
+                        snapshot_directory_name,
+                        os.fstat(directory_descriptor),
+                        is_directory=True,
+                    )
+
+            actions.extend(
+                (
+                    lambda: _cleanup_private_snapshot(
+                        directory_descriptor,
+                        snapshot_directory,
+                        snapshot_name,
+                        snapshot_state,
+                    ),
+                    cleanup_snapshot_directory,
+                    lambda: os.close(directory_descriptor),
+                )
+            )
+        if parent_descriptor >= 0:
+            actions.append(lambda: os.close(parent_descriptor))
         if interpreter is not None:
-            interpreter.close()
+            actions.append(interpreter.close)
+        _run_cleanup_actions(*actions)
 
 
 def _popen_bound(
     executable: BoundExecutable,
     arguments: Sequence[str],
+    *,
+    deadline: float | None = None,
     **kwargs: object,
 ) -> subprocess.Popen[bytes]:
     """Execute through already-open objects, never the snapshot pathname."""
@@ -1288,31 +1948,50 @@ def _popen_bound(
     launch = executable.interpreter or executable
     launch_descriptor = os.open(
         launch.snapshot_name,
-        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0),
         dir_fd=launch.directory_descriptor,
     )
     try:
+        if not stat.S_ISREG(os.fstat(launch_descriptor).st_mode):
+            raise RuntimeError(
+                f"newly opened executable is not regular: {launch.name}"
+            )
         _verify_open_executable(launch, launch_descriptor)
         command = [executable.name]
         inherited = [launch_descriptor, launch.directory_descriptor]
         if executable.interpreter is not None:
             script_descriptor = os.open(
                 executable.snapshot_name,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
                 dir_fd=executable.directory_descriptor,
             )
+            if not stat.S_ISREG(os.fstat(script_descriptor).st_mode):
+                raise RuntimeError(
+                    f"newly opened script is not regular: {executable.name}"
+                )
             _verify_open_executable(executable, script_descriptor)
             inherited.append(script_descriptor)
             command.append(f"/dev/fd/{script_descriptor}")
         command.extend(arguments)
         environment = dict(kwargs.pop("env"))
+        config_descriptors = tuple(kwargs.pop("pass_fds", ()))
         environment["PATH"] = os.defpath
         launch_path = f"/proc/self/fd/{launch_descriptor}"
+        if deadline is not None and time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"{executable.name} validation deadline expired before launch"
+            )
         return subprocess.Popen(
             command,
             executable=launch_path,
             env=environment,
-            pass_fds=tuple(inherited),
+            pass_fds=tuple(dict.fromkeys((*inherited, *config_descriptors))),
             preexec_fn=None,
             **kwargs,
         )
@@ -1327,22 +2006,15 @@ def _verify_open_executable(
     descriptor: int,
 ) -> None:
     """Verify the exact newly opened inode that will reach exec or an interpreter."""
-    content = bytearray()
-    os.lseek(descriptor, 0, os.SEEK_SET)
-    while True:
-        chunk = os.read(descriptor, 1024 * 1024)
-        if not chunk:
-            break
-        content.extend(chunk)
+    digest, _ = _read_executable_digest(descriptor, executable.name)
     current = os.fstat(descriptor)
-    os.lseek(descriptor, 0, os.SEEK_SET)
     if (
         not stat.S_ISREG(current.st_mode)
         or current.st_uid != os.geteuid()
         or current.st_nlink != 1
         or stat.S_IMODE(current.st_mode) != 0o500
         or not _same_file_state(executable.snapshot_state, current)
-        or hashlib.sha256(content).digest() != executable.digest
+        or not hmac.compare_digest(digest, executable.digest)
     ):
         raise RuntimeError(
             f"newly opened executable snapshot changed: {executable.name}"
@@ -1395,15 +2067,257 @@ def _terminate_process_group(process: subprocess.Popen[bytes]) -> bool:
     return extinct and not _process_group_exists(process.pid)
 
 
-def _verify_private_directory(path: Path, descriptor: int) -> None:
+def _verify_private_directory(
+    path: Path,
+    descriptor: int,
+    *,
+    require_empty: bool = False,
+) -> None:
     current = os.fstat(descriptor)
     if (
         not stat.S_ISDIR(current.st_mode)
         or current.st_uid != os.geteuid()
         or stat.S_IMODE(current.st_mode) != 0o700
         or not _directory_path_matches(descriptor, path)
+        or (require_empty and bool(os.listdir(descriptor)))
     ):
         raise RuntimeError(f"private child-process workspace changed: {path}")
+
+
+def _new_anonymous_file(label: str, workspace_descriptor: int) -> int:
+    """Create one Linux anonymous file for parser-owned fixture bytes."""
+    if not sys.platform.startswith("linux"):
+        raise RuntimeError(
+            "Linux anonymous file descriptors are required for NATS fixtures"
+        )
+    descriptor = -1
+    tmpfile_error: OSError | None = None
+    if hasattr(os, "O_TMPFILE"):
+        try:
+            descriptor = os.open(
+                ".",
+                os.O_TMPFILE
+                | os.O_RDWR
+                | getattr(os, "O_CLOEXEC", 0),
+                0o600,
+                dir_fd=workspace_descriptor,
+            )
+        except OSError as exc:
+            tmpfile_error = exc
+    if descriptor < 0:
+        if not hasattr(os, "memfd_create"):
+            raise RuntimeError(
+                "Linux anonymous file descriptors are required for NATS fixtures"
+            ) from tmpfile_error
+        try:
+            descriptor = os.memfd_create(
+                f"odysseus-nats-{label}",
+                getattr(os, "MFD_CLOEXEC", 0),
+            )
+        except OSError as exc:
+            raise RuntimeError(
+                f"could not create anonymous parser fixture: {label}"
+            ) from exc
+    os.fchmod(descriptor, 0o600)
+    created = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(created.st_mode)
+        or created.st_uid != os.geteuid()
+        or created.st_nlink != 0
+    ):
+        os.close(descriptor)
+        raise RuntimeError(f"anonymous parser fixture is unsafe: {label}")
+    return descriptor
+
+
+def _read_only_descriptor_path(descriptor: int) -> str:
+    if sys.platform.startswith("linux"):
+        return f"/proc/self/fd/{descriptor}"
+    return f"/dev/fd/{descriptor}"
+
+
+def _bind_anonymous_input(
+    writer: int,
+    label: str,
+    *,
+    maximum_size: int,
+    require_nonempty: bool,
+) -> BoundConfigInput:
+    """Freeze one anonymous writer and retain the exact object read-only."""
+    os.fchmod(writer, 0o400)
+    os.fsync(writer)
+    reader = os.open(_read_only_descriptor_path(writer), os.O_RDONLY)
+    try:
+        writer_state = os.fstat(writer)
+        reader_state = os.fstat(reader)
+        if (
+            not stat.S_ISREG(reader_state.st_mode)
+            or reader_state.st_uid != os.geteuid()
+            or reader_state.st_nlink != 0
+            or stat.S_IMODE(reader_state.st_mode) != 0o400
+            or not _same_file_state(writer_state, reader_state)
+            or reader_state.st_size > maximum_size
+            or (require_nonempty and reader_state.st_size == 0)
+        ):
+            raise RuntimeError(f"anonymous parser fixture is unsafe: {label}")
+        content = bytearray()
+        offset = 0
+        while len(content) <= maximum_size:
+            chunk = os.pread(
+                reader,
+                min(65_536, maximum_size + 1 - len(content)),
+                offset,
+            )
+            if not chunk:
+                break
+            content.extend(chunk)
+            offset += len(chunk)
+        after = os.fstat(reader)
+        if (
+            len(content) > maximum_size
+            or not _same_file_state(reader_state, after)
+        ):
+            raise RuntimeError(f"anonymous parser fixture changed: {label}")
+        bound = BoundConfigInput(
+            descriptor=reader,
+            state=after,
+            digest=hashlib.sha256(content).digest(),
+            size=len(content),
+            label=label,
+            maximum_size=maximum_size,
+        )
+        reader = -1
+        bound.verify()
+        return bound
+    finally:
+        if reader >= 0:
+            os.close(reader)
+
+
+@contextmanager
+def _bound_config_input(
+    workspace: Path,
+    content: bytes,
+    label: str,
+    workspace_descriptor: int | None = None,
+) -> Iterator[BoundConfigInput]:
+    """Create an unlinked read-only snapshot for one parser invocation."""
+    if len(content) > MAX_CONFIG_BYTES:
+        raise RuntimeError(
+            f"parser input exceeds the {MAX_CONFIG_BYTES}-byte limit: {label}"
+        )
+    directory = (
+        os.dup(workspace_descriptor)
+        if workspace_descriptor is not None
+        else os.open(
+            workspace,
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+    )
+    writer = -1
+    reader = -1
+    name = ""
+    created: os.stat_result | None = None
+    linked = False
+    bound: BoundConfigInput | None = None
+    try:
+        _verify_private_directory(workspace, directory, require_empty=True)
+        for _ in range(16):
+            name = ".odysseus-nats-input-" + secrets.token_hex(16)
+            try:
+                writer = os.open(
+                    name,
+                    os.O_WRONLY
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | getattr(os, "O_NOFOLLOW", 0),
+                    0o600,
+                    dir_fd=directory,
+                )
+                linked = True
+                break
+            except FileExistsError:
+                continue
+        if writer < 0:
+            raise RuntimeError("could not allocate a private config snapshot")
+        created = os.fstat(writer)
+        if (
+            not stat.S_ISREG(created.st_mode)
+            or created.st_uid != os.geteuid()
+            or created.st_nlink != 1
+        ):
+            raise RuntimeError(f"config snapshot identity is unsafe: {label}")
+        offset = 0
+        while offset < len(content):
+            written = os.write(writer, content[offset:])
+            if written <= 0:
+                raise OSError("short write while snapshotting parser input")
+            offset += written
+        os.fchmod(writer, 0o400)
+        os.fsync(writer)
+        written_state = os.fstat(writer)
+        reader = os.open(
+            name,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=directory,
+        )
+        opened_state = os.fstat(reader)
+        if not stat.S_ISREG(opened_state.st_mode):
+            raise RuntimeError(f"config snapshot is not regular: {label}")
+        named_state = os.stat(name, dir_fd=directory, follow_symlinks=False)
+        if (
+            not _same_file_state(written_state, opened_state)
+            or not _same_file_state(opened_state, named_state)
+        ):
+            raise RuntimeError(f"config snapshot changed while opening: {label}")
+        if not _quarantine_owned_entry(directory, name, opened_state):
+            raise RuntimeError(f"config snapshot changed while opening: {label}")
+        linked = False
+        os.fsync(directory)
+        os.close(writer)
+        writer = -1
+        state = os.fstat(reader)
+        bound = BoundConfigInput(
+            descriptor=reader,
+            state=state,
+            digest=hashlib.sha256(content).digest(),
+            size=len(content),
+            label=label,
+        )
+        reader = -1
+        bound.verify()
+        _verify_private_directory(workspace, directory, require_empty=True)
+        yield bound
+        bound.verify()
+        _verify_private_directory(workspace, directory, require_empty=True)
+    finally:
+        actions: list[Callable[[], None]] = []
+        if bound is not None:
+            actions.append(bound.close)
+        if reader >= 0:
+            actions.append(lambda: os.close(reader))
+        if writer >= 0:
+            actions.append(lambda: os.close(writer))
+        if linked and created is not None:
+
+            def remove_linked_snapshot() -> None:
+                if _quarantine_owned_entry(directory, name, created):
+                    os.fsync(directory)
+
+            def remove_if_present() -> None:
+                try:
+                    remove_linked_snapshot()
+                except FileNotFoundError:
+                    return
+
+            actions.append(remove_if_present)
+        actions.append(lambda: os.close(directory))
+        _run_cleanup_actions(*actions)
 
 
 def _run_supervised(
@@ -1413,35 +2327,56 @@ def _run_supervised(
     environment: dict[str, str],
     workspace: Path,
     boundary: Callable[[], None],
+    workspace_descriptor: int | None = None,
+    pass_fds: Sequence[int] = (),
+    deadline: float | None = None,
 ) -> CommandResult:
     """Run one snapshot with bounded output, time, and descendants."""
+    if deadline is None:
+        deadline = time.monotonic() + PARSER_TIMEOUT_SECONDS
+    if time.monotonic() >= deadline:
+        raise RuntimeError(
+            f"{executable.name} validation deadline expired before launch"
+        )
     executable.verify()
     process: subprocess.Popen[bytes] | None = None
     stream_selector = selectors.DefaultSelector()
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     failure: str | None = None
     try:
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"{executable.name} validation deadline expired before launch"
+            )
+        boundary()
+        child_environment = dict(environment)
+        child_workspace: Path | str = workspace
+        inherited = tuple(pass_fds)
+        if workspace_descriptor is not None:
+            child_workspace = f"/proc/self/fd/{workspace_descriptor}"
+            child_environment["HOME"] = child_workspace
+            inherited = (*inherited, workspace_descriptor)
         process = _popen_bound(
             executable,
             arguments,
+            deadline=deadline,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env=environment,
-            cwd=workspace,
+            env=child_environment,
+            cwd=child_workspace,
             start_new_session=True,
+            pass_fds=tuple(dict.fromkeys(inherited)),
         )
         if process.stdout is None or process.stderr is None:
             raise RuntimeError(f"could not capture {executable.name} output")
         stream_selector.register(process.stdout, selectors.EVENT_READ, "stdout")
         stream_selector.register(process.stderr, selectors.EVENT_READ, "stderr")
-        deadline = time.monotonic() + PARSER_TIMEOUT_SECONDS
         while process.poll() is None or stream_selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 failure = (
-                    f"{executable.name} timed out after "
-                    f"{PARSER_TIMEOUT_SECONDS:g} seconds"
+                    f"{executable.name} timed out at the shared validation deadline"
                 )
                 break
             events = stream_selector.select(min(0.05, remaining))
@@ -1463,27 +2398,42 @@ def _run_supervised(
             if failure is not None:
                 break
         if failure is not None:
-            if not _terminate_process_group(process):
-                failure += "; process group did not become extinct"
+            def terminate_after_failure() -> None:
+                nonlocal failure
+                if not _terminate_process_group(process):
+                    failure += "; process group did not become extinct"
+
+            _run_cleanup_actions(
+                terminate_after_failure,
+                pending_primary=RuntimeError(failure),
+            )
         else:
             process.wait(timeout=KILL_GRACE_SECONDS)
             if _process_group_exists(process.pid):
                 failure = f"{executable.name} left running descendants"
-                if not _terminate_process_group(process):
-                    failure += "; process group did not become extinct"
+                def terminate_after_failure() -> None:
+                    nonlocal failure
+                    if not _terminate_process_group(process):
+                        failure += "; process group did not become extinct"
+
+                _run_cleanup_actions(
+                    terminate_after_failure,
+                    pending_primary=RuntimeError(failure),
+                )
     except BaseException:
         if process is not None:
-            _terminate_process_group(process)
+            _run_cleanup_actions(lambda: _terminate_process_group(process))
         raise
     finally:
-        stream_selector.close()
+        actions: list[Callable[[], None]] = [stream_selector.close]
         if process is not None:
             if process.stdout is not None:
-                process.stdout.close()
+                actions.append(process.stdout.close)
             if process.stderr is not None:
-                process.stderr.close()
-            executable.verify()
-            boundary()
+                actions.append(process.stderr.close)
+            actions.extend((executable.verify, boundary))
+        pending = RuntimeError(failure) if failure is not None else None
+        _run_cleanup_actions(*actions, pending_primary=pending)
     if failure is not None:
         raise RuntimeError(failure)
     if process is None:
@@ -1493,6 +2443,51 @@ def _run_supervised(
         bytes(buffers["stdout"]).decode("utf-8", errors="replace"),
         bytes(buffers["stderr"]).decode("utf-8", errors="replace"),
     )
+
+
+def _run_parser_with_config(
+    executable: BoundExecutable,
+    arguments: Sequence[str],
+    content: str,
+    *,
+    label: str,
+    environment: dict[str, str],
+    workspace: Path,
+    boundary: Callable[[], None],
+    workspace_descriptor: int | None = None,
+    retained_inputs: Sequence[BoundConfigInput] = (),
+    deadline: float,
+) -> tuple[CommandResult, str]:
+    """Run a parser against bytes inherited through one retained descriptor."""
+    try:
+        encoded = content.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise RuntimeError(f"parser input is not valid UTF-8: {label}") from exc
+    with _bound_config_input(
+        workspace,
+        encoded,
+        label,
+        workspace_descriptor,
+    ) as bound:
+        for retained in retained_inputs:
+            retained.verify()
+        result = _run_supervised(
+            executable,
+            (*arguments, bound.path),
+            environment=environment,
+            workspace=workspace,
+            boundary=boundary,
+            workspace_descriptor=workspace_descriptor,
+            pass_fds=(
+                bound.descriptor,
+                *(item.descriptor for item in retained_inputs),
+            ),
+            deadline=deadline,
+        )
+        bound.verify()
+        for retained in retained_inputs:
+            retained.verify()
+        return result, bound.path
 
 
 def _controlled_environment(home: Path) -> dict[str, str]:
@@ -1511,35 +2506,117 @@ def _controlled_environment(home: Path) -> dict[str, str]:
     }
 
 
+@contextmanager
+def _private_workspace(prefix: str) -> Iterator[tuple[Path, int]]:
+    """Hold one private workspace and never remove a replacement path."""
+    workspace = Path(os.path.abspath(tempfile.mkdtemp(prefix=prefix)))
+    parent_descriptor = -1
+    descriptor = -1
+    workspace_state: os.stat_result | None = None
+    try:
+        os.chmod(workspace, 0o700)
+        parent_descriptor = os.open(
+            workspace.parent,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        descriptor = os.open(
+            workspace.name,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent_descriptor,
+        )
+        workspace_state = os.fstat(descriptor)
+        direct = os.stat(
+            workspace.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if not _same_object(workspace_state, direct):
+            raise RuntimeError("private workspace changed while it was bound")
+        _verify_private_directory(workspace, descriptor, require_empty=True)
+        yield workspace, descriptor
+    finally:
+        actions: list[Callable[[], None]] = []
+        if (
+            descriptor >= 0
+            and parent_descriptor >= 0
+            and workspace_state is not None
+        ):
+
+            def remove_owned_workspace() -> None:
+                os.fchmod(descriptor, 0o700)
+                _quarantine_owned_entry(
+                    parent_descriptor,
+                    workspace.name,
+                    workspace_state,
+                    is_directory=True,
+                )
+
+            actions.append(remove_owned_workspace)
+        if descriptor >= 0:
+            actions.append(lambda: os.close(descriptor))
+        if parent_descriptor >= 0:
+            actions.append(lambda: os.close(parent_descriptor))
+        _run_cleanup_actions(*actions)
+
+
 def _generate_certificates(
-    workspace: Path, environment: dict[str, str]
-) -> dict[str, Path]:
+    workspace: Path,
+    environment: dict[str, str],
+    *,
+    workspace_descriptor: int | None = None,
+    deadline: float | None = None,
+) -> BoundCertificateFiles:
+    if deadline is None:
+        deadline = time.monotonic() + PARSER_TIMEOUT_SECONDS
     openssl = shutil.which("openssl", path=environment["PATH"])
     if openssl is None:
         raise RuntimeError("openssl is required to create NATS parser fixtures")
     executable = _bind_executable(Path(openssl), "openssl")
-    workspace_descriptor = -1
-    key_path = workspace / "server-key.pem"
-    cert_path = workspace / "server-cert.pem"
+    owned_workspace_descriptor = workspace_descriptor is None
+    key_writer = -1
+    cert_writer = -1
+    key: BoundConfigInput | None = None
+    certificate: BoundConfigInput | None = None
     arguments = [
         "req",
         "-x509",
         "-newkey",
         "rsa:2048",
-        "-keyout",
-        str(key_path),
-        "-out",
-        str(cert_path),
-        "-days",
-        "1",
-        "-nodes",
-        "-subj",
-        "/CN=nats-config-validation",
     ]
     try:
-        workspace_descriptor = os.open(
+        if workspace_descriptor is None:
+            workspace_descriptor = os.open(
+                workspace,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+            )
+        assert workspace_descriptor is not None
+        _verify_private_directory(
             workspace,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            workspace_descriptor,
+            require_empty=True,
+        )
+        key_writer = _new_anonymous_file("server-key", workspace_descriptor)
+        cert_writer = _new_anonymous_file("server-cert", workspace_descriptor)
+        arguments.extend(
+            [
+                "-keyout",
+                f"/proc/self/fd/{key_writer}",
+                "-out",
+                f"/proc/self/fd/{cert_writer}",
+                "-days",
+                "1",
+                "-nodes",
+                "-subj",
+                "/CN=nats-config-validation",
+            ]
         )
         completed = _run_supervised(
             executable,
@@ -1547,39 +2624,95 @@ def _generate_certificates(
             environment=environment,
             workspace=workspace,
             boundary=lambda: _verify_private_directory(
-                workspace, workspace_descriptor
+                workspace,
+                workspace_descriptor,
+                require_empty=True,
             ),
+            workspace_descriptor=workspace_descriptor,
+            pass_fds=(key_writer, cert_writer),
+            deadline=deadline,
         )
+        if completed.returncode != 0:
+            detail = completed.stderr.strip().splitlines()
+            message = detail[-1] if detail else f"exit {completed.returncode}"
+            raise RuntimeError(message)
+        key = _bind_anonymous_input(
+            key_writer,
+            "generated NATS server key",
+            maximum_size=MAX_CERTIFICATE_BYTES,
+            require_nonempty=True,
+        )
+        os.close(key_writer)
+        key_writer = -1
+        certificate = _bind_anonymous_input(
+            cert_writer,
+            "generated NATS server certificate",
+            maximum_size=MAX_CERTIFICATE_BYTES,
+            require_nonempty=True,
+        )
+        os.close(cert_writer)
+        cert_writer = -1
+        result = BoundCertificateFiles(
+            certificate=certificate,
+            key=key,
+            workspace=workspace,
+            workspace_descriptor=workspace_descriptor,
+            owns_workspace_descriptor=owned_workspace_descriptor,
+        )
+        result.verify()
+        key = None
+        certificate = None
+        workspace_descriptor = -1
+        return result
     except (OSError, RuntimeError) as exc:
         raise RuntimeError(f"could not create NATS parser certificates: {exc}") from exc
     finally:
-        if workspace_descriptor >= 0:
-            os.close(workspace_descriptor)
-        executable.close()
-    if completed.returncode != 0:
-        detail = completed.stderr.strip().splitlines()
-        message = detail[-1] if detail else f"exit {completed.returncode}"
-        raise RuntimeError(f"could not create NATS parser certificates: {message}")
-    os.chmod(key_path, 0o600)
-    os.chmod(cert_path, 0o600)
-    return {
-        "cert_file": cert_path,
-        "key_file": key_path,
-        "ca_file": cert_path,
-    }
+        actions: list[Callable[[], None]] = []
+        if key_writer >= 0:
+            actions.append(lambda: os.close(key_writer))
+        if cert_writer >= 0:
+            actions.append(lambda: os.close(cert_writer))
+        if key is not None:
+            actions.append(key.close)
+        if certificate is not None:
+            actions.append(certificate.close)
+        if owned_workspace_descriptor and workspace_descriptor >= 0:
+            actions.append(lambda: os.close(workspace_descriptor))
+        actions.append(executable.close)
+        _run_cleanup_actions(*actions)
 
 
-def _render_for_parser(text: str, workspace: Path, environment: dict[str, str]) -> str:
+@contextmanager
+def _render_for_parser(
+    text: str,
+    workspace: Path,
+    environment: dict[str, str],
+    *,
+    workspace_descriptor: int,
+    deadline: float | None = None,
+) -> Iterator[tuple[str, tuple[BoundConfigInput, ...]]]:
     if not _CERT_ASSIGNMENT.search(text):
-        return text
-    certificates = _generate_certificates(workspace, environment)
+        yield text, ()
+        return
+    certificates = _generate_certificates(
+        workspace,
+        environment,
+        workspace_descriptor=workspace_descriptor,
+        deadline=deadline,
+    )
 
     def replace(match: re.Match[str]) -> str:
         quote = match.group("quote")
         field = match.group("field")
         return f"{match.group('prefix')}{quote}{certificates[field]}{quote}"
 
-    return _CERT_ASSIGNMENT.sub(replace, text)
+    try:
+        rendered = _CERT_ASSIGNMENT.sub(replace, text)
+        certificates.verify()
+        yield rendered, certificates.inputs
+        certificates.verify()
+    finally:
+        certificates.close()
 
 
 def _release_for_host() -> ParserRelease:
@@ -1803,22 +2936,29 @@ def provision_nats_server(
             raise RuntimeError("materialized nats-server dentry changed")
         reader = os.open(
             parser_name,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
             dir_fd=destination_descriptor,
         )
         try:
-            observed = bytearray()
-            while len(observed) <= MAX_PARSER_BINARY_BYTES:
-                chunk = os.read(reader, 1024 * 1024)
-                if not chunk:
-                    break
-                observed.extend(chunk)
+            if not stat.S_ISREG(os.fstat(reader).st_mode):
+                raise RuntimeError("materialized nats-server is not a regular file")
+            observed_digest, observed_size = _read_executable_digest(
+                reader,
+                "materialized nats-server",
+            )
             observed_state = os.fstat(reader)
         finally:
             os.close(reader)
         if (
             not _same_file_state(final_state, observed_state)
-            or bytes(observed) != parser_bytes
+            or observed_size != len(parser_bytes)
+            or not hmac.compare_digest(
+                observed_digest,
+                hashlib.sha256(parser_bytes).digest(),
+            )
         ):
             raise RuntimeError("materialized nats-server bytes changed")
         verify_destination("after materialization")
@@ -1828,17 +2968,11 @@ def provision_nats_server(
         if descriptor >= 0:
             os.close(descriptor)
         if created_state is not None:
-            try:
-                direct = os.stat(
-                    parser_name,
-                    dir_fd=destination_descriptor,
-                    follow_symlinks=False,
-                )
-                if _same_object(created_state, direct):
-                    os.unlink(parser_name, dir_fd=destination_descriptor)
-                    os.fsync(destination_descriptor)
-            except FileNotFoundError:
-                pass
+            _quarantine_owned_entry(
+                destination_descriptor,
+                parser_name,
+                created_state,
+            )
         if isinstance(exc, DeferredSignal):
             raise
         if isinstance(exc, RuntimeError):
@@ -1882,17 +3016,41 @@ def _parser_context(
     if requested is not None:
         yield ParserExecutable(_parser_path(requested), expected_sha256)
         return
-    with tempfile.TemporaryDirectory(prefix="odysseus-nats-parser-") as temp_name:
-        workspace = Path(temp_name)
-        try:
-            os.chmod(workspace, 0o700)
-            yield provision_nats_server(workspace)
-        except RuntimeError:
-            raise
-        except OSError as exc:
-            raise RuntimeError(
-                f"could not prepare nats-server parser workspace: {exc}"
-            ) from exc
+    try:
+        with _private_workspace(
+            "odysseus-nats-parser-"
+        ) as (workspace, workspace_descriptor):
+            parser = provision_nats_server(workspace)
+            parser_name = parser.path.name
+            parser_state = os.stat(
+                parser_name,
+                dir_fd=workspace_descriptor,
+                follow_symlinks=False,
+            )
+            if (
+                not stat.S_ISREG(parser_state.st_mode)
+                or parser_state.st_uid != os.geteuid()
+                or parser_state.st_nlink != 1
+            ):
+                raise RuntimeError("provisioned nats-server parser identity is unsafe")
+            try:
+                yield parser
+            finally:
+
+                def remove_owned_parser() -> None:
+                    _quarantine_owned_entry(
+                        workspace_descriptor,
+                        parser_name,
+                        parser_state,
+                    )
+
+                _run_cleanup_actions(remove_owned_parser)
+    except RuntimeError:
+        raise
+    except OSError as exc:
+        raise RuntimeError(
+            f"could not prepare nats-server parser workspace: {exc}"
+        ) from exc
 
 
 def _verify_parser(
@@ -1900,7 +3058,11 @@ def _verify_parser(
     workspace: Path,
     environment: dict[str, str],
     boundary: Callable[[], None] | None = None,
+    workspace_descriptor: int | None = None,
+    deadline: float | None = None,
 ) -> str | None:
+    if deadline is None:
+        deadline = time.monotonic() + PARSER_TIMEOUT_SECONDS
     owned = not isinstance(parser, BoundExecutable)
     try:
         executable = (
@@ -1910,22 +3072,32 @@ def _verify_parser(
         )
     except (OSError, RuntimeError) as exc:
         return f"could not verify nats-server parser: {exc}"
-    workspace_descriptor = -1
-    if boundary is None:
+    owns_workspace_descriptor = workspace_descriptor is None
+    if workspace_descriptor is None:
         try:
             workspace_descriptor = os.open(
                 workspace,
-                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
             )
         except OSError as exc:
             if owned:
                 executable.close()
             return f"could not verify nats-server parser: {exc}"
+    assert workspace_descriptor is not None
+    outer_boundary = boundary
 
-        def verify_workspace() -> None:
-            _verify_private_directory(workspace, workspace_descriptor)
+    def verify_workspace() -> None:
+        _verify_private_directory(
+            workspace,
+            workspace_descriptor,
+            require_empty=True,
+        )
+        if outer_boundary is not None:
+            outer_boundary()
 
-        boundary = verify_workspace
+    boundary = verify_workspace
     try:
         try:
             completed = _run_supervised(
@@ -1934,6 +3106,8 @@ def _verify_parser(
                 environment=environment,
                 workspace=workspace,
                 boundary=boundary,
+                workspace_descriptor=workspace_descriptor,
+                deadline=deadline,
             )
         except (OSError, RuntimeError) as exc:
             return f"could not verify nats-server parser: {exc}"
@@ -1947,26 +3121,28 @@ def _verify_parser(
             is None
         ):
             return f"{executable.selected_path} is not a nats-server executable"
-        invalid_canary = workspace / "malformed-semantic-canary.conf"
-        valid_canary = workspace / "valid-semantic-canary.conf"
-        invalid_canary.write_text("authorization = []\n", encoding="utf-8")
-        valid_canary.write_text("port = 4222\n", encoding="utf-8")
-        os.chmod(invalid_canary, 0o600)
-        os.chmod(valid_canary, 0o600)
         try:
-            invalid_result = _run_supervised(
+            invalid_result, _ = _run_parser_with_config(
                 executable,
-                ("-t", "-c", str(invalid_canary)),
+                ("-t", "-c"),
+                "authorization = []\n",
+                label="malformed semantic canary",
                 environment=environment,
                 workspace=workspace,
                 boundary=boundary,
+                workspace_descriptor=workspace_descriptor,
+                deadline=deadline,
             )
-            valid_result = _run_supervised(
+            valid_result, _ = _run_parser_with_config(
                 executable,
-                ("-t", "-c", str(valid_canary)),
+                ("-t", "-c"),
+                "port = 4222\n",
+                label="valid semantic canary",
                 environment=environment,
                 workspace=workspace,
                 boundary=boundary,
+                workspace_descriptor=workspace_descriptor,
+                deadline=deadline,
             )
         except (OSError, RuntimeError) as exc:
             return f"could not run nats-server semantic canaries: {exc}"
@@ -1976,10 +3152,12 @@ def _verify_parser(
             return "nats-server parser rejected the valid semantic canary"
         return None
     finally:
-        if workspace_descriptor >= 0:
-            os.close(workspace_descriptor)
+        actions: list[Callable[[], None]] = []
+        if owns_workspace_descriptor:
+            actions.append(lambda: os.close(workspace_descriptor))
         if owned:
-            executable.close()
+            actions.append(executable.close)
+        _run_cleanup_actions(*actions)
 
 
 def _validate_syntax(
@@ -1993,31 +3171,37 @@ def _validate_syntax(
         expected_sha256=parser.sha256,
     )
     try:
-        with tempfile.TemporaryDirectory(
-            prefix="odysseus-nats-validate-"
-        ) as temp_name:
-            workspace = Path(temp_name)
-            os.chmod(workspace, 0o700)
-            workspace_descriptor = os.open(
-                workspace,
-                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
-            )
+        with _private_workspace(
+            "odysseus-nats-validate-"
+        ) as (workspace, workspace_descriptor):
 
             def verify_workspace() -> None:
-                _verify_private_directory(workspace, workspace_descriptor)
+                _verify_private_directory(
+                    workspace,
+                    workspace_descriptor,
+                    require_empty=True,
+                )
 
             boundary = verify_workspace
-            try:
-                environment = _controlled_environment(workspace)
-                parser_error = _verify_parser(
-                    executable, workspace, environment, boundary
-                )
-                if parser_error is not None:
-                    print(f"ERROR: {parser_error}", file=sys.stderr)
-                    return 1
-                for number, config in enumerate(configs):
+            environment = _controlled_environment(workspace)
+            validation_deadline = time.monotonic() + PARSER_TIMEOUT_SECONDS
+            parser_error = _verify_parser(
+                executable,
+                workspace,
+                environment,
+                boundary,
+                workspace_descriptor=workspace_descriptor,
+                deadline=validation_deadline,
+            )
+            if parser_error is not None:
+                print(f"ERROR: {parser_error}", file=sys.stderr)
+                return 1
+            for number, config in enumerate(configs):
+                source: BoundConfigSource | None = None
+                try:
                     try:
-                        text = _read_config(config)
+                        source = BoundConfigSource.open(config)
+                        text = source.text
                     except ConfigStructureError as exc:
                         print(f"FAILED: {config} -- {exc}", file=sys.stderr)
                         failed += 1
@@ -2036,28 +3220,39 @@ def _validate_syntax(
                         )
                         failed += 1
                         continue
+                    rendered_ready = False
                     try:
-                        rendered = _render_for_parser(text, workspace, environment)
-                    except RuntimeError as exc:
-                        print(f"FAILED: {config} -- {exc}", file=sys.stderr)
-                        failed += 1
-                        continue
-                    rendered_path = workspace / f"config-{number}.conf"
-                    rendered_path.write_text(rendered, encoding="utf-8")
-                    os.chmod(rendered_path, 0o600)
-                    try:
-                        completed = _run_supervised(
-                            executable,
-                            ("-t", "-c", str(rendered_path)),
-                            environment=environment,
-                            workspace=workspace,
-                            boundary=boundary,
-                        )
+                        with _render_for_parser(
+                            text,
+                            workspace,
+                            environment,
+                            workspace_descriptor=workspace_descriptor,
+                            deadline=validation_deadline,
+                        ) as (rendered, retained_inputs):
+                            rendered_ready = True
+                            completed, parser_input_path = _run_parser_with_config(
+                                executable,
+                                ("-t", "-c"),
+                                rendered,
+                                label=f"configuration {number}: {config}",
+                                environment=environment,
+                                workspace=workspace,
+                                boundary=boundary,
+                                workspace_descriptor=workspace_descriptor,
+                                retained_inputs=retained_inputs,
+                                deadline=validation_deadline,
+                            )
                     except (OSError, RuntimeError) as exc:
-                        print(
-                            f"FAILED: {config} -- nats-server parser failed: {exc}",
-                            file=sys.stderr,
-                        )
+                        if rendered_ready:
+                            print(
+                                f"FAILED: {config} -- nats-server parser failed: {exc}",
+                                file=sys.stderr,
+                            )
+                        else:
+                            print(
+                                f"FAILED: {config} -- {exc}",
+                                file=sys.stderr,
+                            )
                         failed += 1
                         continue
                     if completed.returncode != 0:
@@ -2065,7 +3260,7 @@ def _validate_syntax(
                             completed.stderr or completed.stdout
                         ).strip()
                         parser_output = parser_output.replace(
-                            str(rendered_path), str(config)
+                            parser_input_path, str(config)
                         )
                         detail = (
                             parser_output.splitlines()[0]
@@ -2078,9 +3273,16 @@ def _validate_syntax(
                         )
                         failed += 1
                         continue
+                    try:
+                        source.verify()
+                    except ConfigStructureError as exc:
+                        print(f"FAILED: {config} -- {exc}", file=sys.stderr)
+                        failed += 1
+                        continue
                     print(f"OK: {config}")
-            finally:
-                os.close(workspace_descriptor)
+                finally:
+                    if source is not None:
+                        source.close()
     finally:
         executable.close()
     return 1 if failed else 0

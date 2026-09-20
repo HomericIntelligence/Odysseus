@@ -64,7 +64,6 @@ GIT_CALL_TIMEOUT_SECONDS=20
 GIT_MAX_OUTPUT_BYTES=1048576
 TOTAL_OPERATION_TIMEOUT_SECONDS=120
 GIT_RUNNER_TEST_ENV_KEYS=()
-# shellcheck disable=SC2034  # Indirectly consumed through a nameref.
 PYTHON_RUNNER_TEST_ENV_KEYS=()
 if [ ! -x "$TRUSTED_PYTHON" ] || [ ! -x "$TRUSTED_GIT" ] \
     || [ ! -x "$TRUSTED_ENV" ]; then
@@ -94,11 +93,18 @@ operation_remaining() {
 
 append_test_environment() {
     local destination_name="$1" keys_name="$2" key
-    local -n destination="$destination_name"
-    local -n keys="$keys_name"
-    for key in "${keys[@]}"; do
+    local keys=()
+    [ "$destination_name" = test_environment ] || return 2
+    case "$keys_name" in
+        GIT_RUNNER_TEST_ENV_KEYS) keys=("${GIT_RUNNER_TEST_ENV_KEYS[@]+"${GIT_RUNNER_TEST_ENV_KEYS[@]}"}") ;;
+        PYTHON_RUNNER_TEST_ENV_KEYS) keys=("${PYTHON_RUNNER_TEST_ENV_KEYS[@]+"${PYTHON_RUNNER_TEST_ENV_KEYS[@]}"}") ;;
+        *) return 2 ;;
+    esac
+    # Bash's dynamic scope updates the caller's local array without eval or
+    # namerefs, which are unavailable in the supported macOS Bash 3.2.
+    for key in "${keys[@]+"${keys[@]}"}"; do
         if [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] && [ -n "${!key+x}" ]; then
-            destination+=("$key=${!key}")
+            test_environment+=("$key=${!key}")
         fi
     done
 }
@@ -108,7 +114,7 @@ isolated_python() {
     operation_remaining || return $?
     append_test_environment test_environment PYTHON_RUNNER_TEST_ENV_KEYS
     "$TRUSTED_ENV" -i HOME=/dev/null PATH=/usr/bin:/bin LC_ALL=C TZ=UTC \
-        "${test_environment[@]}" "$TRUSTED_PYTHON" -I -S /dev/fd/3 \
+        "${test_environment[@]+"${test_environment[@]}"}" "$TRUSTED_PYTHON" -I -S /dev/fd/3 \
         "$OPERATION_REMAINING_SECONDS" "$@" 3<<'PY'
 import signal
 import sys
@@ -1194,7 +1200,7 @@ try:
             os.fsencode(destination_name),
             0x1000,
         )
-        if result != 0 and ctypes.get_errno() in {errno.EPERM, errno.EACCES}:
+        if result != 0 and ctypes.get_errno() in {errno.EPERM, errno.EACCES, errno.ENOENT}:
             # AT_EMPTY_PATH normally requires CAP_DAC_READ_SEARCH. Preserve the
             # already-bound anonymous descriptor while publishing as an
             # ordinary user through procfs' descriptor symlink.
@@ -1298,13 +1304,13 @@ git_clean() {
     fi
     append_test_environment test_environment GIT_RUNNER_TEST_ENV_KEYS
     append_test_environment test_environment PYTHON_RUNNER_TEST_ENV_KEYS
-    for key in "${GIT_RUNNER_TEST_ENV_KEYS[@]}"; do
+    for key in "${GIT_RUNNER_TEST_ENV_KEYS[@]+"${GIT_RUNNER_TEST_ENV_KEYS[@]}"}"; do
         if [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
             test_keys="${test_keys}${test_keys:+,}${key}"
         fi
     done
     "$TRUSTED_ENV" -i HOME=/dev/null PATH=/usr/bin:/bin LC_ALL=C TZ=UTC \
-        "${test_environment[@]}" "$TRUSTED_PYTHON" -I -S - \
+        "${test_environment[@]+"${test_environment[@]}"}" "$TRUSTED_PYTHON" -I -S - \
         "$remaining" "$GIT_MAX_OUTPUT_BYTES" "$deadline_kind" "$test_keys" \
         "$TRUSTED_GIT" "$@" <<'PY'
 import os

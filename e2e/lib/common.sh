@@ -151,7 +151,7 @@ def json_object():
 
 
 if kind == "nats":
-    raise SystemExit(0 if exact_line("ok") else 1)
+    raise SystemExit(0 if json_object().get("status") == "ok" else 1)
 if kind == "prometheus":
     raise SystemExit(0 if exact_line("Prometheus Server is Healthy.") else 1)
 if kind == "nonempty":

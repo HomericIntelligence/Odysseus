@@ -10,8 +10,11 @@ repository **must not** contain:
 
 The `forbid-suppressions` job in `.github/workflows/_required.yml` (and the
 matching pre-commit hook in `.pre-commit-config.yaml`) enforce this on every
-PR. Both run a simple grep — no allowlist, no escape hatch — because every
-historical exception in this codebase eventually masked a real bug.
+PR. The pre-commit hook binds one immutable snapshot of the complete staged
+index and structurally inspects every in-scope entry; it does not trust the
+working tree or the filenames passed by pre-commit. There is no source-file
+allowlist or inline escape hatch, because every historical exception in this
+codebase eventually masked a real bug.
 
 ## Why
 
@@ -222,17 +225,26 @@ this runbook) is not scanned. Use the runbook's quoted examples as fenced
 code in PR descriptions or issue comments when explaining the rule.
 
 Inside the scanned files, the guard recognises `|| true` at any control-flow
-boundary: end-of-line, before `#` (trailing comment), before `)` (closing
-substitution or subshell), before `;`, before `&&` or `||`. Comment lines
-(starting with optional whitespace then `#`) are exempt so that this runbook
-can quote the idiom for teaching. The regex used is:
+boundary, including line continuations, command substitutions, executable
+expansions in unquoted heredocs, assignments before the no-op command,
+redirections, and grouped or `case`-based command lists. The rejected
+right-hand commands include `true` (with or without ignored arguments), `:`,
+and `exit 0`. Quoted strings, comments, arithmetic, `[[ ... ]]` conditional
+operators, and quoted-heredoc bodies remain authored data rather than
+executable commands.
 
-```
-^(?!\s*#).*\|\|\s*true(\s*$|\s*[#);&|])
-```
+GitHub Actions files are parsed as YAML. Only job and step control fields and
+step `run` bodies are executable policy inputs. A custom or dynamic `shell:`
+selector is treated as shell unless it is exactly one of the fixed known
+non-shell selectors (`python {0}`, `python2 {0}`, `python3 {0}`, `node {0}`,
+`perl {0}`, or `ruby {0}`). Wrappers and selector expressions therefore fail
+closed instead of disabling inspection.
 
-If you discover a control-flow boundary not covered by this regex, file a
-follow-up and widen the pattern — the guard is meant to be inclusive.
+Dockerfiles contribute shell-form `RUN` instructions, justfiles contribute
+recipe bodies, and HCL contributes literal command strings that immediately
+follow `-c` in an `args` list. Docker labels, just assignments, HCL prose,
+line comments, and HCL block comments are not executable contexts. If the
+bounded parser cannot determine the structure safely, validation fails closed.
 
 ## Adding new files
 

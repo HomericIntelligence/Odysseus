@@ -19,8 +19,8 @@
 # Used by `just check-hierarchy-sync`.
 
 # Imported Bash functions must not replace the builtins used below.
-unset -f -- builtin cd command declare eval exec exit local printf pwd read \
-  return set shift source test trap type unset '[' 2>/dev/null || :
+if ! unset -f -- builtin cd command declare eval exec exit local printf pwd read \
+  return set shift source test trap type unset '[' 2>/dev/null; then :; fi
 set -uo pipefail
 
 # Scrub file-producing diagnostics and dynamic-loader controls before the
@@ -89,7 +89,7 @@ if [ ! -x "$TRUSTED_PYTHON" ] || [ ! -x "$TRUSTED_ENV" ]; then
 fi
 
 HIERARCHY_PROCESS_RUNNER=""
-IFS= read -r -d '' HIERARCHY_PROCESS_RUNNER <<'PY' || :
+IFS= read -r -d '' HIERARCHY_PROCESS_RUNNER <<'PY'
 import os
 import select
 import selectors

@@ -182,9 +182,14 @@ def rename_noreplace(
 
 
 def create_private_directory_fd(
-    parent_fd: int, name: str
+    parent_fd: int,
+    name: str,
+    trusted_parent: tuple[int, int] | None = None,
 ) -> tuple[int, tuple[int, int]]:
     """Create privately, retain the exact FD, then atomically publish it."""
+    if trusted_parent is None:
+        raise OSError("trusted directory creation boundary is required")
+    validate_directory(os.fstat(parent_fd), trusted_parent)
     require_absent(parent_fd, name)
     isolation_name = ""
     isolation_fd = -1
@@ -211,7 +216,9 @@ def create_private_directory_fd(
         value = os.fstat(descriptor)
         validate_private_directory(value)
         validate_private_directory(direct_state(isolation_fd, "object"), identity(value))
+        validate_directory(os.fstat(parent_fd), trusted_parent)
         rename_noreplace(isolation_fd, "object", parent_fd, name)
+        validate_directory(os.fstat(parent_fd), trusted_parent)
         validate_private_directory(direct_state(parent_fd, name), identity(value))
         validate_private_directory(os.fstat(descriptor), identity(value))
         os.rmdir(isolation_name, dir_fd=parent_fd)
@@ -226,8 +233,12 @@ def create_private_directory_fd(
             os.close(isolation_fd)
 
 
-def create_private_directory(parent_fd: int, name: str) -> tuple[int, int]:
-    descriptor, created_identity = create_private_directory_fd(parent_fd, name)
+def create_private_directory(
+    parent_fd: int, name: str, trusted_parent: tuple[int, int]
+) -> tuple[int, int]:
+    descriptor, created_identity = create_private_directory_fd(
+        parent_fd, name, trusted_parent
+    )
     os.close(descriptor)
     return created_identity
 
@@ -252,8 +263,12 @@ def prepare(parent_path: str, destination_name: str) -> None:
         staging_fd = open_named_directory(parent_fd, staging_name)
         staging_state = os.fstat(staging_fd)
         validate_private_directory(staging_state)
-        data_identity = create_private_directory(staging_fd, "data")
-        receipts_identity = create_private_directory(staging_fd, "receipts")
+        data_identity = create_private_directory(
+            staging_fd, "data", identity(staging_state)
+        )
+        receipts_identity = create_private_directory(
+            staging_fd, "receipts", identity(staging_state)
+        )
         validate_path_binding(parent_path, parent_fd, identity(parent_state))
         validate_named_directory(
             parent_fd,
@@ -318,7 +333,9 @@ def create_host(data_fd: int, host: str) -> None:
     if HOST_PATTERN.fullmatch(host) is None:
         raise OSError("invalid result host")
     require_absent(data_fd, host)
-    host_identity = create_private_directory(data_fd, host)
+    host_identity = create_private_directory(
+        data_fd, host, identity(os.fstat(data_fd))
+    )
     print(f"{host_identity[0]}:{host_identity[1]}")
 
 
@@ -591,7 +608,9 @@ def copy_tree(source_fd: int, destination_fd: int) -> None:
             try:
                 source_identity = identity(os.fstat(source_child))
                 destination_child, destination_identity = create_private_directory_fd(
-                    destination_fd, name
+                    destination_fd,
+                    name,
+                    identity(os.fstat(destination_fd)),
                 )
                 validate_private_directory(
                     os.fstat(destination_child), destination_identity
@@ -634,7 +653,7 @@ def publish_host(
         validate_host(source_fd, host_identity, run_id)
         require_absent(central_fd, host)
         destination_fd, destination_identity = create_private_directory_fd(
-            central_fd, host
+            central_fd, host, identity(os.fstat(central_fd))
         )
         validate_private_directory(os.fstat(destination_fd), destination_identity)
         copy_tree(source_fd, destination_fd)
@@ -669,7 +688,9 @@ def create_central(
     expected_parent = parse_identity(parent_identity)
     validate_path_binding(parent_path, parent_fd, expected_parent)
     require_absent(parent_fd, destination_name)
-    destination_identity = create_private_directory(parent_fd, destination_name)
+    destination_identity = create_private_directory(
+        parent_fd, destination_name, expected_parent
+    )
     validate_path_binding(parent_path, parent_fd, expected_parent)
     print(f"{destination_identity[0]}:{destination_identity[1]}")
 
@@ -724,7 +745,10 @@ def create_train_directory(path: str) -> None:
     result_fd = -1
     try:
         require_absent(parent_fd, name)
-        result_fd, result_identity = create_private_directory_fd(parent_fd, name)
+        parent_identity = identity(os.fstat(parent_fd))
+        result_fd, result_identity = create_private_directory_fd(
+            parent_fd, name, parent_identity
+        )
         result_state = os.fstat(result_fd)
         validate_private_directory(result_state, result_identity)
         validate_private_directory(

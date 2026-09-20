@@ -50,10 +50,42 @@ chmod +x "$fixture_bin/nomad"
 run_render() {
     local case_name=$1
     local command_path=${RUN_RENDER_PATH:-$fixture_bin:/usr/bin:/bin}
+    local wrapper_bin="$fixture_root/wrappers-$case_name"
+    local tool original helper argument variable value
     shift
     : > "$effect_log"
+    mkdir "$wrapper_bin"
+    for tool in envsubst nomad hclfmt; do
+        original=""
+        if ! original=$(PATH="$command_path" command -v "$tool" 2>/dev/null); then :; fi
+        if [[ -z "$original" ]]; then
+            continue
+        fi
+        {
+            printf '%s\n' '#!/usr/bin/env bash'
+            printf 'export ODYSSEUS_TEST_NOMAD_EFFECT_LOG=%q\n' "$effect_log"
+            for argument in "$@"; do
+                case "$argument" in
+                    ODYSSEUS_TEST_*=*)
+                        variable=${argument%%=*}
+                        value=${argument#*=}
+                        printf 'export %s=%q\n' "$variable" "$value"
+                        ;;
+                esac
+            done
+            printf 'exec %q "$@"\n' "$original"
+        } > "$wrapper_bin/$tool"
+        chmod +x "$wrapper_bin/$tool"
+    done
+    for helper in bash python3 sh; do
+        original=""
+        if ! original=$(PATH="$command_path:$PATH" command -v "$helper" 2>/dev/null); then :; fi
+        if [[ -n "$original" ]]; then
+            ln -s "$original" "$wrapper_bin/$helper"
+        fi
+    done
     set +e
-    PATH="$command_path" \
+    PATH="$wrapper_bin:$command_path" \
     ODYSSEUS_TEST_NOMAD_EFFECT_LOG="$effect_log" \
         "$@" >"$fixture_root/$case_name.out" 2>&1
     render_status=$?
@@ -137,6 +169,93 @@ if [ "$(python3 -c 'import sys; print("linux" if sys.platform.startswith("linux"
         exit 0
     fi
     exit 1
+fi
+
+info "termination cleanup preserves timeout and active failures"
+if python3 - "$ROOT/scripts/render_nomad_configs.py" <<'PY'
+import importlib.util
+from unittest import mock
+import sys
+
+spec = importlib.util.spec_from_file_location("renderer", sys.argv[1])
+assert spec and spec.loader
+renderer = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(renderer)
+
+
+class Probe:
+    def __init__(self, name, events):
+        self.name = name
+        self.events = events
+
+    def write(self, _content):
+        pass
+
+    def seek(self, _offset):
+        pass
+
+    def close(self):
+        self.events.append(self.name)
+
+
+class Process:
+    pid = 991
+    returncode = -15
+
+    def __init__(self, events):
+        self.stdout = Probe("stdout", events)
+        self.stderr = Probe("stderr", events)
+
+    def poll(self):
+        return None
+
+
+for primary in ("pending", "active"):
+    events = []
+    process = Process(events)
+
+    class Selector(Probe):
+        def register(self, *_args):
+            pass
+
+        def get_map(self):
+            return {}
+
+        def select(self, _timeout):
+            if primary == "active":
+                raise RuntimeError("active primary")
+            return []
+
+    class Executable:
+        name = "validator"
+
+        def verify(self):
+            events.append("verify")
+
+    def boundary():
+        events.append("boundary")
+
+    with (
+        mock.patch.object(renderer.selectors, "DefaultSelector", return_value=Selector("selector", events)),
+        mock.patch.object(renderer.tempfile, "TemporaryFile", return_value=Probe("stdin", events)),
+        mock.patch.object(renderer, "popen_bound", return_value=process),
+        mock.patch.object(renderer, "terminate_process_group", side_effect=PermissionError("termination denied")) as terminator,
+        mock.patch.object(renderer.time, "monotonic", side_effect=(0.0, 0.0, 2.0) if primary == "pending" else (0.0, 0.0, 0.0)),
+    ):
+        try:
+            renderer.run_supervised(Executable(), (), b"", boundary, deadline=1.0)
+        except RuntimeError as error:
+            expected = "timed out" if primary == "pending" else "active primary"
+            assert expected in str(error), error
+        else:
+            raise AssertionError("termination failure replaced no primary")
+    assert events[-6:] == ["selector", "stdin", "stdout", "stderr", "verify", "boundary"], events
+    assert terminator.call_args_list == [mock.call(process)], terminator.call_args_list
+PY
+then
+    pass "termination cleanup does not mask timeout or active failure"
+else
+    fail "termination cleanup masked a primary failure or skipped finalizers"
 fi
 
 info "rendering requires an explicit output directory"
@@ -347,17 +466,23 @@ def replace_selected(value):
 if stage == "render":
     real_render = renderer.render_sources
 
-    def injected_render(source_directory, values, envsubst, child_boundary):
+    def injected_render(
+        source_directory, values, envsubst, child_boundary, **kwargs
+    ):
         replace_selected(envsubst)
-        return real_render(source_directory, values, envsubst, child_boundary)
+        return real_render(
+            source_directory, values, envsubst, child_boundary, **kwargs
+        )
 
     renderer.render_sources = injected_render
 elif stage == "parser":
     real_validate = renderer.validate_rendered
 
-    def injected_validate(parser_command, rendered, child_boundary):
+    def injected_validate(parser_command, rendered, child_boundary, **kwargs):
         replace_selected(parser_command)
-        return real_validate(parser_command, rendered, child_boundary)
+        return real_validate(
+            parser_command, rendered, child_boundary, **kwargs
+        )
 
     renderer.validate_rendered = injected_validate
 elif stage == "snapshot-parent":
@@ -421,12 +546,16 @@ elif stage == "snapshot-leaf":
 elif stage == "shebang-path":
     real_render = renderer.render_sources
 
-    def injected_render(source_directory, values, envsubst, child_boundary):
+    def injected_render(
+        source_directory, values, envsubst, child_boundary, **kwargs
+    ):
         bash_path = Path(selected_path(envsubst)).parent / "bash"
         bash_path.unlink()
         shutil.copyfile(hostile, bash_path)
         os.chmod(bash_path, 0o700)
-        return real_render(source_directory, values, envsubst, child_boundary)
+        return real_render(
+            source_directory, values, envsubst, child_boundary, **kwargs
+        )
 
     renderer.render_sources = injected_render
 else:
@@ -696,7 +825,7 @@ if [ "$render_status" -ne 0 ] \
 else
     sed 's/^/    /' "$fixture_root/timeout-tree.out" >&2
     if [ -n "$timeout_descendant" ] && kill -0 "$timeout_descendant" 2>/dev/null; then
-        kill -KILL "$timeout_descendant" 2>/dev/null || true
+        kill -KILL "$timeout_descendant" 2>/dev/null
     fi
     fail "a timed-out tool retained a TERM-ignoring descendant"
 fi
@@ -755,7 +884,7 @@ EOF
     else
         sed 's/^/    /' "$signal_log" >&2
         if [ -n "$signal_descendant" ] && kill -0 "$signal_descendant" 2>/dev/null; then
-            kill -KILL "$signal_descendant" 2>/dev/null || true
+            kill -KILL "$signal_descendant" 2>/dev/null
         fi
         fail "$signal_name orphaned a tool descendant or skipped cleanup"
     fi

@@ -548,7 +548,7 @@ case "$method:$url" in
             nats-204) emit_response '' 204 ;;
             nats-redirect) emit_response '' 302 ;;
             nats-wrong-body) emit_response 'not-ok' 200 ;;
-            *) emit_response ok 200 ;;
+            *) emit_response '{"status":"ok"}' 200 ;;
         esac
         ;;
     POST:http://localhost:8085/webhook)
@@ -954,8 +954,9 @@ fi
 info "post-receipt diagnostics log only exact immutable container IDs"
 HELLO_LATE_UNBOUND_CONTAINER=present \
     HELLO_HTTP_SCENARIO=nats-wrong-body run_hello_world
-owned_log_count=$(grep -Ec '^logs --tail 50 [0-9a-f]{64}$' \
-    "$PODMAN_LOG" || :)
+owned_log_count=0
+if ! owned_log_count=$(grep -Ec '^logs --tail 50 [0-9a-f]{64}$' \
+    "$PODMAN_LOG"); then :; fi
 if [ "$HELLO_STATUS" -ne 0 ] \
     && [ ! -e "$UNBOUND_LOG_MARKER" ] \
     && ! grep -Eq '^compose .* logs( |$)' "$PODMAN_LOG" \
@@ -969,7 +970,8 @@ info "webhook EXIT cleanup escalates TERM to KILL and reaps the capture child"
 HELLO_BASH_ENV="$KILL_SHIM" \
     WEBHOOK_EVIDENCE_SCENARIO=term-resistant \
     HELLO_HTTP_SCENARIO=webhook-rejected run_hello_world
-webhook_capture_pid=$(cat "$TMP/webhook-capture.pid" 2>/dev/null || :)
+webhook_capture_pid=""
+if ! webhook_capture_pid=$(cat "$TMP/webhook-capture.pid" 2>/dev/null); then :; fi
 if [ "$HELLO_STATUS" -ne 0 ] \
     && [ -n "$webhook_capture_pid" ] \
     && webhook_signal_order_is_bounded "$webhook_capture_pid" \
@@ -978,8 +980,9 @@ if [ "$HELLO_STATUS" -ne 0 ] \
         -name 'odysseus-webhook-evidence.*' -print -quit | grep -q .; then
     pass "a TERM-resistant capture child is killed and reaped before evidence removal"
 else
-    [ -n "$webhook_capture_pid" ] \
-        && /bin/kill -KILL "$webhook_capture_pid" 2>/dev/null || :
+    if [ -n "$webhook_capture_pid" ]; then
+        if ! /bin/kill -KILL "$webhook_capture_pid" 2>/dev/null; then :; fi
+    fi
     fail "webhook cleanup did not prove capture-child extinction"
 fi
 
@@ -988,7 +991,8 @@ HELLO_BASH_ENV="$KILL_SHIM" \
     WEBHOOK_KILL_FAILURE=1 \
     WEBHOOK_EVIDENCE_SCENARIO=term-resistant \
     HELLO_HTTP_SCENARIO=webhook-transport-failure run_hello_world
-webhook_capture_pid=$(cat "$TMP/webhook-capture.pid" 2>/dev/null || :)
+webhook_capture_pid=""
+if ! webhook_capture_pid=$(cat "$TMP/webhook-capture.pid" 2>/dev/null); then :; fi
 webhook_evidence_dir=$(find "$TMP" -maxdepth 1 -type d \
     -name 'odysseus-webhook-evidence.*' -print -quit)
 if [ "$HELLO_STATUS" -eq 23 ] \
@@ -1000,8 +1004,9 @@ if [ "$HELLO_STATUS" -eq 23 ] \
 else
     fail "capture cleanup changed the earlier status or deleted its evidence"
 fi
-[ -z "$webhook_capture_pid" ] \
-    || /bin/kill -KILL "$webhook_capture_pid" 2>/dev/null || :
+if [ -n "$webhook_capture_pid" ]; then
+    if ! /bin/kill -KILL "$webhook_capture_pid" 2>/dev/null; then :; fi
+fi
 [ -z "$webhook_evidence_dir" ] \
     || rm -rf -- "$webhook_evidence_dir"
 
@@ -1048,7 +1053,8 @@ rm -rf -- "$WEBHOOK_ANCESTOR_PARENT" "$WEBHOOK_ANCESTOR_DISPLACED"
 mkdir -m 700 "$WEBHOOK_ANCESTOR_PARENT"
 WEBHOOK_TMPDIR="$WEBHOOK_ANCESTOR_PARENT" \
     WEBHOOK_EVIDENCE_ATTACK=cleanup-ancestor run_hello_world
-ancestor_leaf=$(cat "$WEBHOOK_ANCESTOR_LEAF_FILE" 2>/dev/null || :)
+ancestor_leaf=""
+if ! ancestor_leaf=$(cat "$WEBHOOK_ANCESTOR_LEAF_FILE" 2>/dev/null); then :; fi
 ancestor_victim="$WEBHOOK_ANCESTOR_PARENT/$ancestor_leaf/cleanup-victim"
 if [ -e "$WEBHOOK_ATTACK_MARKER" ] \
     && [ -f "$ancestor_victim" ] \
@@ -1072,8 +1078,10 @@ info "webhook quarantine never overwrites a raced destination"
 rm -rf -- "$WEBHOOK_SYSCALL_REPLACEMENT"
 HELLO_PYTHONPATH="$WEBHOOK_SITE_PACKAGES" \
     WEBHOOK_FINAL_SYSCALL_ATTACK=quarantine-collision run_hello_world
-quarantine_path=$(sed -n '1p' "$WEBHOOK_QUARANTINE_RECEIPT" 2>/dev/null || :)
-quarantine_receipt=$(sed -n '2p' "$WEBHOOK_QUARANTINE_RECEIPT" 2>/dev/null || :)
+quarantine_path=""
+if ! quarantine_path=$(sed -n '1p' "$WEBHOOK_QUARANTINE_RECEIPT" 2>/dev/null); then :; fi
+quarantine_receipt=""
+if ! quarantine_receipt=$(sed -n '2p' "$WEBHOOK_QUARANTINE_RECEIPT" 2>/dev/null); then :; fi
 quarantine_after=""
 if [ -n "$quarantine_path" ] && [ -d "$quarantine_path" ]; then
     quarantine_after=$(python3 - "$quarantine_path" <<'PY'
@@ -1130,14 +1138,16 @@ info "webhook cleanup retires an escaped capture descendant"
 HELLO_BASH_ENV="$KILL_SHIM" \
     WEBHOOK_EVIDENCE_SCENARIO=term-resistant-descendant \
     HELLO_HTTP_SCENARIO=webhook-rejected run_hello_world
-webhook_descendant_pid=$(cat "$TMP/webhook-descendant.pid" 2>/dev/null || :)
+webhook_descendant_pid=""
+if ! webhook_descendant_pid=$(cat "$TMP/webhook-descendant.pid" 2>/dev/null); then :; fi
 if [ "$HELLO_STATUS" -ne 0 ] \
     && [ -n "$webhook_descendant_pid" ] \
     && ! /bin/kill -0 "$webhook_descendant_pid" 2>/dev/null; then
     pass "capture containment proves descendant extinction"
 else
-    [ -z "$webhook_descendant_pid" ] \
-        || /bin/kill -KILL "$webhook_descendant_pid" 2>/dev/null || :
+    if [ -n "$webhook_descendant_pid" ]; then
+        if ! /bin/kill -KILL "$webhook_descendant_pid" 2>/dev/null; then :; fi
+    fi
     fail "a capture descendant escaped cleanup"
 fi
 

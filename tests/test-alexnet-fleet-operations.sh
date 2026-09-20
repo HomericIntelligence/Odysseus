@@ -14,15 +14,27 @@ if ! python3 -I -E "$SCRIPT_DIR/test_alexnet_filesystem_races.py"; then
     exit 1
 fi
 real_python=$(command -v python3)
+darwin_worker_fail_closed=0
+if [ "$(uname -s)" = Darwin ]; then
+    darwin_worker_fail_closed=1
+fi
 
 fixture_root="$(mktemp -d "${TMPDIR:-/tmp}/odysseus-alexnet-operations.XXXXXX")"
 fixture_root="$(cd "$(dirname "$fixture_root")" && pwd -P)/${fixture_root##*/}"
 fixture_bin="$fixture_root/bin"
+worker_swap_tmp=""
+receipt_swap_tmp=""
 mkdir -p "$fixture_bin"
 cleanup_fixture() {
     if [ "${ODYSSEUS_KEEP_TEST_FIXTURE:-0}" = 1 ]; then
         echo "AlexNet operations fixture retained at: $fixture_root" >&2
         return
+    fi
+    if [ -n "$worker_swap_tmp" ] && [ -d "$worker_swap_tmp" ]; then
+        rm -r -- "$worker_swap_tmp"
+    fi
+    if [ -n "$receipt_swap_tmp" ] && [ -d "$receipt_swap_tmp" ]; then
+        rm -r -- "$receipt_swap_tmp"
     fi
     if ! rm -r -- "$fixture_root"; then
         echo "ERROR: failed to remove AlexNet operations fixture: $fixture_root" >&2
@@ -127,6 +139,10 @@ EOF
 cat > "$fixture_bin/python3" <<'EOF'
 #!/usr/bin/env bash
 real_python=${ODYSSEUS_TEST_REAL_PYTHON:-/usr/bin/python3}
+if [ "${ODYSSEUS_TEST_FAIL_HOLDER_SIGNAL:-0}" = 1 ] \
+        && [[ " $* " == *pidfd_send_signal* ]]; then
+    exit 77
+fi
 helper_action=${4:-}
 if [ "${3:-}" = -c ]; then
     helper_action=${7:-${6:-}}
@@ -418,6 +434,10 @@ if [ "${1:-}" = inspect ] && [ "${2:-}" = "$chaos_container_id" ]; then
     exit 0
 fi
 case "${1:-} ${2:-}" in
+    "info ")
+        [ "${ODYSSEUS_TEST_PODMAN_INFO_FAIL:-0}" != 1 ]
+        exit $?
+        ;;
     "compose build"|"build -t") exit 0 ;;
     "image exists")
         if [ "${ODYSSEUS_TEST_IMAGE_EXISTS:-1}" = 1 ]; then
@@ -954,6 +974,78 @@ run_operation() {
         "$@" bash "$script_path" > "$fixture_root/$case_name.out" 2>&1
 }
 
+run_operation_bounded() {
+    local case_name=$1
+    local script=$2
+    shift 2
+    : > "$fixture_root/$case_name.calls"
+    : > "$fixture_root/$case_name.effects"
+    : > "$fixture_root/$case_name.ssh"
+    local script_path="$script"
+    if [[ "$script_path" != /* ]]; then
+        script_path="$ROOT/$script_path"
+    fi
+    ODYSSEUS_TEST_CALL_LOG="$fixture_root/$case_name.calls" \
+    ODYSSEUS_TEST_EFFECT_LOG="$fixture_root/$case_name.effects" \
+    ODYSSEUS_TEST_CLOCK_COUNTER="$fixture_root/$case_name.clock" \
+    ODYSSEUS_TEST_REAL_PYTHON="$real_python" \
+    ODYSSEUS_TEST_REMOTE_HOME="$fixture_root/$case_name.remote-home" \
+    ODYSSEUS_TEST_SSH_COUNTER="$fixture_root/$case_name.ssh" \
+    ODYSSEUS_TEST_STATE_COUNTER="$fixture_root/$case_name.state" \
+    TMPDIR="$fixture_root" HOME="$fixture_root/home" \
+    SETTLE_SECONDS=0 MARKER_RETRY_DELAY=0 \
+    PATH="$fixture_bin:/usr/bin:/bin" \
+        "$real_python" -I -E - "$script_path" "$@" \
+            > "$fixture_root/$case_name.out" 2>&1 <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+script, *prefix = sys.argv[1:]
+process = subprocess.Popen(
+    [*prefix, "/bin/bash", script],
+    env=os.environ.copy(),
+    start_new_session=True,
+)
+try:
+    raise SystemExit(process.wait(timeout=15))
+except subprocess.TimeoutExpired:
+    try:
+        listing = subprocess.check_output(
+            ["/bin/ps", "-axo", "pid=,ppid="], text=True
+        )
+    except (OSError, subprocess.SubprocessError):
+        listing = ""
+    children = {}
+    for line in listing.splitlines():
+        try:
+            child, parent = map(int, line.split())
+        except ValueError:
+            continue
+        children.setdefault(parent, []).append(child)
+    pending = list(children.get(process.pid, ()))
+    descendants = []
+    while pending:
+        child = pending.pop()
+        descendants.append(child)
+        pending.extend(children.get(child, ()))
+    for child in reversed(descendants):
+        try:
+            os.kill(child, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if process.poll() is None:
+        process.wait()
+    print("operation exceeded its 15-second test bound", file=sys.stderr)
+    raise SystemExit(124)
+PY
+}
+
 assert_no_target_effects() {
     local case_name=$1
     if grep -Eq '^(podman|ssh|rsync) ' "$fixture_root/$case_name.effects"; then
@@ -1008,12 +1100,17 @@ signal_fleet_operation() {
             "$fixture_root/$case_name.out" "$fixture_root/$cleanup_pattern" <<'PY'
 import glob
 import os
+import shutil
 import signal
 import subprocess
 import sys
 import time
 
 script, signal_name, registry, output_path, cleanup_pattern = sys.argv[1:]
+expect_retain = os.environ.get("ODYSSEUS_TEST_EXPECT_RETAIN") == "1"
+expected_retained_paths = int(
+    os.environ.get("ODYSSEUS_TEST_EXPECT_RETAINED_PATHS", "0")
+)
 existing_cleanup_paths = set(glob.glob(cleanup_pattern))
 with open(output_path, "wb") as output:
     process = subprocess.Popen(
@@ -1047,9 +1144,33 @@ if return_code == 0:
     raise SystemExit("signalled operation returned success")
 
 worker_pids = []
+leaders = []
 with open(registry, encoding="utf-8") as workers:
     for line in workers:
-        worker_pids.extend(int(value) for value in line.split())
+        values = [int(value) for value in line.split()]
+        if values:
+            leaders.append(values[0])
+            worker_pids.extend(values)
+new_cleanup_paths = set(glob.glob(cleanup_pattern)) - existing_cleanup_paths
+if expect_retain:
+    if len(new_cleanup_paths) != expected_retained_paths:
+        raise SystemExit(
+            f"expected {expected_retained_paths} retained path(s), "
+            f"got {sorted(new_cleanup_paths)}"
+        )
+    for leader in leaders:
+        try:
+            os.killpg(leader, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    for worker_pid in worker_pids:
+        try:
+            os.kill(worker_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    for cleanup_path in new_cleanup_paths:
+        shutil.rmtree(cleanup_path)
+    raise SystemExit(0)
 for worker_pid in worker_pids:
     for _ in range(40):
         try:
@@ -1068,7 +1189,6 @@ for worker_pid in worker_pids:
             except ProcessLookupError:
                 pass
         raise SystemExit(f"worker {worker_pid} survived operation shutdown")
-new_cleanup_paths = set(glob.glob(cleanup_pattern)) - existing_cleanup_paths
 if new_cleanup_paths:
     raise SystemExit(f"operation left cleanup paths: {sorted(new_cleanup_paths)}")
 PY
@@ -1372,20 +1492,109 @@ else
     fail "deploy omitted an exact target preflight receipt"
 fi
 
+for local_preflight_failure in engine image workspace; do
+    case "$local_preflight_failure" in
+        engine) local_preflight_input=ODYSSEUS_TEST_PODMAN_INFO_FAIL=1 ;;
+        image) local_preflight_input=ODYSSEUS_TEST_IMAGE_EXISTS=0 ;;
+        workspace) local_preflight_input=WORKSPACE_DIR="$fixture_root/missing-workspace" ;;
+    esac
+    local_preflight_case="deploy-local-preflight-$local_preflight_failure"
+    if run_operation "$local_preflight_case" e2e/alexnet-deploy-fleet.sh env \
+        FLEET=hub SKIP_BUILD=1 ALEXNET_DEPLOY_APPROVED_FLEET=hub \
+        "$local_preflight_input"; then
+        fail "deploy ignored local $local_preflight_failure preflight failure"
+    elif grep -Eq '^podman (compose|build|save|run|create|start)|^rsync ' \
+        "$fixture_root/$local_preflight_case.effects"; then
+        fail "deploy mutated state after local $local_preflight_failure preflight failure"
+    elif grep -Fq 'preflight failed' "$fixture_root/$local_preflight_case.out"; then
+        pass "local $local_preflight_failure failure stops deployment before mutation"
+    else
+        fail "local $local_preflight_failure case did not reach the preflight boundary"
+    fi
+done
+
 info "fleet signals stop and reap every owned background worker before cleanup"
+
+worker_sentinel_swap_env="$fixture_root/worker-sentinel-swap.bash"
+cat > "$worker_sentinel_swap_env" <<'EOF'
+set -T
+replace_worker_sentinel_before_child_bind() {
+    if [[ ( "${BASH_COMMAND:-}" == 'exec 19< '* \
+            || "${BASH_COMMAND:-}" == prepare_worker_sentinel* ) \
+            && -n "${sentinel:-}" \
+            && ! -e "${ODYSSEUS_TEST_WORKER_SWAP_DONE:?}" ]]; then
+        trap - DEBUG
+        /bin/mv -- "$sentinel" "${ODYSSEUS_TEST_WORKER_SWAP_HELD:?}"
+        case "${ODYSSEUS_TEST_WORKER_SWAP_TYPE:?}" in
+            fifo)
+                /usr/bin/mkfifo "$sentinel"
+                ;;
+            socket)
+                "${ODYSSEUS_TEST_REAL_PYTHON:?}" -I -E -c '
+import socket, sys
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.bind(sys.argv[1])
+sock.close()
+' "$sentinel"
+                ;;
+            *)
+                exit 97
+                ;;
+        esac
+        : > "$ODYSSEUS_TEST_WORKER_SWAP_DONE"
+    fi
+}
+trap replace_worker_sentinel_before_child_bind DEBUG
+EOF
+worker_swap_tmp=$(mktemp -d /tmp/odax.XXXXXX)
+for worker_swap_type in fifo socket; do
+    worker_swap_case="deploy-worker-sentinel-$worker_swap_type"
+    worker_swap_done="$fixture_root/$worker_swap_case.done"
+    worker_swap_held="$fixture_root/$worker_swap_case.held"
+    if run_operation_bounded "$worker_swap_case" \
+        e2e/alexnet-deploy-fleet.sh env \
+        FLEET=remote-one LOCAL_AS_BUILD=1 DRY_RUN=1 \
+        SKIP_BUILD=1 SKIP_DISTRIBUTE=1 SKIP_LAUNCH=1 \
+        TMPDIR="$worker_swap_tmp" \
+        BASH_ENV="$worker_sentinel_swap_env" \
+        ODYSSEUS_TEST_WORKER_SWAP_TYPE="$worker_swap_type" \
+        ODYSSEUS_TEST_WORKER_SWAP_DONE="$worker_swap_done" \
+        ODYSSEUS_TEST_WORKER_SWAP_HELD="$worker_swap_held"; then
+        if [ -e "$worker_swap_done" ] \
+                && [ "$(wc -c < "$worker_swap_held" | tr -d ' ')" -eq 1 ] \
+                && grep -Fxq R "$worker_swap_held" \
+                && ! grep -Fq 'exceeded its 15-second test bound' \
+                    "$fixture_root/$worker_swap_case.out"; then
+            pass "deploy inherits the exact worker sentinel across a $worker_swap_type pathname replacement"
+        else
+            fail "deploy did not retain its exact worker sentinel across a $worker_swap_type replacement"
+        fi
+    else
+        fail "deploy blocked on or reopened a $worker_swap_type worker sentinel replacement"
+    fi
+done
+rm -r -- "$worker_swap_tmp"
+worker_swap_tmp=""
+
 for worker_signal in INT TERM HUP; do
-    signal_case="deploy-signal-${worker_signal,,}"
+    signal_case="deploy-signal-$(printf '%s' "$worker_signal" | tr '[:upper:]' '[:lower:]')"
     if FLEET=remote-one LOCAL_AS_BUILD=1 DRY_RUN=1 \
         SKIP_BUILD=1 SKIP_DISTRIBUTE=1 SKIP_LAUNCH=1 \
         ALEXNET_RUN_ID="$signal_case" \
         ODYSSEUS_TEST_BLOCK_WORKERS=ssh \
+        ODYSSEUS_TEST_EXPECT_RETAIN="$darwin_worker_fail_closed" \
+        ODYSSEUS_TEST_EXPECT_RETAINED_PATHS="$darwin_worker_fail_closed" \
         signal_fleet_operation "$signal_case" \
             e2e/alexnet-deploy-fleet.sh "$worker_signal" \
             'odysseus-alexnet-deploy.*'; then
         if [ -s "$fixture_root/$signal_case.cleanup-race" ]; then
             fail "deploy $worker_signal cleanup ran before workers were reaped"
         else
-            pass "deploy $worker_signal stops and reaps workers before scratch cleanup"
+            if [ "$darwin_worker_fail_closed" = 1 ]; then
+                pass "deploy $worker_signal retains diagnostics when stable process handles are unavailable"
+            else
+                pass "deploy $worker_signal stops and reaps workers before scratch cleanup"
+            fi
         fi
     else
         fail "deploy $worker_signal left an owned worker or scratch directory"
@@ -1396,9 +1605,15 @@ collect_signal_case=collect-signal-term
 if FLEET=remote-one ALEXNET_RUN_ID=test-run \
     CENTRAL_DIR="$fixture_root/$collect_signal_case-results" \
     ODYSSEUS_TEST_BLOCK_WORKERS=rsync \
+    ODYSSEUS_TEST_EXPECT_RETAIN="$darwin_worker_fail_closed" \
+    ODYSSEUS_TEST_EXPECT_RETAINED_PATHS=0 \
     signal_fleet_operation "$collect_signal_case" \
         e2e/alexnet-collect-results.sh TERM 'no-collect-cleanup.*'; then
-    pass "collect TERM stops and reaps every in-flight transfer worker"
+    if [ "$darwin_worker_fail_closed" = 1 ]; then
+        pass "collect TERM retains staging when stable process handles are unavailable"
+    else
+        pass "collect TERM stops and reaps every in-flight transfer worker"
+    fi
 else
     fail "collect TERM orphaned an in-flight transfer worker"
 fi
@@ -1407,7 +1622,8 @@ if FLEET=remote-one LOCAL_AS_BUILD=1 DRY_RUN=1 \
     SKIP_BUILD=1 SKIP_DISTRIBUTE=1 SKIP_LAUNCH=1 \
     ALEXNET_RUN_ID=deploy-extinction-failure \
     ODYSSEUS_TEST_BLOCK_WORKERS=ssh \
-    ODYSSEUS_TEST_FAIL_GROUP_KILL=1 BASH_ENV="$kill_failure_env" \
+    ODYSSEUS_TEST_FAIL_GROUP_KILL=1 \
+    ODYSSEUS_TEST_FAIL_HOLDER_SIGNAL=1 BASH_ENV="$kill_failure_env" \
     signal_fleet_extinction_failure deploy-extinction-failure; then
     if grep -Fq 'retained invocation directory' \
             "$fixture_root/deploy-extinction-failure.out"; then
@@ -2646,9 +2862,73 @@ run_chaos_case() {
     ODYSSEUS_TEST_EFFECT_LOG="$fixture_root/$case_name.effects" \
     ODYSSEUS_TEST_CHAOS_LOG="$fixture_root/$case_name.log" \
     ODYSSEUS_TEST_CHAOS_BINDING_FILE="$fixture_root/$case_name.binding" \
+    ODYSSEUS_TEST_REAL_PYTHON="$real_python" \
     HOME="$fixture_root/home" PATH="$fixture_bin:/usr/bin:/bin" \
         "$@" bash "$chaos_root/e2e/alexnet-mesh-chaos.sh" \
         > "$fixture_root/$case_name.out" 2>&1
+}
+
+run_chaos_case_bounded() {
+    local case_name=$1
+    shift
+    : > "$fixture_root/$case_name.calls"
+    : > "$fixture_root/$case_name.effects"
+    : > "$fixture_root/$case_name.log"
+    ODYSSEUS_TEST_CALL_LOG="$fixture_root/$case_name.calls" \
+    ODYSSEUS_TEST_EFFECT_LOG="$fixture_root/$case_name.effects" \
+    ODYSSEUS_TEST_CHAOS_LOG="$fixture_root/$case_name.log" \
+    ODYSSEUS_TEST_CHAOS_BINDING_FILE="$fixture_root/$case_name.binding" \
+    ODYSSEUS_TEST_REAL_PYTHON="$real_python" \
+    HOME="$fixture_root/home" PATH="$fixture_bin:/usr/bin:/bin" \
+        "$real_python" -I -E - "$chaos_root/e2e/alexnet-mesh-chaos.sh" \
+            "$@" > "$fixture_root/$case_name.out" 2>&1 <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+script, *prefix = sys.argv[1:]
+process = subprocess.Popen(
+    [*prefix, "/bin/bash", script],
+    env=os.environ.copy(),
+    start_new_session=True,
+)
+try:
+    raise SystemExit(process.wait(timeout=15))
+except subprocess.TimeoutExpired:
+    try:
+        listing = subprocess.check_output(
+            ["/bin/ps", "-axo", "pid=,ppid="], text=True
+        )
+    except (OSError, subprocess.SubprocessError):
+        listing = ""
+    children = {}
+    for line in listing.splitlines():
+        try:
+            child, parent = map(int, line.split())
+        except ValueError:
+            continue
+        children.setdefault(parent, []).append(child)
+    pending = list(children.get(process.pid, ()))
+    descendants = []
+    while pending:
+        child = pending.pop()
+        descendants.append(child)
+        pending.extend(children.get(child, ()))
+    for child in reversed(descendants):
+        try:
+            os.kill(child, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if process.poll() is None:
+        process.wait()
+    print("chaos case exceeded its 15-second test bound", file=sys.stderr)
+    raise SystemExit(124)
+PY
 }
 
 chaos_temp_wrapper="$fixture_root/chaos-temp-wrapper.sh"
@@ -2685,8 +2965,12 @@ chaos_predictable_path=$(<"$chaos_predictable_log")
 if [ "$chaos_temp_rc" -eq 0 ] \
         && grep -Fxq 'retain secure-temp sentinel' "$chaos_temp_sentinel" \
         && [ -L "$chaos_predictable_path" ] \
-        && [ -z "$(find "$chaos_secure_tmp" -mindepth 1 -print -quit)" ]; then
-    pass "chaos uses a private temporary directory and preserves a predictable-path victim"
+        && [ "$(find "$chaos_secure_tmp" -mindepth 1 -maxdepth 1 \
+            -name '.alexnet-quarantine-*' | wc -l | tr -d ' ')" -eq 2 ] \
+        && [ -z "$(find "$chaos_secure_tmp" -mindepth 1 -maxdepth 1 \
+            ! -name '.alexnet-quarantine-*' -print -quit)" ] \
+        && [ -z "$(find "$chaos_secure_tmp" -type l -print -quit)" ]; then
+    pass "chaos securely quarantines private temporary objects and preserves a predictable-path victim"
 else
     fail "chaos used or retained an unsafe temporary output path"
 fi
@@ -2784,6 +3068,102 @@ if run_chaos_case chaos-live-success env \
 else
     fail "available live chaos could not complete C4 through C7"
 fi
+
+receipt_swap_env="$fixture_root/chaos-receipt-swap.bash"
+cat > "$receipt_swap_env" <<'EOF'
+set -T
+swap_chaos_receipt_before_read_bind() {
+    if [[ ( "${BASH_COMMAND:-}" == 'exec 13<'* \
+            || "${BASH_COMMAND:-}" == 'exec 12<>'* ) \
+            && -n "${PENDING_RECEIPT_PATH:-}" \
+            && ! -e "${ODYSSEUS_TEST_RECEIPT_SWAP_DONE:?}" ]]; then
+        trap - DEBUG
+        if [[ -e "$PENDING_RECEIPT_PATH" \
+                || -L "$PENDING_RECEIPT_PATH" ]]; then
+            /bin/mv -- "$PENDING_RECEIPT_PATH" \
+                "${ODYSSEUS_TEST_RECEIPT_SWAP_HELD:?}"
+        else
+            : > "${ODYSSEUS_TEST_RECEIPT_SWAP_HELD:?}"
+        fi
+        /usr/bin/mkfifo "$PENDING_RECEIPT_PATH"
+        : > "$ODYSSEUS_TEST_RECEIPT_SWAP_DONE"
+    fi
+}
+trap swap_chaos_receipt_before_read_bind DEBUG
+EOF
+receipt_swap_done="$fixture_root/chaos-receipt-swap.done"
+receipt_swap_held="$fixture_root/chaos-receipt-swap.held"
+receipt_swap_tmp=$(mktemp -d /tmp/odar.XXXXXX)
+if run_chaos_case_bounded chaos-receipt-swap env \
+    ALEXNET_CHAOS_APPROVED_HOST=hub CHAOS_LIVE=1 \
+    TMPDIR="$receipt_swap_tmp" \
+    BASH_ENV="$receipt_swap_env" \
+    ODYSSEUS_TEST_RECEIPT_SWAP_DONE="$receipt_swap_done" \
+    ODYSSEUS_TEST_RECEIPT_SWAP_HELD="$receipt_swap_held" \
+    ODYSSEUS_TEST_CHAOS_VICTIM_MODE=running \
+    ODYSSEUS_TEST_CHAOS_STATE_FILE="$fixture_root/chaos-receipt-swap.state"; then
+    fail "chaos accepted a swapped launcher receipt at its read-bind boundary"
+elif [ ! -e "$receipt_swap_done" ]; then
+    fail "chaos receipt race fixture did not reach the read-bind boundary"
+elif [ -f "$receipt_swap_held" ] \
+     && [ "$(wc -c < "$receipt_swap_held" | tr -d ' ')" -eq 0 ] \
+     && ! grep -Fq 'exceeded its 15-second test bound' \
+        "$fixture_root/chaos-receipt-swap.out"; then
+    pass "chaos rejects a FIFO replacement without blocking or reopening the receipt pathname"
+else
+    fail "chaos receipt FIFO race did not preserve the exact created object"
+fi
+
+receipt_socket_env="$fixture_root/chaos-receipt-socket.bash"
+cat > "$receipt_socket_env" <<'EOF'
+set -T
+swap_chaos_receipt_for_socket() {
+    if [[ ( "${BASH_COMMAND:-}" == 'exec 13<'* \
+            || "${BASH_COMMAND:-}" == 'exec 12<>'* ) \
+            && -n "${PENDING_RECEIPT_PATH:-}" \
+            && ! -e "${ODYSSEUS_TEST_RECEIPT_SOCKET_DONE:?}" ]]; then
+        trap - DEBUG
+        if [[ -e "$PENDING_RECEIPT_PATH" \
+                || -L "$PENDING_RECEIPT_PATH" ]]; then
+            /bin/mv -- "$PENDING_RECEIPT_PATH" \
+                "${ODYSSEUS_TEST_RECEIPT_SOCKET_HELD:?}"
+        else
+            : > "${ODYSSEUS_TEST_RECEIPT_SOCKET_HELD:?}"
+        fi
+        "${ODYSSEUS_TEST_REAL_PYTHON:?}" -I -E -c '
+import socket, sys
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.bind(sys.argv[1])
+sock.close()
+' "$PENDING_RECEIPT_PATH"
+        : > "$ODYSSEUS_TEST_RECEIPT_SOCKET_DONE"
+    fi
+}
+trap swap_chaos_receipt_for_socket DEBUG
+EOF
+receipt_socket_done="$fixture_root/chaos-receipt-socket.done"
+receipt_socket_held="$fixture_root/chaos-receipt-socket.held"
+if run_chaos_case_bounded chaos-receipt-socket env \
+    ALEXNET_CHAOS_APPROVED_HOST=hub CHAOS_LIVE=1 \
+    TMPDIR="$receipt_swap_tmp" \
+    BASH_ENV="$receipt_socket_env" \
+    ODYSSEUS_TEST_RECEIPT_SOCKET_DONE="$receipt_socket_done" \
+    ODYSSEUS_TEST_RECEIPT_SOCKET_HELD="$receipt_socket_held" \
+    ODYSSEUS_TEST_CHAOS_VICTIM_MODE=running \
+    ODYSSEUS_TEST_CHAOS_STATE_FILE="$fixture_root/chaos-receipt-socket.state"; then
+    fail "chaos accepted a socket replacement at its receipt boundary"
+elif [ ! -e "$receipt_socket_done" ]; then
+    fail "chaos receipt socket fixture did not reach the open boundary"
+elif [ -f "$receipt_socket_held" ] \
+     && [ "$(wc -c < "$receipt_socket_held" | tr -d ' ')" -eq 0 ] \
+     && ! grep -Fq 'exceeded its 15-second test bound' \
+        "$fixture_root/chaos-receipt-socket.out"; then
+    pass "chaos rejects a socket replacement without blocking or reopening the receipt pathname"
+else
+    fail "chaos receipt socket race did not preserve the exact created object"
+fi
+rm -r -- "$receipt_swap_tmp"
+receipt_swap_tmp=""
 
 if run_chaos_case chaos-cidfile-retarget env \
     ALEXNET_CHAOS_APPROVED_HOST=hub CHAOS_LIVE=1 \
@@ -3092,42 +3472,78 @@ else
     fi
 fi
 
-c6_prepublication_hook="$fixture_root/chaos-c6-prepublication-hook.sh"
-cat > "$c6_prepublication_hook" <<'EOF'
-chaos_interrupt_before_pid_publication() {
-    if [[ "${ODYSSEUS_TEST_CHAOS_INTERRUPT_C6_BEFORE_PID:-0}" == 1 \
+c6_prereadiness_hook="$fixture_root/chaos-c6-prereadiness-hook.sh"
+cat > "$c6_prereadiness_hook" <<'EOF'
+set -T
+chaos_interrupt_before_worker_readiness() {
+    if [[ "${ODYSSEUS_TEST_CHAOS_INTERRUPT_C6_BEFORE_READY:-0}" == 1 \
             && "${PENDING_CONTAINER_RUN:-}" == *-c6 \
-            && "${BASH_COMMAND:-}" == 'SPAWN_WORKER_PID=$!' ]]; then
+            && ( "${BASH_COMMAND:-}" == prepare_spawn_worker \
+                || "${BASH_COMMAND:-}" == 'exec 14< '* ) ]]; then
         trap - DEBUG
         printf '%s\n' "$PENDING_CONTAINER_RUN" \
-            > "${ODYSSEUS_TEST_CHAOS_PREPUBLICATION_RUN_FILE:?}"
-        handle_chaos_signal 143
+            > "${ODYSSEUS_TEST_CHAOS_PREREADINESS_RUN_FILE:?}"
+        kill -TERM "${SPAWN_CONTROLLER_PID:?}"
+        /bin/sleep 0.5
+        : > "${ODYSSEUS_TEST_CHAOS_NATURAL_FINISH:?}"
+        exit 143
     fi
 }
-trap chaos_interrupt_before_pid_publication DEBUG
+trap chaos_interrupt_before_worker_readiness DEBUG
 EOF
-c6_prepublication_natural="$fixture_root/chaos-c6-prepublication.natural"
-c6_prepublication_run_file="$fixture_root/chaos-c6-prepublication.run"
-if run_chaos_case chaos-c6-prepublication-signal env \
+c6_prereadiness_natural="$fixture_root/chaos-c6-prereadiness.natural"
+c6_prereadiness_run_file="$fixture_root/chaos-c6-prereadiness.run"
+if run_chaos_case_bounded chaos-c6-prereadiness-signal env \
     ALEXNET_CHAOS_APPROVED_HOST=hub \
-    BASH_ENV="$c6_prepublication_hook" \
-    ODYSSEUS_TEST_CHAOS_INTERRUPT_C6_BEFORE_PID=1 \
-    ODYSSEUS_TEST_CHAOS_PREPUBLICATION_RUN_FILE="$c6_prepublication_run_file" \
-    ODYSSEUS_TEST_CHAOS_NATURAL_FINISH="$c6_prepublication_natural"; then
-    fail "C6 pre-publication interruption was reported as successful completion"
+    BASH_ENV="$c6_prereadiness_hook" \
+    ODYSSEUS_TEST_CHAOS_INTERRUPT_C6_BEFORE_READY=1 \
+    ODYSSEUS_TEST_CHAOS_PREREADINESS_RUN_FILE="$c6_prereadiness_run_file" \
+    ODYSSEUS_TEST_CHAOS_NATURAL_FINISH="$c6_prereadiness_natural"; then
+    fail "C6 pre-readiness interruption was reported as successful completion"
 else
-    prepublication_run=$(<"$c6_prepublication_run_file")
-    prepublication_results="$fixture_root/home/.cache/odysseus-alexnet-chaos/runs/$prepublication_run/hub"
-    if [[ "$prepublication_run" =~ ^chaos-[A-Za-z0-9._-]+-c6$ ]] \
-       && [ ! -e "$c6_prepublication_natural" ] \
-       && ! grep -Eq '^podman rm -f ' \
-            "$fixture_root/chaos-c6-prepublication-signal.effects" \
-       && [ -d "$prepublication_results" ] \
-       && grep -Fq 'pending exact fixture is absent but a same-name replacement was preserved' \
-            "$fixture_root/chaos-c6-prepublication-signal.out"; then
-        pass "C6 consumes a pre-publication signal without adopting an unreceipted container"
+    # The adversarial child intentionally finishes naturally on platforms
+    # without stable process handles. Wait a fixed bound so either its marker
+    # is observable or Linux has proved it was extinguished before readiness.
+    /bin/sleep 1
+    prereadiness_run=$(<"$c6_prereadiness_run_file")
+    prereadiness_results="$fixture_root/home/.cache/odysseus-alexnet-chaos/runs/$prereadiness_run/hub"
+    c6_prereadiness_lifecycle_ok=0
+    c6_prereadiness_result_ok=0
+    if [ "$darwin_worker_fail_closed" = 1 ]; then
+        if [ -e "$c6_prereadiness_natural" ] \
+                && [ -d "$prereadiness_results" ]; then
+            c6_prereadiness_lifecycle_ok=1
+            c6_prereadiness_result_ok=1
+        fi
+    elif [ ! -e "$c6_prereadiness_natural" ] \
+            && [ ! -e "$prereadiness_results" ] \
+            && [ ! -L "$prereadiness_results" ]; then
+        c6_prereadiness_lifecycle_ok=1
+        c6_prereadiness_result_ok=1
+    fi
+    c6_prereadiness_diagnostic_ok=0
+    if [ "$darwin_worker_fail_closed" = 1 ]; then
+        if grep -Fq 'fixture launcher extinction was not verified; owned resources were retained' \
+                "$fixture_root/chaos-c6-prereadiness-signal.out"; then
+            c6_prereadiness_diagnostic_ok=1
+        fi
+    elif grep -Fq 'pending fixture created an exactly bound result tree; cleanup will remove it' \
+            "$fixture_root/chaos-c6-prereadiness-signal.out"; then
+        c6_prereadiness_diagnostic_ok=1
+    fi
+    if [[ "$prereadiness_run" =~ ^chaos-[A-Za-z0-9._-]+-c6$ ]] \
+       && [ "$c6_prereadiness_lifecycle_ok" -eq 1 ] \
+       && [ "$c6_prereadiness_result_ok" -eq 1 ] \
+       && [ "$c6_prereadiness_diagnostic_ok" -eq 1 ] \
+       && ! grep -Eq '^podman (create|rm -f) ' \
+            "$fixture_root/chaos-c6-prereadiness-signal.effects"; then
+        if [ "$darwin_worker_fail_closed" = 1 ]; then
+            pass "C6 bounds a pre-readiness signal and retains state when stable process handles are unavailable"
+        else
+            pass "C6 rolls back a signal received before child readiness without adopting a fixture"
+        fi
     else
-        fail "C6 waited for or leaked a launcher interrupted before PID publication"
+        fail "C6 waited for or leaked a launcher interrupted before child readiness"
     fi
 fi
 
@@ -3174,6 +3590,39 @@ fi
 
 info "destructive cleanup is exact-object quarantined"
 
+if "$real_python" -I - "$ROOT/scripts/check_silent_failures.py" \
+        "$ROOT/e2e/alexnet-deploy-fleet.sh" \
+        "$ROOT/e2e/alexnet-collect-results.sh" \
+        "$ROOT/e2e/alexnet-fleet-teardown.sh" \
+        "$ROOT/e2e/alexnet-mesh-chaos.sh" <<'PY'
+import importlib.util
+from pathlib import Path
+import sys
+
+spec = importlib.util.spec_from_file_location(
+    "alexnet_silent_failure_policy", sys.argv[1]
+)
+if spec is None or spec.loader is None:
+    raise SystemExit("could not load the silent-failure policy")
+policy = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = policy
+spec.loader.exec_module(policy)
+findings = []
+for value in sys.argv[2:]:
+    path = Path(value)
+    with path.open(encoding="utf-8") as stream:
+        for line, message in policy._shell_findings(stream):
+            findings.append(f"{path}:{line}: {message}")
+if findings:
+    print("\n".join(findings), file=sys.stderr)
+    raise SystemExit(1)
+PY
+then
+    pass "AlexNet operations contain no silent-failure suppressions"
+else
+    fail "AlexNet operations contain a forbidden silent-failure suppression"
+fi
+
 for cleanup_script in \
     e2e/alexnet-deploy-fleet.sh \
     e2e/alexnet-fleet-teardown.sh \
@@ -3193,26 +3642,94 @@ if grep -Eq 'os\.stat\(path, follow_symlinks=False\)|LSOF_BIN.*sentinel' \
         "$ROOT/e2e/alexnet-fleet-teardown.sh" \
         "$ROOT/e2e/alexnet-mesh-chaos.sh"; then
     fail "worker containment still trusts a mutable sentinel pathname"
-elif ! grep -Fq 'cgroup.kill' "$ROOT/e2e/alexnet-deploy-fleet.sh" \
-        || ! grep -Fq 'cgroup.events' "$ROOT/e2e/alexnet-collect-results.sh" \
-        || ! grep -Fq 'cgroup.kill' "$ROOT/e2e/alexnet-fleet-teardown.sh" \
-        || ! grep -Fq 'cgroup.events' "$ROOT/e2e/alexnet-mesh-chaos.sh"; then
-    fail "fleet workers are not bound to Linux kernel cgroup extinction"
+elif ! grep -Fq 'active_worker_sentinel_ids' \
+        "$ROOT/e2e/alexnet-deploy-fleet.sh" \
+        "$ROOT/e2e/alexnet-collect-results.sh" \
+        "$ROOT/e2e/alexnet-fleet-teardown.sh" \
+        || ! grep -Fq 'SPAWN_SENTINEL_ID' \
+            "$ROOT/e2e/alexnet-mesh-chaos.sh" \
+        || ! grep -Fq 'wait_worker_sentinel_ready' \
+            "$ROOT/e2e/alexnet-deploy-fleet.sh" \
+            "$ROOT/e2e/alexnet-collect-results.sh" \
+            "$ROOT/e2e/alexnet-fleet-teardown.sh" \
+        || ! grep -Fq 'wait_spawn_worker_ready' \
+            "$ROOT/e2e/alexnet-mesh-chaos.sh" \
+        || grep -Fq "exec 19< \"\$worker_sentinel\"" \
+            "$ROOT/e2e/alexnet-deploy-fleet.sh" \
+            "$ROOT/e2e/alexnet-collect-results.sh" \
+            "$ROOT/e2e/alexnet-fleet-teardown.sh" \
+        || grep -Fq "exec 14< \"\$SPAWN_SENTINEL\"" \
+            "$ROOT/e2e/alexnet-mesh-chaos.sh"; then
+    fail "fleet workers do not bind launch and extinction to exact sentinel identities"
 else
     pass "fleet workers use kernel-bound containment or fail closed"
 fi
 
-if grep -Fq ': > "$local_container_receipt"' \
+if grep -Fq ": > \"\$local_container_receipt\"" \
         "$ROOT/e2e/alexnet-deploy-fleet.sh" \
-        || grep -Fq 'container_id=$(cat "$container_receipt")' \
+        || grep -Fq "container_id=\$(cat \"\$container_receipt\")" \
             "$ROOT/e2e/alexnet-deploy-fleet.sh" \
-        || grep -Fq 'rm -f -- "$container_receipt"' \
+        || grep -Fq "rm -f -- \"\$container_receipt\"" \
             "$ROOT/e2e/alexnet-deploy-fleet.sh" \
-        || grep -Fq ': > "$CHAOS_RECEIPT_DIR/$PENDING_CONTAINER_CID_NAME"' \
+        || grep -Fq "set -o noclobber; : > \"\$PENDING_RECEIPT_PATH\"" \
+            "$ROOT/e2e/alexnet-mesh-chaos.sh" \
+        || grep -Fq "exec 13< \"\$PENDING_RECEIPT_PATH\"" \
             "$ROOT/e2e/alexnet-mesh-chaos.sh"; then
     fail "container receipts still have create/reopen or close/reopen gaps"
 else
     pass "container receipts stay descriptor-bound from atomic creation through validation"
+fi
+
+if "$real_python" -I - \
+        "$ROOT/e2e/alexnet-deploy-fleet.sh" \
+        "$ROOT/e2e/alexnet-collect-results.sh" \
+        "$ROOT/e2e/alexnet-fleet-teardown.sh" <<'PY'
+from pathlib import Path
+import sys
+
+for value in sys.argv[1:]:
+    source = Path(value).read_text(encoding="utf-8")
+    marker = "retire_worker_pid() {"
+    start = source.find(marker)
+    if start < 0:
+        raise SystemExit(f"{value}: missing extinction-before-retirement helper")
+    end = source.find("\n}\n", start)
+    body = source[start:end]
+    extinction = body.find("extinguish_worker_sentinel")
+    retirement = body.find("forget_worker_pid")
+    if extinction < 0 or retirement < 0 or extinction > retirement:
+        raise SystemExit(f"{value}: worker registration retires before extinction")
+    if source.count('forget_worker_pid "') != 2:
+        raise SystemExit(f"{value}: unexpected worker-registration retirement path")
+    readiness = source.find("if ! wait_worker_sentinel_ready")
+    rollback_extinction = source.find("extinguish_worker_sentinel", readiness)
+    rollback_retirement = source.find('forget_worker_pid "$worker_pid"', readiness)
+    if (readiness < 0 or rollback_extinction < readiness
+            or rollback_retirement < rollback_extinction):
+        raise SystemExit(f"{value}: readiness rollback retires before extinction")
+
+deploy = Path(sys.argv[1]).read_text(encoding="utf-8")
+start = deploy.index("run_parallel_phase() {")
+phase = deploy[start:deploy.index("\n}\n", start)]
+binding = phase.find('sentinel_ids+=("$sentinel_id")')
+launch = phase.find("worker_launch_critical=1")
+if binding < 0 or launch < 0 or binding > launch:
+    raise SystemExit("deploy: a later sentinel setup failure can strand an earlier worker")
+
+for value, terminal in (
+    (sys.argv[2], "transfer_failed=0"),
+    (sys.argv[3], "fleet_failed=0"),
+):
+    source = Path(value).read_text(encoding="utf-8")
+    start = source.index("pids=()", source.index("trap 'handle_worker_signal"))
+    launch = source[start:source.index(terminal, start)]
+    if launch.count("for ((host_index = 0;") < 2:
+        raise SystemExit(f"{value}: workers launch before all sentinels are bound")
+PY
+then
+    pass "fleet worker registrations remain active through exact extinction"
+else
+    fail "fleet workers can escape after early registration retirement or setup failure"
 fi
 cleanup_contract_failed=0
 # shellcheck disable=SC2016
@@ -3279,10 +3796,12 @@ containment_contract_failed=0
 for worker_script in \
     e2e/alexnet-deploy-fleet.sh \
     e2e/alexnet-collect-results.sh \
+    e2e/alexnet-fleet-teardown.sh \
     e2e/alexnet-mesh-chaos.sh; do
     # shellcheck disable=SC2016
     if ! grep -Fq 'extinguish_worker_sentinel' "$ROOT/$worker_script" \
-       || grep -Fq 'kill -TERM -- "-$worker_pid"' "$ROOT/$worker_script"; then
+       || grep -Fq 'kill -TERM -- "-$worker_pid"' "$ROOT/$worker_script" \
+       || grep -Fq 'kill -"$signal_name" "$holder"' "$ROOT/$worker_script"; then
         fail "$worker_script lacks bound full-extinction handling"
         containment_contract_failed=1
     fi

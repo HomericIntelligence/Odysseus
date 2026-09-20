@@ -940,7 +940,7 @@ case "$url" in
         emit_response '{"status":"ok","nats_connected":true}' 200
         ;;
     http://localhost:8222/healthz)
-        emit_response ok 200
+        emit_response '{"status":"ok"}' 200
         ;;
     http://localhost:9090/-/healthy)
         emit_response 'Prometheus Server is Healthy.' 200

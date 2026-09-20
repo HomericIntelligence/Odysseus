@@ -7,13 +7,21 @@ uses the plain-script entry point so the checks work without pytest.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
 import json
+import os
+import signal
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
+import threading
+import time
+import unittest
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import replace
 from pathlib import Path
@@ -43,6 +51,146 @@ EXPECTED_HOMES = {
 }
 EXPECTED_MANUAL_GATE_LABEL = "agamemnon-operator-gate"
 TEST_SOURCE_SHA = "0" * 40
+
+
+def _require_linux() -> None:
+    """Mark a Linux-only behavior test as skipped on unsupported hosts."""
+    if not sys.platform.startswith("linux"):
+        raise unittest.SkipTest("requires Linux subreaper and pidfd containment")
+
+
+def _write_gh_boundary_executable(directory: Path, name: str, body: str) -> Path:
+    """Create one owner-only executable for direct process-boundary tests."""
+    executable = directory / name
+    executable.write_text(
+        f"#!{sys.executable}\n{textwrap.dedent(body).lstrip()}", encoding="utf-8"
+    )
+    executable.chmod(0o700)
+    return executable
+
+
+def _wait_for_process_group_extinction(process_group: int) -> bool:
+    """Wait briefly for a killed test process group to leave the process table."""
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        if not reg._process_group_exists(process_group):
+            return True
+        time.sleep(0.01)
+    return not reg._process_group_exists(process_group)
+
+
+def _heartbeat_stopped(path: Path, timeout: float = 2.0) -> bool:
+    """Return true after one heartbeat file stops changing."""
+    deadline = time.monotonic() + timeout
+    previous = None
+    stable_since = None
+    while time.monotonic() < deadline:
+        try:
+            current = path.read_bytes()
+        except FileNotFoundError:
+            time.sleep(0.01)
+            continue
+        if current == previous:
+            stable_since = stable_since or time.monotonic()
+            if time.monotonic() - stable_since >= 0.15:
+                return True
+        else:
+            previous = current
+            stable_since = None
+        time.sleep(0.01)
+    return False
+
+
+def _kill_test_process(pid: int) -> None:
+    """Remove one leaked test process without masking the test assertion."""
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def _linux_process_identity_is_active(process_id: int, start_time: int) -> bool:
+    """Return true only while one exact Linux process identity is active."""
+    try:
+        content = Path(f"/proc/{process_id}/stat").read_bytes()
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+    closing = content.rfind(b")")
+    fields = content[closing + 2 :].split() if closing >= 1 else ()
+    return len(fields) > 19 and int(fields[19]) == start_time
+
+
+def test_process_scope_rescans_after_a_scanned_child_forks_then_exits() -> None:
+    """An exit after child inventory cannot hide the newly adopted child."""
+    supervisor_pid = 101
+    parent_pid = 202
+    child_pid = 303
+    parent_descriptor = 11
+    child_descriptor = 12
+    inventory_read = threading.Event()
+    fork_complete = threading.Event()
+    state = {"parent_exited": False, "child_visible": False}
+
+    scope = object.__new__(reg._LinuxProcessScope)
+    scope.supervisor = supervisor_pid
+    scope.baseline = set()
+    scope.owned = {parent_pid: (1, parent_descriptor)}
+
+    original_child_pids = reg._linux_child_pids
+    original_identity = reg._linux_process_identity
+    original_pidfd_open = getattr(reg.os, "pidfd_open", None)
+    original_exited = reg._LinuxProcessScope._exited
+
+    def child_pids(process_id: int) -> set[int]:
+        if process_id == supervisor_pid:
+            return {child_pid} if state["child_visible"] else set()
+        if process_id == parent_pid:
+            # Capture the empty inventory before allowing the child to fork and
+            # its parent to exit. This is the exact scan-to-pidfd race.
+            inventory_read.set()
+            assert fork_complete.wait(timeout=1), "the synchronized fork stalled"
+            return set()
+        return set()
+
+    def identity(process_id: int) -> tuple[int, int] | None:
+        if process_id == parent_pid:
+            return None if state["parent_exited"] else (parent_pid, 1)
+        if process_id == child_pid and state["child_visible"]:
+            return child_pid, 2
+        return None
+
+    def fork_after_inventory() -> None:
+        assert inventory_read.wait(timeout=1), "the parent inventory was not read"
+        state["child_visible"] = True
+        state["parent_exited"] = True
+        fork_complete.set()
+
+    worker = threading.Thread(target=fork_after_inventory)
+    worker.start()
+    reg._linux_child_pids = child_pids
+    reg._linux_process_identity = identity
+    reg.os.pidfd_open = lambda process_id, _flags: (
+        child_descriptor if process_id == child_pid else parent_descriptor
+    )
+    reg._LinuxProcessScope._exited = staticmethod(
+        lambda descriptor: descriptor == parent_descriptor
+    )
+    try:
+        live = scope.live_descendants(parent_pid)
+    finally:
+        reg._LinuxProcessScope._exited = staticmethod(original_exited)
+        reg._linux_process_identity = original_identity
+        reg._linux_child_pids = original_child_pids
+        if original_pidfd_open is None:
+            del reg.os.pidfd_open
+        else:
+            reg.os.pidfd_open = original_pidfd_open
+        worker.join(timeout=1)
+
+    assert not worker.is_alive(), "the synchronized fork worker did not finish"
+    assert live == ((child_pid, child_descriptor),), (
+        "the child adopted after its parent's final inventory scan was missed"
+    )
 
 
 def _load_tool(path: Path, module_name: str):
@@ -77,6 +225,16 @@ def _read_yaml(path: Path):
 def _write_yaml(path: Path, value) -> None:
     """Write a YAML test artifact deterministically."""
     path.write_text(yaml.safe_dump(value, sort_keys=False))
+
+
+def _assert_payload_load_fails(isolated, expected: str) -> None:
+    """Require one isolated source change to stop local loading."""
+    try:
+        isolated.load_payloads()
+    except ValueError as exc:
+        assert expected in str(exc), str(exc)
+    else:  # pragma: no cover
+        raise AssertionError(f"unsafe YAML was accepted; expected {expected!r}")
 
 
 def _commit_isolated_sources(root: Path) -> str:
@@ -181,6 +339,65 @@ def test_tool_symlink_invocation_is_rejected() -> None:
             assert "direct regular file" in str(exc)
         else:  # pragma: no cover
             raise AssertionError("a symlinked tool invocation must be rejected")
+
+
+def test_executable_entry_rejects_python_startup_and_loader_authority() -> None:
+    """The operator entry boundary starts isolated Python with a minimal environment."""
+    source_root = Path(__file__).resolve().parents[2]
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary) / "repo"
+        tool = root / "tools" / "github" / _TOOL_PATH.name
+        tool.parent.mkdir(parents=True)
+        shutil.copy2(_TOOL_PATH, tool)
+        shutil.copytree(PAYLOADS, tool.parent / "milestone-epics.d")
+        shutil.copytree(source_root / "workflows", root / "workflows")
+        tool.chmod(0o700)
+
+        dependency_python = root / ".pixi" / "envs" / "default" / "bin" / "python"
+        dependency_python.parent.mkdir(parents=True)
+        dependency_python.write_text(
+            f'#!/bin/bash -p\nexec {shlex.quote(sys.executable)} "$@"\n',
+            encoding="utf-8",
+        )
+        dependency_python.chmod(0o700)
+
+        hostile = Path(temporary) / "hostile"
+        hostile.mkdir()
+        marker = Path(temporary) / "sitecustomize-ran"
+        (hostile / "sitecustomize.py").write_text(
+            "import os\n"
+            "from pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text("
+            "os.environ.get('GH_TOKEN', 'missing'), encoding='utf-8')\n",
+            encoding="utf-8",
+        )
+        hostile_bin = Path(temporary) / "bin"
+        hostile_bin.mkdir()
+        (hostile_bin / "python3").symlink_to(Path(sys.executable).resolve())
+        environment = {
+            "DYLD_LIBRARY_PATH": str(hostile),
+            "GH_TOKEN": "odysseus-entry-secret",
+            "HOME": str(Path(temporary) / "home"),
+            "LD_LIBRARY_PATH": str(hostile),
+            "PATH": f"{hostile_bin}:/usr/bin:/bin",
+            "PYTHONPATH": str(hostile),
+            "PYTHONSTARTUP": str(hostile / "startup.py"),
+        }
+
+        result = subprocess.run(
+            (str(tool), "--plan"),
+            cwd=root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+
+        assert result.returncode == 2, result.stderr
+        assert "--plan and --apply require --source-sha" in result.stderr
+        assert not marker.exists(), "sitecustomize executed before registrar isolation"
+        assert "odysseus-entry-secret" not in result.stdout + result.stderr
 
 
 def test_parent_symlink_uses_one_resolved_repository_root() -> None:
@@ -953,6 +1170,137 @@ def test_payload_file_symlink_stops_before_remote_access() -> None:
 def test_payload_directory_symlink_stops_before_remote_access() -> None:
     """The routing payload directory must not resolve through a symlink."""
     _assert_payload_source_rejected_before_remote_access("directory")
+
+
+def test_yaml_duplicate_keys_are_rejected_at_each_authored_level() -> None:
+    """Duplicate root and nested keys cannot silently replace authored data."""
+    cases = (
+        (
+            "payload root",
+            "tools/github/milestone-epics.d/m1.yaml",
+            lambda source: (
+                source + '\ntitle: "M1 Epic: Hephaestus mesh keystone (ADR-020)"\n'
+            ),
+        ),
+        (
+            "payload child",
+            "tools/github/milestone-epics.d/m1.yaml",
+            lambda source: source.replace(
+                "  - id: M1.1\n    repo: Hephaestus\n",
+                "  - id: M1.1\n    repo: Hephaestus\n    repo: Hephaestus\n",
+                1,
+            ),
+        ),
+        (
+            "workflow metadata",
+            "workflows/m1-hephaestus-keystone.yaml",
+            lambda source: source.replace(
+                "  epic_home: Hephaestus\n",
+                "  epic_home: Hephaestus\n  epic_home: Hephaestus\n",
+                1,
+            ),
+        ),
+        (
+            "workflow task",
+            "workflows/m1-hephaestus-keystone.yaml",
+            lambda source: source.replace(
+                "      - subject: Requirements and invariants for the mesh worker package\n",
+                "      - subject: Requirements and invariants for the mesh worker package\n"
+                "        subject: Requirements and invariants for the mesh worker package\n",
+                1,
+            ),
+        ),
+    )
+    for _label, relative_path, mutate in cases:
+        with _isolated_tool_tree() as (isolated, root):
+            path = root / relative_path
+            path.write_text(mutate(path.read_text(encoding="utf-8")), encoding="utf-8")
+            _assert_payload_load_fails(isolated, "duplicate key")
+
+
+def test_payload_inventory_and_yaml_source_bytes_have_hard_ceilings() -> None:
+    """Source enumeration and reads reject inputs above their fixed budgets."""
+    with _isolated_tool_tree() as (isolated, root):
+        payload_dir = root / "tools" / "github" / "milestone-epics.d"
+        for index in range(27):
+            (payload_dir / f"extra-{index:02d}.yaml").write_text("null\n")
+        try:
+            isolated._read_payload_sources(payload_dir)
+        except ValueError as exc:
+            assert "at most 32 YAML files" in str(exc)
+        else:  # pragma: no cover
+            raise AssertionError("a 33-file payload inventory was accepted")
+
+    oversized = b"#" * (1024 * 1024 + 1)
+    with _isolated_tool_tree() as (isolated, root):
+        payload_dir = root / "tools" / "github" / "milestone-epics.d"
+        (payload_dir / "oversized.yaml").write_bytes(oversized)
+        try:
+            isolated._read_payload_sources(payload_dir)
+        except ValueError as exc:
+            assert "1048576-byte ceiling" in str(exc)
+        else:  # pragma: no cover
+            raise AssertionError("an oversized routing payload was accepted")
+
+    with _isolated_tool_tree() as (isolated, root):
+        workflow_path = root / "workflows" / "m1-hephaestus-keystone.yaml"
+        workflow_path.write_bytes(oversized)
+        try:
+            isolated._read_workflow_source(
+                "workflows/m1-hephaestus-keystone.yaml",
+                root / "tools" / "github" / "milestone-epics.d" / "m1.yaml",
+            )
+        except ValueError as exc:
+            assert "1048576-byte ceiling" in str(exc)
+        else:  # pragma: no cover
+            raise AssertionError("an oversized workflow was accepted")
+
+
+def test_yaml_alias_depth_node_and_string_budgets_apply_to_all_sources() -> None:
+    """Payload and workflow YAML cannot exceed parser resource budgets."""
+    cases = (
+        (
+            "aliases",
+            "padding: [&shared harmless, " + ", ".join(["*shared"] * 33) + "]\n",
+            "more than 32 aliases",
+        ),
+        (
+            "recursive alias",
+            "padding: &cycle [*cycle]\n",
+            "recursive YAML alias",
+        ),
+        (
+            "merge expansion",
+            "padding_base: &base {value: harmless}\npadding:\n  <<: *base\n",
+            "YAML merge keys are not permitted",
+        ),
+        (
+            "depth",
+            "padding: " + "[" * 33 + "null" + "]" * 33 + "\n",
+            "more than 32 collection levels",
+        ),
+        (
+            "nodes",
+            "padding:\n" + "  - null\n" * 10001,
+            "more than 10000 nodes",
+        ),
+        (
+            "scalar",
+            'padding: "' + "x" * (256 * 1024 + 1) + '"\n',
+            "scalar exceeds 262144 characters",
+        ),
+    )
+    targets = (
+        "tools/github/milestone-epics.d/m1.yaml",
+        "workflows/m1-hephaestus-keystone.yaml",
+    )
+    for _label, addition, expected in cases:
+        for relative_path in targets:
+            with _isolated_tool_tree() as (isolated, root):
+                path = root / relative_path
+                with path.open("a", encoding="utf-8") as stream:
+                    stream.write("\n" + addition)
+                _assert_payload_load_fails(isolated, expected)
 
 
 def test_payload_filename_must_match_milestone_identity() -> None:
@@ -1966,6 +2314,193 @@ def test_apply_rejects_unreviewed_stage_before_remote_write() -> None:
     assert not any(call[:2][1:] == ("create",) for call in calls)
 
 
+def test_plan_and_apply_reject_unexecutable_write_arguments_before_mutation() -> None:
+    """Every reviewed write must be executable before a lock can be created."""
+    milestone = next(m for m in _load() if m.id == "M4")
+    selected = next(child for child in milestone.children if not child.manual)
+    children = tuple(
+        replace(child, description=f"{child.description}\0invalid")
+        if child.id == selected.id
+        else child
+        for child in milestone.children
+    )
+    malformed = replace(milestone, children=children)
+    labels = _required_labels([malformed])
+    fake_gh, calls = _fake_github(labels_by_repo=labels)
+    original_gh = reg.gh
+    reg.gh = fake_gh
+    plan_output = io.StringIO()
+    try:
+        try:
+            with _accepted_source() as source_sha, redirect_stdout(plan_output):
+                reg.plan_mode([malformed], source_sha)
+        except ValueError as exc:
+            assert "NUL" in str(exc)
+        else:  # pragma: no cover
+            raise AssertionError("plan accepted an unexecutable GitHub argument")
+
+        bound = [replace(malformed, source_sha=TEST_SOURCE_SHA)]
+        state = reg._read_registration_state(bound)
+        business_stage = reg.next_registration_stage(bound, state)
+        reviewed_stage = reg._guarded_registration_stage(business_stage)
+        digest = reg.registration_stage_digest(reviewed_stage, TEST_SOURCE_SHA)
+        try:
+            with _accepted_source() as source_sha, redirect_stdout(io.StringIO()):
+                reg.apply_plan([malformed], source_sha, digest)
+        except ValueError as exc:
+            assert "NUL" in str(exc)
+        else:  # pragma: no cover
+            raise AssertionError("apply acquired a lock for an unexecutable stage")
+    finally:
+        reg.gh = original_gh
+
+    assert "PLAN_SHA256" not in plan_output.getvalue()
+    assert _mutation_payloads(calls) == []
+
+
+def test_github_argument_and_field_limits_reject_before_execution() -> None:
+    """The command boundary rejects platform and GitHub limit violations."""
+    target = f"{reg.ORG}/Odysseus"
+    cases = (
+        (
+            "per-argument byte limit",
+            (
+                "issue",
+                "create",
+                "-R",
+                target,
+                "--title",
+                "bounded",
+                "--body",
+                "x" * 131_072,
+            ),
+            "argument exceeds",
+        ),
+        (
+            "aggregate argv byte limit",
+            (
+                "issue",
+                "create",
+                "-R",
+                target,
+                "--title",
+                "bounded",
+                "--body",
+                "bounded",
+                *("x" * 1024 for _ in range(1025)),
+            ),
+            "aggregate",
+        ),
+        (
+            "issue title limit",
+            (
+                "issue",
+                "create",
+                "-R",
+                target,
+                "--title",
+                "x" * 257,
+                "--body",
+                "bounded",
+            ),
+            "issue title",
+        ),
+        (
+            "issue body limit",
+            (
+                "issue",
+                "create",
+                "-R",
+                target,
+                "--title",
+                "bounded",
+                "--body",
+                "x" * 65_537,
+            ),
+            "issue body",
+        ),
+        (
+            "label name limit",
+            (
+                "label",
+                "create",
+                "x" * 51,
+                "-R",
+                target,
+                "--description",
+                "bounded",
+                "--color",
+                "0E8A16",
+            ),
+            "label name",
+        ),
+        (
+            "label description limit",
+            (
+                "label",
+                "create",
+                "bounded",
+                "-R",
+                target,
+                "--description",
+                "x" * 101,
+                "--color",
+                "0E8A16",
+            ),
+            "label description",
+        ),
+    )
+    for name, arguments, expected in cases:
+        try:
+            reg._bound_gh_args(*arguments)
+        except ValueError as exc:
+            assert expected in str(exc), f"{name}: {exc}"
+        else:  # pragma: no cover
+            raise AssertionError(f"{name} was accepted")
+
+
+def test_oversized_issue_body_stops_before_digest_lock_or_mutation() -> None:
+    """An oversized rendered body cannot become a plan or acquire the lock."""
+    milestone = next(m for m in _load() if m.id == "M4")
+    selected = next(child for child in milestone.children if not child.manual)
+    children = tuple(
+        replace(child, description="x" * 65_537) if child.id == selected.id else child
+        for child in milestone.children
+    )
+    oversized = replace(milestone, children=children)
+    fake_gh, calls = _fake_github(labels_by_repo=_required_labels([oversized]))
+    original_gh = reg.gh
+    original_digest = reg.registration_stage_digest
+    digest_calls = []
+
+    def unexpected_digest(*args, **kwargs):
+        digest_calls.append((args, kwargs))
+        raise AssertionError("an oversized stage reached digest creation")
+
+    reg.gh = fake_gh
+    reg.registration_stage_digest = unexpected_digest
+    plan_output = io.StringIO()
+    try:
+        for mode in ("plan", "apply"):
+            try:
+                with _accepted_source() as source_sha, redirect_stdout(plan_output):
+                    if mode == "plan":
+                        reg.plan_mode([oversized], source_sha)
+                    else:
+                        reg.apply_plan([oversized], source_sha, "0" * 64)
+            except ValueError as exc:
+                assert "issue body" in str(exc), str(exc)
+            else:  # pragma: no cover
+                raise AssertionError(f"{mode} accepted an oversized issue body")
+    finally:
+        reg.registration_stage_digest = original_digest
+        reg.gh = original_gh
+
+    assert digest_calls == []
+    assert "PLAN_SHA256" not in plan_output.getvalue()
+    assert _mutation_payloads(calls) == []
+
+
 def test_apply_requires_explicit_immutable_source_sha() -> None:
     """Apply cannot reach GitHub without one explicit immutable source SHA."""
     calls = []
@@ -2005,16 +2540,188 @@ def test_check_mode_is_offline() -> None:
         reg.gh = original_gh
 
 
+def test_github_arguments_are_pinned_to_the_canonical_host_and_repository() -> None:
+    """Every remote operation carries the exact github.com repository authority."""
+    assert reg._bound_gh_args(
+        "issue", "list", "-R", f"{reg.ORG}/Odysseus", "--state", "all"
+    ) == (
+        "issue",
+        "list",
+        "-R",
+        f"github.com/{reg.ORG}/Odysseus",
+        "--state",
+        "all",
+    )
+    assert reg._bound_gh_args("api", f"repos/{reg.ORG}/Odysseus/labels") == (
+        "api",
+        "--hostname",
+        "github.com",
+        f"repos/{reg.ORG}/Odysseus/labels",
+    )
+
+    for hostile in (
+        ("issue", "list", "-R", "evil.example/HomericIntelligence/Odysseus"),
+        ("issue", "list", "-R", "OtherOwner/Odysseus"),
+        ("api", "--hostname", "evil.example", "graphql"),
+        ("api", "repos/OtherOwner/Odysseus/labels"),
+    ):
+        try:
+            reg._bound_gh_args(*hostile)
+        except ValueError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError(f"hostile GitHub authority was accepted: {hostile}")
+
+
+def test_issue_inventory_rejects_malformed_identifiers_and_schema() -> None:
+    """Issue/API data must be exact typed input before it can select a write."""
+    valid = {
+        "number": 17,
+        "title": "A title",
+        "state": "OPEN",
+        "body": "A body",
+        "labels": [
+            {
+                "id": "label-17",
+                "name": "state:needs-plan",
+                "description": "",
+                "color": "ffffff",
+            }
+        ],
+    }
+    cases = {
+        "top-level mapping": {"entry": valid},
+        "boolean issue number": [{**valid, "number": True}],
+        "floating issue number": [{**valid, "number": 17.5}],
+        "string issue number": [{**valid, "number": "17"}],
+        "zero issue number": [{**valid, "number": 0}],
+        "duplicate issue number": [valid, {**valid, "title": "Another title"}],
+        "missing issue field": [
+            {key: value for key, value in valid.items() if key != "body"}
+        ],
+        "extra issue field": [{**valid, "unexpected": "value"}],
+        "non-string title": [{**valid, "title": None}],
+        "non-string state": [{**valid, "state": 1}],
+        "non-string unhashable state": [{**valid, "state": []}],
+        "non-string body": [{**valid, "body": None}],
+        "non-list labels": [{**valid, "labels": {"name": "state:needs-plan"}}],
+        "non-mapping label": [{**valid, "labels": ["state:needs-plan"]}],
+        "missing label name": [{**valid, "labels": [{"color": "ffffff"}]}],
+        "empty label name": [{**valid, "labels": [{"name": ""}]}],
+        "non-string label name": [{**valid, "labels": [{"name": True}]}],
+        "duplicate label name": [
+            {
+                **valid,
+                "labels": [
+                    {"name": "state:needs-plan"},
+                    {"name": "state:needs-plan"},
+                ],
+            }
+        ],
+    }
+    original_gh = reg.gh
+    accepted = []
+    try:
+        for label, payload in cases.items():
+            reg.gh = lambda *_args, value=payload: json.dumps(value)
+            try:
+                reg.issue_inventory("Odysseus")
+            except RuntimeError:
+                continue
+            accepted.append(label)
+    finally:
+        reg.gh = original_gh
+
+    assert accepted == [], f"malformed issue inventory was accepted: {accepted}"
+
+
+def test_issue_create_url_is_bound_to_the_expected_repository() -> None:
+    """A success URL from another host or repository cannot become a receipt."""
+    target = f"{reg.ORG}/Odysseus"
+    assert (
+        reg.issue_number_from_url(
+            f"https://github.com/{target}/issues/17", expected_target=target
+        )
+        == 17
+    )
+    for hostile_url in (
+        f"https://evil.example/{target}/issues/17",
+        f"https://github.com/{reg.ORG}/Hermes/issues/17",
+        f"https://github.com/{target}/issues/17?redirect=true",
+    ):
+        try:
+            reg.issue_number_from_url(hostile_url, expected_target=target)
+        except ValueError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError(f"hostile issue receipt was accepted: {hostile_url}")
+
+
+def test_github_boundary_uses_a_fixed_executable_and_scrubbed_environment() -> None:
+    """Credential-bearing calls cannot inherit PATH, host, proxy, or hook routing."""
+    observed = {}
+    original_resolve = reg._resolve_gh_executable
+    original_run = reg._run_gh_process
+    hostile_environment = {
+        "PATH": "/tmp/attacker",
+        "GH_HOST": "evil.example",
+        "HTTP_PROXY": "http://evil.example",
+        "HTTPS_PROXY": "http://evil.example",
+        "GIT_CONFIG_PARAMETERS": "'credential.helper'='!attack'",
+    }
+    saved = {name: os.environ.get(name) for name in hostile_environment}
+    os.environ.update(hostile_environment)
+
+    def fake_resolve():
+        return Path("/verified/bin/gh")
+
+    def fake_run(executable, args, environment):
+        observed.update(
+            executable=executable,
+            args=args,
+            environment=dict(environment),
+        )
+        return 0, b"[]\n", b""
+
+    reg._resolve_gh_executable = fake_resolve
+    reg._run_gh_process = fake_run
+    try:
+        assert reg.issue_inventory("Odysseus") == []
+    finally:
+        reg._resolve_gh_executable = original_resolve
+        reg._run_gh_process = original_run
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    assert observed["executable"] == Path("/verified/bin/gh")
+    assert observed["args"][observed["args"].index("-R") + 1] == (
+        f"github.com/{reg.ORG}/Odysseus"
+    )
+    environment = observed["environment"]
+    assert environment["GH_HOST"] == "github.com"
+    assert environment["GH_PROMPT_DISABLED"] == "1"
+    assert environment["GH_PAGER"] == "cat"
+    assert environment["PATH"] == "/usr/bin:/bin"
+    assert "HTTP_PROXY" not in environment
+    assert "HTTPS_PROXY" not in environment
+    assert "GIT_CONFIG_PARAMETERS" not in environment
+
+
 def test_github_timeout_is_truthful_and_cannot_reach_mutation() -> None:
     """A timed-out GitHub read fails instead of continuing into writes."""
     commands = []
-    original_run = reg.subprocess.run
+    original_resolve = reg._resolve_gh_executable
+    original_run = reg._run_gh_process
 
-    def timeout_run(command, **kwargs):
-        commands.append(command)
-        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+    def timeout_run(executable, args, environment):
+        commands.append((str(executable), *args))
+        raise TimeoutError
 
-    reg.subprocess.run = timeout_run
+    reg._resolve_gh_executable = lambda: Path("/verified/bin/gh")
+    reg._run_gh_process = timeout_run
     try:
         try:
             reg.issue_inventory("Odysseus")
@@ -2023,10 +2730,14 @@ def test_github_timeout_is_truthful_and_cannot_reach_mutation() -> None:
         else:  # pragma: no cover
             raise AssertionError("a GitHub timeout must propagate truthfully")
     finally:
-        reg.subprocess.run = original_run
+        reg._resolve_gh_executable = original_resolve
+        reg._run_gh_process = original_run
 
     assert len(commands) == 1
-    assert commands[0][:3] == ["gh", "issue", "list"]
+    assert commands[0][:3] == ("/verified/bin/gh", "issue", "list")
+    assert commands[0][commands[0].index("-R") + 1] == (
+        f"github.com/{reg.ORG}/Odysseus"
+    )
     assert not any(
         tuple(command[1:3])
         in {
@@ -2039,34 +2750,522 @@ def test_github_timeout_is_truthful_and_cannot_reach_mutation() -> None:
     )
 
 
+def test_run_gh_process_returns_exact_stdout_stderr_and_status() -> None:
+    """The direct boundary preserves bounded output and the child status."""
+    with tempfile.TemporaryDirectory() as temporary:
+        executable = _write_gh_boundary_executable(
+            Path(temporary),
+            "gh-normal",
+            """
+            import os
+            import sys
+
+            os.write(1, f"out:{sys.argv[1]}:{os.environ['BOUND_VALUE']}".encode())
+            os.write(2, f"err:{sys.argv[2]}".encode())
+            raise SystemExit(7)
+            """,
+        )
+
+        status, stdout, stderr = reg._run_gh_process(
+            executable,
+            ("first", "second"),
+            {"BOUND_VALUE": "controlled", "LC_ALL": "C"},
+        )
+
+    assert status == 7
+    assert stdout == b"out:first:controlled"
+    assert stderr == b"err:second"
+
+
+def test_pending_signal_acquisition_cleans_scope_before_propagation() -> None:
+    """The spawn boundary owns cleanup across both acquisition signal windows."""
+    original_scope = reg._LinuxProcessScope
+    original_sealed = reg._sealed_executable
+    original_popen = reg.subprocess.Popen
+    original_identity = reg._gh_executable_identity
+    original_sigmask = getattr(reg.signal, "pthread_sigmask", None)
+    original_sigpending = getattr(reg.signal, "sigpending", None)
+    expected_identity = (1,) * 9
+
+    for phase, signal_number in (("pre", signal.SIGTERM), ("post", signal.SIGHUP)):
+        pending = set()
+        events = []
+        stdout_read, stdout_write = os.pipe()
+        stderr_read, stderr_write = os.pipe()
+        os.close(stdout_write)
+        os.close(stderr_write)
+
+        class FakeStream:
+            def __init__(self, descriptor):
+                self._descriptor = descriptor
+                self.closed = False
+
+            def fileno(self):
+                return self._descriptor
+
+            def close(self):
+                if not self.closed:
+                    os.close(self._descriptor)
+                    self.closed = True
+
+        class FakeProcess:
+            pid = 4242
+            stdout = FakeStream(stdout_read)
+            stderr = FakeStream(stderr_read)
+
+            @staticmethod
+            def wait(timeout=None):
+                events.append(("wait", timeout))
+                return 0
+
+        class FakeScope:
+            def __init__(self):
+                events.append("scope")
+
+            @staticmethod
+            def track_root(process_id):
+                events.append(("track", process_id))
+                if phase == "post":
+                    pending.add(signal_number)
+                return 99
+
+            @staticmethod
+            def leader_exited(_descriptor):
+                return True
+
+            @staticmethod
+            def live_descendants(_leader):
+                return ()
+
+            @staticmethod
+            def discover():
+                return False
+
+            @staticmethod
+            def reap_adopted(_leader):
+                events.append("reap")
+
+            @staticmethod
+            def terminate(_process, _grace):
+                events.append("terminate")
+
+            @staticmethod
+            def close():
+                events.append("close")
+
+        @contextmanager
+        def fake_sealed(_executable, _expected, _label):
+            yield "/sealed/executable", ()
+
+        def fake_popen(*_args, **_kwargs):
+            events.append("popen")
+            if phase == "pre":
+                pending.add(signal_number)
+            return FakeProcess()
+
+        def fake_sigmask(operation, signals):
+            events.append(("sigmask", operation, frozenset(signals)))
+            return frozenset()
+
+        reg._LinuxProcessScope = FakeScope
+        reg._sealed_executable = fake_sealed
+        reg.subprocess.Popen = fake_popen
+        reg._gh_executable_identity = lambda _path: expected_identity
+        reg.signal.pthread_sigmask = fake_sigmask
+        reg.signal.sigpending = lambda: frozenset(pending)
+        try:
+            try:
+                reg._run_linux_bound_process(
+                    Path("/verified/bin/gh"),
+                    expected_identity,
+                    ("/verified/bin/gh", "api"),
+                    {"LC_ALL": "C"},
+                    deadline_ns=time.monotonic_ns() + 1_000_000_000,
+                    output_limit=4096,
+                    termination_grace=0.05,
+                    label="gh",
+                )
+            except BaseException as exc:
+                assert getattr(exc, "signal_number", None) == signal_number
+            else:  # pragma: no cover
+                raise AssertionError(f"{phase}-track signal was not propagated")
+        finally:
+            reg._gh_executable_identity = original_identity
+            reg.subprocess.Popen = original_popen
+            reg._sealed_executable = original_sealed
+            reg._LinuxProcessScope = original_scope
+            if original_sigpending is None:
+                del reg.signal.sigpending
+            else:
+                reg.signal.sigpending = original_sigpending
+            if original_sigmask is None:
+                del reg.signal.pthread_sigmask
+            else:
+                reg.signal.pthread_sigmask = original_sigmask
+
+        assert events.index("popen") < events.index("terminate")
+        assert events.index("terminate") < events.index("close")
+        assert events[0][0] == "sigmask"
+
+
+def test_term_and_hup_during_process_acquisition_extinguish_owned_trees() -> None:
+    """Signals before and after root binding cannot orphan an owned process tree."""
+    _require_linux()
+    cases = (("pre", signal.SIGTERM), ("post", signal.SIGHUP))
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        executable = _write_gh_boundary_executable(
+            directory,
+            "gh-signal-tree",
+            """
+            import os
+            import signal
+            import sys
+            import time
+            from pathlib import Path
+
+            def identity(process_id):
+                content = Path(f"/proc/{process_id}/stat").read_bytes()
+                closing = content.rfind(b")")
+                return int(content[closing + 2:].split()[19])
+
+            identity_path = Path(sys.argv[1])
+            heartbeat = Path(sys.argv[2])
+            child = os.fork()
+            if child == 0:
+                os.setsid()
+                signal.signal(signal.SIGTERM, signal.SIG_IGN)
+                signal.signal(signal.SIGHUP, signal.SIG_IGN)
+                os.close(1)
+                os.close(2)
+                count = 0
+                while True:
+                    heartbeat.write_text(str(count), encoding="ascii")
+                    count += 1
+                    time.sleep(0.01)
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            signal.signal(signal.SIGHUP, signal.SIG_IGN)
+            identity_path.write_text(
+                f"{os.getpid()} {identity(os.getpid())} {child} {identity(child)}",
+                encoding="ascii",
+            )
+            os.close(1)
+            os.close(2)
+            while True:
+                time.sleep(1)
+            """,
+        )
+
+        for phase, signal_number in cases:
+            identity_path = directory / f"{phase}.identity"
+            heartbeat = directory / f"{phase}.heartbeat"
+            ready = directory / f"{phase}.ready"
+            worker = directory / f"{phase}-worker.py"
+            worker.write_text(
+                textwrap.dedent(
+                    f"""
+                    import importlib.util
+                    import signal
+                    import sys
+                    import time
+                    from pathlib import Path
+
+                    tool_path = Path({str(_TOOL_PATH)!r})
+                    spec = importlib.util.spec_from_file_location(
+                        "registrar_signal_{phase}", tool_path
+                    )
+                    module = importlib.util.module_from_spec(spec)
+                    sys.modules[spec.name] = module
+                    spec.loader.exec_module(module)
+                    original_track = module._LinuxProcessScope.track_root
+                    ready = Path({str(ready)!r})
+
+                    def synchronized_track(scope, process_id):
+                        if {phase!r} == "pre":
+                            ready.write_text("pre", encoding="ascii")
+                            deadline = time.monotonic() + 5
+                            while not (
+                                {{signal.SIGTERM, signal.SIGHUP}} & signal.sigpending()
+                            ):
+                                if time.monotonic() >= deadline:
+                                    raise RuntimeError("pre-track signal did not arrive")
+                                time.sleep(0.005)
+                            return original_track(scope, process_id)
+                        descriptor = original_track(scope, process_id)
+                        ready.write_text("post", encoding="ascii")
+                        return descriptor
+
+                    module._LinuxProcessScope.track_root = synchronized_track
+                    executable = Path({str(executable)!r})
+                    module._run_linux_bound_process(
+                        executable,
+                        module._gh_executable_identity(executable),
+                        (
+                            str(executable),
+                            {str(identity_path)!r},
+                            {str(heartbeat)!r},
+                        ),
+                        {{"LC_ALL": "C"}},
+                        deadline_ns=time.monotonic_ns() + 10_000_000_000,
+                        output_limit=4096,
+                        termination_grace=0.05,
+                        label="gh",
+                    )
+                    """
+                ).lstrip(),
+                encoding="utf-8",
+            )
+            process = subprocess.Popen(
+                (sys.executable, "-I", str(worker)),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+            identities: tuple[int, int, int, int] | None = None
+            try:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    if ready.exists() and identity_path.exists() and heartbeat.exists():
+                        break
+                    time.sleep(0.01)
+                assert ready.exists(), f"{phase}: acquisition marker was not written"
+                assert identity_path.exists(), f"{phase}: process tree was not started"
+                identities = tuple(map(int, identity_path.read_text().split()))
+                os.kill(process.pid, signal_number)
+                process.wait(timeout=5)
+
+                parent_pid, parent_start, child_pid, child_start = identities
+                extinction_deadline = time.monotonic() + 2
+                while time.monotonic() < extinction_deadline and any(
+                    (
+                        _linux_process_identity_is_active(parent_pid, parent_start),
+                        _linux_process_identity_is_active(child_pid, child_start),
+                    )
+                ):
+                    time.sleep(0.01)
+                assert not _linux_process_identity_is_active(parent_pid, parent_start)
+                assert not _linux_process_identity_is_active(child_pid, child_start)
+                assert _heartbeat_stopped(heartbeat), (
+                    f"{phase}: heartbeat continued after signal cleanup"
+                )
+                assert process.returncode == -signal_number
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=2)
+                if identities is not None:
+                    for leaked_pid in (identities[0], identities[2]):
+                        _kill_test_process(leaked_pid)
+
+
+def test_run_gh_process_rejects_combined_output_overflow_from_each_stream() -> None:
+    """Either output stream can exhaust the one combined byte budget."""
+    original_limit = reg.GH_OUTPUT_LIMIT_BYTES
+    reg.GH_OUTPUT_LIMIT_BYTES = 64
+    try:
+        for descriptor, stream_name in ((1, "stdout"), (2, "stderr")):
+            with tempfile.TemporaryDirectory() as temporary:
+                executable = _write_gh_boundary_executable(
+                    Path(temporary),
+                    f"gh-{stream_name}-overflow",
+                    """
+                    import os
+                    import sys
+
+                    os.write(int(sys.argv[1]), b"x" * 65)
+                    """,
+                )
+                try:
+                    reg._run_gh_process(executable, (str(descriptor),), {"LC_ALL": "C"})
+                except RuntimeError as exc:
+                    assert "gh output exceeded 64 bytes" in str(exc)
+                else:  # pragma: no cover
+                    raise AssertionError(f"{stream_name} overflow must be rejected")
+    finally:
+        reg.GH_OUTPUT_LIMIT_BYTES = original_limit
+
+
+def test_run_gh_process_timeout_extinguishes_term_resistant_descendant() -> None:
+    """A deadline kills the full session, including a TERM-resistant child."""
+    original_timeout = reg.COMMAND_TIMEOUT_SECONDS
+    original_grace = reg.GH_TERMINATION_GRACE_SECONDS
+    reg.COMMAND_TIMEOUT_SECONDS = 1.0
+    reg.GH_TERMINATION_GRACE_SECONDS = 0.05
+    try:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            pid_path = directory / "pids"
+            executable = _write_gh_boundary_executable(
+                directory,
+                "gh-timeout",
+                """
+                import os
+                import signal
+                import sys
+                import time
+                from pathlib import Path
+
+                signal.signal(signal.SIGTERM, signal.SIG_IGN)
+                child = os.fork()
+                if child == 0:
+                    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+                    while True:
+                        time.sleep(1)
+                Path(sys.argv[1]).write_text(f"{os.getpid()} {child}")
+                while True:
+                    time.sleep(1)
+                """,
+            )
+            try:
+                reg._run_gh_process(executable, (str(pid_path),), {"LC_ALL": "C"})
+            except TimeoutError:
+                pass
+            else:  # pragma: no cover
+                raise AssertionError("the bounded process must time out")
+
+            parent_pid, child_pid = map(int, pid_path.read_text().split())
+            assert parent_pid != child_pid
+            assert _wait_for_process_group_extinction(parent_pid), (
+                "the timed-out process group survived cleanup"
+            )
+    finally:
+        reg.COMMAND_TIMEOUT_SECONDS = original_timeout
+        reg.GH_TERMINATION_GRACE_SECONDS = original_grace
+
+
+def test_run_gh_process_rejects_and_extinguishes_surviving_descendant() -> None:
+    """A successful leader cannot conceal a descendant that remains alive."""
+    original_grace = reg.GH_TERMINATION_GRACE_SECONDS
+    reg.GH_TERMINATION_GRACE_SECONDS = 0.05
+    try:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            pid_path = directory / "pids"
+            executable = _write_gh_boundary_executable(
+                directory,
+                "gh-descendant",
+                """
+                import os
+                import signal
+                import sys
+                import time
+                from pathlib import Path
+
+                child = os.fork()
+                if child == 0:
+                    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+                    os.close(1)
+                    os.close(2)
+                    while True:
+                        time.sleep(1)
+                Path(sys.argv[1]).write_text(f"{os.getpid()} {child}")
+                """,
+            )
+            try:
+                reg._run_gh_process(executable, (str(pid_path),), {"LC_ALL": "C"})
+            except RuntimeError as exc:
+                assert "gh left a descendant process running" in str(exc)
+            else:  # pragma: no cover
+                raise AssertionError("a surviving descendant must be rejected")
+
+            parent_pid, child_pid = map(int, pid_path.read_text().split())
+            assert parent_pid != child_pid
+            assert _wait_for_process_group_extinction(parent_pid), (
+                "the rejected descendant process group survived cleanup"
+            )
+    finally:
+        reg.GH_TERMINATION_GRACE_SECONDS = original_grace
+
+
+def test_run_gh_process_rejects_executable_identity_change_on_readback() -> None:
+    """Replacing the executable during a call invalidates its result."""
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        executable = _write_gh_boundary_executable(
+            directory,
+            "gh-replaced",
+            """
+            import os
+            import sys
+
+            os.replace(sys.argv[1], sys.argv[2])
+            os.write(1, b"untrusted success")
+            """,
+        )
+        replacement = _write_gh_boundary_executable(
+            directory,
+            "replacement",
+            """
+            # replacement identity
+            raise SystemExit(0)
+            """,
+        )
+        before = executable.stat()
+
+        try:
+            reg._run_gh_process(
+                executable,
+                (str(replacement), str(executable)),
+                {"LC_ALL": "C"},
+            )
+        except RuntimeError as exc:
+            assert "approved gh executable changed during invocation" in str(exc)
+        else:  # pragma: no cover
+            raise AssertionError("an executable replacement must invalidate the result")
+
+        after = executable.stat()
+        assert (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)
+        assert "replacement identity" in executable.read_text()
+
+
 def test_git_timeout_stops_before_github_access() -> None:
     """A timed-out source read cannot fall through to GitHub planning."""
     milestones = _load()
     github_calls = []
-    original_run = reg.subprocess.run
+    runner_calls = []
+    original_platform = reg.sys.platform
+    original_resolve = reg._resolve_git_executable
+    original_identity = reg._git_executable_identity
+    original_runner = reg._run_linux_bound_process
     original_gh = reg.gh
 
-    def timeout_run(command, **kwargs):
-        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+    def timeout_runner(*args, **kwargs):
+        runner_calls.append((args, kwargs))
+        raise TimeoutError("test-forced Git deadline")
 
-    reg.subprocess.run = timeout_run
+    reg.sys.platform = "linux"
+    reg._resolve_git_executable = lambda: Path("/verified/bin/git")
+    reg._git_executable_identity = lambda _path: (1,) * 9
+    reg._run_linux_bound_process = timeout_runner
     reg.gh = lambda *args: github_calls.append(args) or TEST_SOURCE_SHA
     try:
         try:
             reg.verify_source_snapshot(milestones, TEST_SOURCE_SHA)
         except ValueError as exc:
             assert "immutable source commit is unavailable" in str(exc)
+            assert isinstance(exc.__cause__, ValueError)
+            assert f"timed out after {reg.COMMAND_TIMEOUT_SECONDS}s" in str(
+                exc.__cause__
+            )
+            assert isinstance(exc.__cause__.__cause__, TimeoutError)
         else:  # pragma: no cover
             raise AssertionError("a Git timeout must stop source verification")
     finally:
         reg.gh = original_gh
-        reg.subprocess.run = original_run
+        reg._run_linux_bound_process = original_runner
+        reg._git_executable_identity = original_identity
+        reg._resolve_git_executable = original_resolve
+        reg.sys.platform = original_platform
 
+    assert len(runner_calls) == 1
+    assert runner_calls[0][1]["label"] == "Git"
     assert github_calls == []
 
 
 def test_apply_verifies_every_selected_blob_before_github_access() -> None:
     """Payload or workflow drift from the selected commit stops apply."""
+    _require_linux()
     for relative_path in (
         "tools/github/milestone-epics.d/m6.yaml",
         "workflows/m6-idea-watcher-web.yaml",
@@ -2095,11 +3294,270 @@ def test_apply_verifies_every_selected_blob_before_github_access() -> None:
             finally:
                 isolated.gh = original_gh
 
-            assert calls == []
+    assert calls == []
+
+
+def test_git_boundary_ignores_hostile_path_and_fails_closed_without_containment() -> (
+    None
+):
+    """Git source evidence never executes a PATH-selected program."""
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        marker = directory / "ambient-git-ran"
+        hostile = _write_gh_boundary_executable(
+            directory,
+            "git",
+            f"""
+            from pathlib import Path
+
+            Path({str(marker)!r}).write_text("executed", encoding="utf-8")
+            print("hostile git")
+            """,
+        )
+        trusted_directory = directory / "trusted"
+        trusted_directory.mkdir()
+        trusted = _write_gh_boundary_executable(
+            trusted_directory,
+            "git",
+            """
+            import os
+
+            os.write(1, b"git version controlled\\n")
+            """,
+        )
+        saved_path = os.environ.get("PATH")
+        original_candidates = reg.GIT_EXECUTABLE_CANDIDATES
+        os.environ["PATH"] = str(hostile.parent)
+        reg.GIT_EXECUTABLE_CANDIDATES = (trusted,)
+        try:
+            if sys.platform.startswith("linux"):
+                output = reg._git_bytes("--version")
+                assert output.startswith(b"git version ")
+            else:
+                try:
+                    reg._git_bytes("--version")
+                except ValueError as exc:
+                    assert "containment is unavailable" in str(exc)
+                else:  # pragma: no cover
+                    raise AssertionError(
+                        "an unsupported host must fail before Git execution"
+                    )
+        finally:
+            reg.GIT_EXECUTABLE_CANDIDATES = original_candidates
+            if saved_path is None:
+                os.environ.pop("PATH", None)
+            else:
+                os.environ["PATH"] = saved_path
+
+        assert not marker.exists(), "the PATH-selected Git executable ran"
+
+
+def test_git_boundary_scrubs_ambient_repository_and_config_environment() -> None:
+    """A trusted Git command receives no caller-selected repository or config."""
+    _require_linux()
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        executable = _write_gh_boundary_executable(
+            directory,
+            "git",
+            """
+            import os
+            import sys
+
+            forbidden = {
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                "GIT_CONFIG_COUNT",
+                "GIT_CONFIG_PARAMETERS",
+                "GIT_DIR",
+                "GIT_OBJECT_DIRECTORY",
+                "GIT_WORK_TREE",
+                "HTTP_PROXY",
+                "HTTPS_PROXY",
+            }
+            if forbidden & os.environ.keys():
+                raise SystemExit(88)
+            if os.environ.get("HOME") != "/dev/null":
+                raise SystemExit(89)
+            os.write(1, b"git version controlled\\n")
+            """,
+        )
+        hostile = {
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(directory / "objects"),
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "alias.cat-file",
+            "GIT_CONFIG_PARAMETERS": "'credential.helper'='!attack'",
+            "GIT_CONFIG_VALUE_0": "!attack",
+            "GIT_DIR": str(directory / "repo"),
+            "GIT_OBJECT_DIRECTORY": str(directory / "objects"),
+            "GIT_WORK_TREE": str(directory / "worktree"),
+            "HTTP_PROXY": "http://evil.example",
+            "HTTPS_PROXY": "http://evil.example",
+        }
+        saved = {name: os.environ.get(name) for name in hostile}
+        original_candidates = reg.GIT_EXECUTABLE_CANDIDATES
+        os.environ.update(hostile)
+        reg.GIT_EXECUTABLE_CANDIDATES = (executable,)
+        try:
+            assert reg._git_bytes("--version") == b"git version controlled\n"
+        finally:
+            reg.GIT_EXECUTABLE_CANDIDATES = original_candidates
+            for name, value in saved.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+
+def test_git_boundary_rejects_an_output_flood_without_buffering_it_all() -> None:
+    """Git stdout and stderr share one fixed byte ceiling."""
+    _require_linux()
+    with tempfile.TemporaryDirectory() as temporary:
+        executable = _write_gh_boundary_executable(
+            Path(temporary),
+            "git",
+            """
+            import os
+
+            os.write(1, b"x" * (8 * 1024 * 1024 + 1))
+            """,
+        )
+        original_candidates = reg.GIT_EXECUTABLE_CANDIDATES
+        reg.GIT_EXECUTABLE_CANDIDATES = (executable,)
+        try:
+            try:
+                reg._git_bytes("--version")
+            except ValueError as exc:
+                assert "output exceeded" in str(exc)
+            else:  # pragma: no cover
+                raise AssertionError("a Git output flood must be rejected")
+        finally:
+            reg.GIT_EXECUTABLE_CANDIDATES = original_candidates
+
+
+def test_git_timeout_extinguishes_a_setsid_descendant_with_closed_pipes() -> None:
+    """A Git timeout stops a detached heartbeat after its pipes close."""
+    _require_linux()
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        pid_path = directory / "pid"
+        heartbeat = directory / "heartbeat"
+        executable = _write_gh_boundary_executable(
+            directory,
+            "git",
+            """
+            import os
+            import signal
+            import sys
+            import time
+            from pathlib import Path
+
+            pid_path = Path(sys.argv[-2])
+            heartbeat = Path(sys.argv[-1])
+            child = os.fork()
+            if child == 0:
+                os.setsid()
+                os.close(0)
+                os.close(1)
+                os.close(2)
+                pid_path.write_text(str(os.getpid()), encoding="ascii")
+                count = 0
+                while True:
+                    heartbeat.write_text(str(count), encoding="ascii")
+                    count += 1
+                    time.sleep(0.01)
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            while True:
+                time.sleep(1)
+            """,
+        )
+        original_candidates = reg.GIT_EXECUTABLE_CANDIDATES
+        original_timeout = reg.COMMAND_TIMEOUT_SECONDS
+        reg.GIT_EXECUTABLE_CANDIDATES = (executable,)
+        reg.COMMAND_TIMEOUT_SECONDS = 1.0
+        leaked_pid = None
+        try:
+            try:
+                reg._git_bytes("--version", str(pid_path), str(heartbeat))
+            except ValueError as exc:
+                assert "timed out" in str(exc), str(exc)
+            else:  # pragma: no cover
+                raise AssertionError("a hanging Git command must time out")
+            leaked_pid = int(pid_path.read_text(encoding="ascii"))
+            assert _heartbeat_stopped(heartbeat), (
+                "the detached Git descendant continued after timeout"
+            )
+        finally:
+            reg.COMMAND_TIMEOUT_SECONDS = original_timeout
+            reg.GIT_EXECUTABLE_CANDIDATES = original_candidates
+            if leaked_pid is None and pid_path.exists():
+                leaked_pid = int(pid_path.read_text(encoding="ascii"))
+            if leaked_pid is not None:
+                _kill_test_process(leaked_pid)
+
+
+def test_gh_success_rejects_and_extinguishes_a_setsid_closed_pipe_descendant() -> None:
+    """A successful gh leader cannot leave a detached heartbeat alive."""
+    _require_linux()
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        pid_path = directory / "pid"
+        heartbeat = directory / "heartbeat"
+        executable = _write_gh_boundary_executable(
+            directory,
+            "gh-detached",
+            """
+            import os
+            import sys
+            import time
+            from pathlib import Path
+
+            if os.environ.get("GH_TOKEN") != "odysseus-test-placeholder":
+                raise SystemExit(91)
+            pid_path = Path(sys.argv[-2])
+            heartbeat = Path(sys.argv[-1])
+            child = os.fork()
+            if child == 0:
+                os.setsid()
+                os.close(0)
+                os.close(1)
+                os.close(2)
+                pid_path.write_text(str(os.getpid()), encoding="ascii")
+                count = 0
+                while True:
+                    heartbeat.write_text(str(count), encoding="ascii")
+                    count += 1
+                    time.sleep(0.01)
+            """,
+        )
+        leaked_pid = None
+        try:
+            try:
+                reg._run_gh_process(
+                    executable,
+                    (str(pid_path), str(heartbeat)),
+                    {
+                        "GH_TOKEN": "odysseus-test-placeholder",
+                        "LC_ALL": "C",
+                    },
+                )
+            except RuntimeError as exc:
+                assert "descendant process" in str(exc)
+            else:  # pragma: no cover
+                raise AssertionError("a detached gh descendant must be rejected")
+            leaked_pid = int(pid_path.read_text(encoding="ascii"))
+            assert _heartbeat_stopped(heartbeat), (
+                "the detached gh descendant continued after leader success"
+            )
+        finally:
+            if leaked_pid is None and pid_path.exists():
+                leaked_pid = int(pid_path.read_text(encoding="ascii"))
+            if leaked_pid is not None:
+                _kill_test_process(leaked_pid)
 
 
 def test_source_verification_accepts_only_exact_committed_blobs() -> None:
     """A full commit SHA verifies the exact parsed payload and workflow bytes."""
+    _require_linux()
     with _isolated_tool_tree() as (isolated, root):
         source_sha = _commit_isolated_sources(root)
         milestones = isolated.load_payloads()
@@ -2137,8 +3595,84 @@ def test_source_verification_accepts_only_exact_committed_blobs() -> None:
                 )
 
 
+def test_source_verification_binds_canonical_blob_ids_without_local_remote_config() -> (
+    None
+):
+    """Canonical GitHub identity and exact selected blob IDs authorize content."""
+    milestones = _load()
+    source_sha = "a" * 40
+    payload_paths = sorted(milestone.payload_path for milestone in milestones)
+    selected_paths = sorted(
+        {
+            path
+            for milestone in milestones
+            for path in (milestone.payload_path, milestone.workflow)
+        }
+    )
+    contents = {path: (reg.REPO_ROOT / path).read_bytes() for path in selected_paths}
+    object_ids = {
+        path: hashlib.sha1(
+            f"blob {len(content)}\0".encode("ascii") + content,
+            usedforsecurity=False,
+        ).hexdigest()
+        for path, content in contents.items()
+    }
+    calls = []
+    original_git = reg._git_bytes
+    original_gh = reg.gh
+
+    def fake_git(*args):
+        calls.append(args)
+        if args == ("cat-file", "-t", source_sha):
+            return b"commit\n"
+        if args[:5] == (
+            "ls-tree",
+            "-r",
+            "-z",
+            "--name-only",
+            source_sha,
+        ):
+            return b"\0".join(path.encode("utf-8") for path in payload_paths) + b"\0"
+        if args[:4] == (
+            "ls-tree",
+            "-z",
+            "--format=%(objecttype) %(objectname)%x09%(path)",
+            source_sha,
+        ):
+            return b"".join(
+                b"blob "
+                + object_ids[path].encode("ascii")
+                + b"\t"
+                + path.encode("utf-8")
+                + b"\0"
+                for path in selected_paths
+            )
+        if args[:2] == ("cat-file", "blob") and args[2] in object_ids.values():
+            path = next(path for path, oid in object_ids.items() if oid == args[2])
+            return contents[path]
+        if args and args[0] == "ls-remote":  # pragma: no cover - RED assertion
+            raise AssertionError(
+                "source verification consulted mutable local remote config"
+            )
+        raise AssertionError(f"unexpected Git evidence request: {args!r}")
+
+    reg._git_bytes = fake_git
+    reg.gh = lambda *args: source_sha
+    try:
+        assert reg.verify_source_snapshot(milestones, source_sha) == source_sha
+    finally:
+        reg.gh = original_gh
+        reg._git_bytes = original_git
+
+    assert not any(args and args[0] == "ls-remote" for args in calls)
+    assert {args[2] for args in calls if args[:2] == ("cat-file", "blob")} == set(
+        object_ids.values()
+    )
+
+
 def test_source_verification_rejects_noncanonical_remote_head() -> None:
     """A matching local origin cannot impersonate canonical GitHub main."""
+    _require_linux()
     with _isolated_tool_tree() as (isolated, root):
         source_sha = _commit_isolated_sources(root)
         canonical_sha = "f" * 40
@@ -2168,6 +3702,7 @@ def test_source_verification_rejects_noncanonical_remote_head() -> None:
 
 def test_source_verification_ignores_local_replace_refs() -> None:
     """A replace ref cannot substitute attacker-controlled source bytes."""
+    _require_linux()
     with _isolated_tool_tree() as (isolated, root):
         source_sha = _commit_isolated_sources(root)
         payload = root / "tools" / "github" / "milestone-epics.d" / "m6.yaml"
@@ -2227,6 +3762,7 @@ def test_source_verification_ignores_local_replace_refs() -> None:
 
 def test_source_verification_rejects_canonical_payload_missing_locally() -> None:
     """The selected commit cannot contain an unparsed canonical YAML payload."""
+    _require_linux()
     with _isolated_tool_tree() as (isolated, root):
         payload_dir = root / "tools" / "github" / "milestone-epics.d"
         extra_payload = payload_dir / "m7.yaml"
@@ -2258,6 +3794,7 @@ def test_source_verification_rejects_canonical_payload_missing_locally() -> None
 
 def test_source_verification_rejects_unpublished_commit() -> None:
     """A local-only commit cannot authorize GitHub issue writes."""
+    _require_linux()
     with _isolated_tool_tree() as (isolated, root):
         published_sha = _commit_isolated_sources(root)
         payload = root / "tools" / "github" / "milestone-epics.d" / "m6.yaml"
@@ -2295,20 +3832,26 @@ def test_source_verification_rejects_unpublished_commit() -> None:
         ).stdout.strip()
         assert source_sha != published_sha
         milestones = isolated.load_payloads()
+        original_gh = isolated.gh
+        isolated.gh = lambda *args: published_sha
         try:
-            isolated.verify_source_snapshot(milestones, source_sha)
-        except ValueError as exc:
-            assert "origin" in str(exc)
-            assert "main" in str(exc)
-            assert source_sha in str(exc)
-        else:  # pragma: no cover
-            raise AssertionError("an unpublished commit must be rejected")
+            try:
+                isolated.verify_source_snapshot(milestones, source_sha)
+            except ValueError as exc:
+                assert "canonical GitHub main" in str(exc)
+                assert published_sha in str(exc)
+                assert source_sha in str(exc)
+            else:  # pragma: no cover
+                raise AssertionError("an unpublished commit must be rejected")
+        finally:
+            isolated.gh = original_gh
 
 
 def test_registration_resumes_exact_historical_bodies_after_unrelated_main_change() -> (
     None
 ):
     """A later stage accepts exact A-bound bodies when selected blobs match B."""
+    _require_linux()
     with _isolated_tool_tree() as (isolated, root):
         source_a = _commit_isolated_sources(root)
         milestones_a = [
@@ -2381,6 +3924,7 @@ def test_historical_body_resume_rejects_changed_sources_and_tampering_before_wri
     None
 ):
     """Only exact bodies with equivalent payload and workflow blobs can resume."""
+    _require_linux()
     cases = (
         ("payload blob changed", "tools/github/milestone-epics.d/m1.yaml"),
         ("workflow blob changed", "workflows/m1-hephaestus-keystone.yaml"),
@@ -3094,7 +4638,9 @@ def test_rendering_requires_known_numbers() -> None:
 
 def main() -> int:
     checks = [
+        test_process_scope_rescans_after_a_scanned_child_forks_then_exits,
         test_tool_symlink_invocation_is_rejected,
+        test_executable_entry_rejects_python_startup_and_loader_authority,
         test_parent_symlink_uses_one_resolved_repository_root,
         test_six_milestones_with_correct_epic_homes,
         test_every_child_is_single_purpose_and_repo_valid,
@@ -3111,6 +4657,9 @@ def main() -> int:
         test_workflow_reference_stays_in_direct_regular_file_boundary,
         test_payload_file_symlink_stops_before_remote_access,
         test_payload_directory_symlink_stops_before_remote_access,
+        test_yaml_duplicate_keys_are_rejected_at_each_authored_level,
+        test_payload_inventory_and_yaml_source_bytes_have_hard_ceilings,
+        test_yaml_alias_depth_node_and_string_budgets_apply_to_all_sources,
         test_payload_filename_must_match_milestone_identity,
         test_top_level_routing_fields_require_exact_string_types,
         test_child_routing_fields_require_exact_authored_types,
@@ -3136,12 +4685,32 @@ def main() -> int:
         test_release_cannot_delete_replacement_after_owner_check,
         test_partial_activation_replans_only_children_still_staged,
         test_apply_rejects_unreviewed_stage_before_remote_write,
+        test_plan_and_apply_reject_unexecutable_write_arguments_before_mutation,
+        test_github_argument_and_field_limits_reject_before_execution,
+        test_oversized_issue_body_stops_before_digest_lock_or_mutation,
         test_apply_requires_explicit_immutable_source_sha,
         test_check_mode_is_offline,
+        test_github_arguments_are_pinned_to_the_canonical_host_and_repository,
+        test_issue_inventory_rejects_malformed_identifiers_and_schema,
+        test_issue_create_url_is_bound_to_the_expected_repository,
+        test_github_boundary_uses_a_fixed_executable_and_scrubbed_environment,
         test_github_timeout_is_truthful_and_cannot_reach_mutation,
+        test_run_gh_process_returns_exact_stdout_stderr_and_status,
+        test_pending_signal_acquisition_cleans_scope_before_propagation,
+        test_term_and_hup_during_process_acquisition_extinguish_owned_trees,
+        test_run_gh_process_rejects_combined_output_overflow_from_each_stream,
+        test_run_gh_process_timeout_extinguishes_term_resistant_descendant,
+        test_run_gh_process_rejects_and_extinguishes_surviving_descendant,
+        test_run_gh_process_rejects_executable_identity_change_on_readback,
         test_git_timeout_stops_before_github_access,
+        test_git_boundary_ignores_hostile_path_and_fails_closed_without_containment,
+        test_git_boundary_scrubs_ambient_repository_and_config_environment,
+        test_git_boundary_rejects_an_output_flood_without_buffering_it_all,
+        test_git_timeout_extinguishes_a_setsid_descendant_with_closed_pipes,
+        test_gh_success_rejects_and_extinguishes_a_setsid_closed_pipe_descendant,
         test_apply_verifies_every_selected_blob_before_github_access,
         test_source_verification_accepts_only_exact_committed_blobs,
+        test_source_verification_binds_canonical_blob_ids_without_local_remote_config,
         test_source_verification_rejects_noncanonical_remote_head,
         test_source_verification_ignores_local_replace_refs,
         test_source_verification_rejects_canonical_payload_missing_locally,
@@ -3167,6 +4736,8 @@ def main() -> int:
     for check in checks:
         try:
             check()
+        except unittest.SkipTest as exc:
+            print(f"SKIP {check.__name__}: {exc}")
         except AssertionError as exc:
             print(f"FAIL {check.__name__}: {exc}")
             failed += 1

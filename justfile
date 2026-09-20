@@ -82,84 +82,28 @@ install PREFIX="/usr/local":
 
 # Build Agamemnon (C++/CMake + Conan, debug preset)
 _build-agamemnon:
-    @echo "--- Conan deps for control/Agamemnon ---"
-    cd control/Agamemnon && pixi run conan install . \
-        --output-folder="{{BUILD_ROOT}}/Agamemnon" \
-        --profile=conan/profiles/debug \
-        --build=missing
-    @echo "--- Building control/Agamemnon ---"
-    @if [ -d "{{BUILD_ROOT}}/Agamemnon" ]; then rm -rf "{{BUILD_ROOT}}/Agamemnon/CMakeCache.txt" "{{BUILD_ROOT}}/Agamemnon/CMakeFiles" "{{BUILD_ROOT}}/Agamemnon/_deps"; fi
-    pixi run cmake -S control/Agamemnon -B "{{BUILD_ROOT}}/Agamemnon" \
-        -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/Agamemnon/conan_toolchain.cmake" \
-        -DCMAKE_BUILD_TYPE=Debug \
-        -G Ninja \
-        -DAgamemnon_BUILD_TESTING=ON \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-    pixi run cmake --build "{{BUILD_ROOT}}/Agamemnon"
+    @BASH_ENV= ENV= /bin/bash -p scripts/build-pinned-submodule.sh agamemnon
 
 # Build Nestor (C++/CMake + Conan, debug preset)
 # Nestor renamed its profiles debug/release -> nestor-debug/nestor-release in
 # Nestor#96 (portable-profiles fix); the other C++ submodules still
 # ship conan/profiles/debug.
 _build-nestor:
-    @echo "--- Conan deps for control/Nestor ---"
-    cd control/Nestor && pixi run conan install . \
-        --output-folder="{{BUILD_ROOT}}/Nestor" \
-        --profile=conan/profiles/nestor-debug \
-        --build=missing
-    @echo "--- Building control/Nestor ---"
-    @if [ -d "{{BUILD_ROOT}}/Nestor" ]; then rm -rf "{{BUILD_ROOT}}/Nestor/CMakeCache.txt" "{{BUILD_ROOT}}/Nestor/CMakeFiles" "{{BUILD_ROOT}}/Nestor/_deps"; fi
-    pixi run cmake -S control/Nestor -B "{{BUILD_ROOT}}/Nestor" \
-        -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/Nestor/conan_toolchain.cmake" \
-        -DCMAKE_BUILD_TYPE=Debug \
-        -G Ninja \
-        -DNestor_BUILD_TESTING=ON \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-    pixi run cmake --build "{{BUILD_ROOT}}/Nestor"
+    @BASH_ENV= ENV= /bin/bash -p scripts/build-pinned-submodule.sh nestor
 
 # Build Charybdis (C++/CMake + Conan, debug preset)
 _build-charybdis:
-    @echo "--- Conan deps for testing/Charybdis ---"
-    cd testing/Charybdis && pixi run conan install . \
-        --output-folder="{{BUILD_ROOT}}/Charybdis" \
-        --profile=conan/profiles/debug \
-        --build=missing
-    @echo "--- Building testing/Charybdis ---"
-    @if [ -d "{{BUILD_ROOT}}/Charybdis" ]; then rm -rf "{{BUILD_ROOT}}/Charybdis/CMakeCache.txt" "{{BUILD_ROOT}}/Charybdis/CMakeFiles" "{{BUILD_ROOT}}/Charybdis/_deps"; fi
-    pixi run cmake -S testing/Charybdis -B "{{BUILD_ROOT}}/Charybdis" \
-        -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/Charybdis/conan_toolchain.cmake" \
-        -DCMAKE_BUILD_TYPE=Debug \
-        -G Ninja \
-        -DCharybdis_BUILD_TESTING=ON \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-    pixi run cmake --build "{{BUILD_ROOT}}/Charybdis"
+    @BASH_ENV= ENV= /bin/bash -p scripts/build-pinned-submodule.sh charybdis
 
 # Build Keystone (C++/CMake + Conan, debug preset)
 _build-keystone:
-    @echo "--- Conan deps for provisioning/Keystone ---"
-    cd provisioning/Keystone && pixi run conan install . \
-        --output-folder="{{BUILD_ROOT}}/Keystone" \
-        --profile=conan/profiles/debug \
-        --build=missing
-    @echo "--- Building provisioning/Keystone ---"
-    @if [ -d "{{BUILD_ROOT}}/Keystone" ]; then rm -rf "{{BUILD_ROOT}}/Keystone/CMakeCache.txt" "{{BUILD_ROOT}}/Keystone/CMakeFiles" "{{BUILD_ROOT}}/Keystone/_deps"; fi
-    pixi run cmake -S provisioning/Keystone -B "{{BUILD_ROOT}}/Keystone" \
-        -DCMAKE_TOOLCHAIN_FILE="{{BUILD_ROOT}}/Keystone/conan_toolchain.cmake" \
-        -DCMAKE_BUILD_TYPE=Debug \
-        -G Ninja \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-    pixi run cmake --build "{{BUILD_ROOT}}/Keystone"
+    @BASH_ENV= ENV= /bin/bash -p scripts/build-pinned-submodule.sh keystone
 
 _build-myrmidon:
-    @echo "--- Building provisioning/Myrmidons/hello-world (hello_myrmidon) ---"
     # Produces {{BUILD_ROOT}}/Myrmidons/hello-world/hello_myrmidon — the first
     # path start_myrmidon_bg (e2e/lib/process.sh:115) searches. Plain
     # FetchContent (nats.c + nlohmann/json), no Conan toolchain needed.
-    @if [ -d "{{BUILD_ROOT}}/Myrmidons/hello-world" ]; then rm -rf "{{BUILD_ROOT}}/Myrmidons/hello-world/CMakeCache.txt" "{{BUILD_ROOT}}/Myrmidons/hello-world/CMakeFiles"; fi
-    pixi run cmake -S provisioning/Myrmidons/hello-world -B "{{BUILD_ROOT}}/Myrmidons/hello-world" \
-        -DCMAKE_BUILD_TYPE=Release \
-        -G Ninja
-    pixi run cmake --build "{{BUILD_ROOT}}/Myrmidons/hello-world"
+    @BASH_ENV= ENV= /bin/bash -p scripts/build-pinned-submodule.sh myrmidon
 
 # ===========================================================================
 # Test
@@ -397,6 +341,10 @@ test-justfile-recipes:
 test-resource-bounds:
     bash tests/test-resource-bounds.sh
 
+# Prove root C++ recipes consume exact gitlink snapshots (no live build).
+test-pinned-build-inputs:
+    bash tests/test-build-pinned-submodule.sh
+
 # Compare repository hierarchy copies with the pinned Myrmidons source.
 check-hierarchy-sync:
     bash scripts/check-hierarchy-sync.sh
@@ -483,13 +431,11 @@ argus-start:
 # Install all prerequisites for a worker host (podman, NATS, observability)
 install-worker:
     bash e2e/doctor.sh --role worker --install
-    git submodule update --init --recursive
     @echo "Installation completed. Select and verify an authorized deployment path in docs/deployment.md before starting services."
 
 # Install all prerequisites + build C++ binaries for a control host
 install-control:
     bash e2e/doctor.sh --role control --install
-    git submodule update --init --recursive
     just _build-agamemnon _build-nestor
     @echo "Installation and builds completed. Select and verify an authorized deployment path in docs/deployment.md before starting services."
 
@@ -585,13 +531,19 @@ e2e-full: e2e-test e2e-conan-validate e2e-pip-validate
 # ALL parameters are passed as env vars, NOT positional args. Example:
 #   EPOCHS=10 BATCH_SIZE=64 just alexnet-train
 #   FORCE_AVX2=1 MAX_BATCHES=3 just alexnet-train
+[script("/usr/bin/python3", "-I", "-E")]
 alexnet-train:
-    bash e2e/alexnet-train.sh
+    import runpy, sys
+    sys.argv = ["e2e/alexnet-launch.py", "train"]
+    runpy.run_path("e2e/alexnet-launch.py", run_name="__main__")
 
 # Epimetheus/hub only — build the image, distribute to fleet, launch training.
 # Pass optional config via env vars: EPOCHS, BATCH_SIZE, FLEET, DRY_RUN, etc.
+[script("/usr/bin/python3", "-I", "-E")]
 alexnet-fleet-deploy:
-    bash e2e/alexnet-deploy-fleet.sh
+    import runpy, sys
+    sys.argv = ["e2e/alexnet-launch.py", "deploy"]
+    runpy.run_path("e2e/alexnet-launch.py", run_name="__main__")
 
 # Wait for every selected training container, then verify completion evidence.
 # Extra flags are forwarded to the gate (for example, --smoke or
@@ -601,32 +553,49 @@ alexnet-fleet-wait *ARGS:
 
 # Centrally collect training results from all fleet hosts (rsync over Tailscale).
 # Pass CENTRAL_DIR=~/custom-path just alexnet-fleet-collect to override the dir.
+[script("/usr/bin/python3", "-I", "-E")]
 alexnet-fleet-collect:
-    bash e2e/alexnet-collect-results.sh
+    import runpy, sys
+    sys.argv = ["e2e/alexnet-launch.py", "collect"]
+    runpy.run_path("e2e/alexnet-launch.py", run_name="__main__")
 
 # Remove only the exact alexnet-training container on every approved fleet host.
 # Interactive runs require an exact typed target; non-interactive runs require
 # ALEXNET_TEARDOWN_APPROVED_FLEET to match FLEET. Results and scripts are kept.
+[script("/usr/bin/python3", "-I", "-E")]
 alexnet-fleet-teardown:
-    bash e2e/alexnet-fleet-teardown.sh
+    import runpy, sys
+    sys.argv = ["e2e/alexnet-launch.py", "teardown"]
+    runpy.run_path("e2e/alexnet-launch.py", run_name="__main__")
 
 # Convenience: end-to-end smoke test on the current host (3 synthetic batches).
 # Same as: MAX_BATCHES=3 just alexnet-train
+[script("/usr/bin/python3", "-I", "-E")]
 alexnet-smoke:
-    MAX_BATCHES=3 bash e2e/alexnet-train.sh
+    import os, runpy, sys
+    os.environ["MAX_BATCHES"] = "3"
+    sys.argv = ["e2e/alexnet-launch.py", "train"]
+    runpy.run_path("e2e/alexnet-launch.py", run_name="__main__")
 
 # Run the hermetic mesh-script failure-oracle suite. It does not query Tailscale
 # unless CHAOS_NETWORK=1 is separately authorized, but it can change the local
 # training container and therefore requires ALEXNET_CHAOS_APPROVED_HOST to equal
 # the current hostname. CHAOS_TIMEOUT=<s> overrides the case guard (default 45).
+[script("/usr/bin/python3", "-I", "-E")]
 alexnet-mesh-chaos:
-    bash e2e/alexnet-mesh-chaos.sh
+    import runpy, sys
+    sys.argv = ["e2e/alexnet-launch.py", "chaos"]
+    runpy.run_path("e2e/alexnet-launch.py", run_name="__main__")
 
 # Same suite plus explicitly authorized live cases: C4 verifies the clobber
 # guard and C5 kills a real local training container. It requires the image,
 # exact local-host approval, and an idle alexnet-training container namespace.
+[script("/usr/bin/python3", "-I", "-E")]
 alexnet-mesh-chaos-live:
-    CHAOS_LIVE=1 bash e2e/alexnet-mesh-chaos.sh
+    import os, runpy, sys
+    os.environ["CHAOS_LIVE"] = "1"
+    sys.argv = ["e2e/alexnet-launch.py", "chaos"]
+    runpy.run_path("e2e/alexnet-launch.py", run_name="__main__")
 
 # ===========================================================================
 # Python Package Installation
@@ -750,16 +719,23 @@ ruleset-enforcement-check:
 # official documentation and docs/runbooks/disable-code-quality.md.
 
 # Discover the canonical gitlink inventory plus Odysseus
+[script("/usr/bin/env", "-u", "BASH_ENV", "-u", "ENV", "/bin/bash", "--noprofile", "--norc", "-p")]
 code-quality-audit:
-    @bash tools/probe-code-quality.sh
+    /bin/bash --noprofile --norc -p tools/probe-code-quality.sh
 
 # Discover a separately scoped live organization inventory
+[script("/usr/bin/env", "-u", "BASH_ENV", "-u", "ENV", "/bin/bash", "--noprofile", "--norc", "-p")]
 code-quality-audit-all:
-    @bash tools/probe-code-quality.sh --all
+    /bin/bash --noprofile --norc -p tools/probe-code-quality.sh --all
 
-# Write current discovery readbacks to a CI-friendly artifact
+# Write current discovery readbacks to a fresh owner-private artifact
+[script("/usr/bin/env", "-u", "BASH_ENV", "-u", "ENV", "/bin/bash", "--noprofile", "--norc", "-p")]
 code-quality-update:
-    @bash tools/probe-code-quality.sh --output docs/ecosystem-code-quality-status.md
+    report_dir=$(/usr/bin/mktemp -d /tmp/odysseus-code-quality.XXXXXXXX) && \
+      /bin/chmod 0700 "$report_dir" && \
+      report_path="$report_dir/ecosystem-code-quality-status.md" && \
+      /bin/bash --noprofile --norc -p tools/probe-code-quality.sh --output "$report_path" && \
+      /usr/bin/printf 'Code Quality report: %s\n' "$report_path"
 
 # Print the contextual runbook path
 code-quality-runbook:

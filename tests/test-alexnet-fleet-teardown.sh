@@ -10,6 +10,10 @@ source "$ROOT/e2e/lib/common.sh"
 fixture_root="$(mktemp -d "${TMPDIR:-/tmp}/odysseus-alexnet-teardown.XXXXXX")"
 fixture_bin="$fixture_root/bin"
 mkdir -p "$fixture_bin"
+darwin_worker_fail_closed=0
+if [ "$(uname -s)" = Darwin ]; then
+    darwin_worker_fail_closed=1
+fi
 cleanup_fixture() {
     if ! rm -r -- "$fixture_root"; then
         echo "ERROR: failed to remove AlexNet teardown fixture: $fixture_root" >&2
@@ -137,6 +141,15 @@ cat > "$fixture_bin/timeout" <<'EOF'
 #!/usr/bin/env bash
 shift
 exec "$@"
+EOF
+
+cat > "$fixture_bin/python3" <<'EOF'
+#!/usr/bin/env bash
+if [ "${ODYSSEUS_TEST_FAIL_HOLDER_SIGNAL:-0}" = 1 ] \
+        && [[ " $* " == *pidfd_send_signal* ]]; then
+    exit 77
+fi
+exec /usr/bin/python3 "$@"
 EOF
 
 cat > "$fixture_bin/rm" <<'EOF'
@@ -556,14 +569,19 @@ fi
 
 info "teardown signals stop and reap workers before receipt cleanup"
 for worker_signal in INT TERM HUP; do
-    signal_case="teardown-signal-${worker_signal,,}"
+    signal_case="teardown-signal-$(printf '%s' "$worker_signal" | tr '[:upper:]' '[:lower:]')"
     if FLEET=remote-ok ALEXNET_TEARDOWN_APPROVED_FLEET=remote-ok \
         ALEXNET_RUN_ID=test-run ODYSSEUS_TEST_BLOCK_WORKERS=1 \
+        ODYSSEUS_TEST_EXPECT_RETAIN="$darwin_worker_fail_closed" \
         signal_teardown "$signal_case" "$worker_signal"; then
         if [ -s "$fixture_root/$signal_case.cleanup-race" ]; then
             fail "teardown $worker_signal cleanup ran before workers were reaped"
         else
-            pass "teardown $worker_signal reaps workers before receipt cleanup"
+            if [ "$darwin_worker_fail_closed" = 1 ]; then
+                pass "teardown $worker_signal retains receipts when stable process handles are unavailable"
+            else
+                pass "teardown $worker_signal reaps workers before receipt cleanup"
+            fi
         fi
     else
         fail "teardown $worker_signal left an owned worker or receipt directory"
@@ -612,7 +630,8 @@ fi
 
 if FLEET=remote-ok ALEXNET_TEARDOWN_APPROVED_FLEET=remote-ok \
     ALEXNET_RUN_ID=test-run ODYSSEUS_TEST_BLOCK_WORKERS=1 \
-    ODYSSEUS_TEST_FAIL_GROUP_KILL=1 ODYSSEUS_TEST_EXPECT_RETAIN=1 \
+    ODYSSEUS_TEST_FAIL_GROUP_KILL=1 ODYSSEUS_TEST_FAIL_HOLDER_SIGNAL=1 \
+    ODYSSEUS_TEST_EXPECT_RETAIN=1 \
     BASH_ENV="$kill_failure_env" \
     signal_teardown teardown-extinction-failure TERM; then
     if grep -Fq 'retained receipt directory' \

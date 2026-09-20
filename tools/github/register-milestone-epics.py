@@ -1,5 +1,90 @@
-#!/usr/bin/env python3
-"""Register the M1-M6 milestone epics and their children (issue #468).
+#!/bin/bash -p
+""":"
+set -euo pipefail
+unset BASH_ENV ENV PYTHONHOME PYTHONPATH PYTHONSTARTUP \
+  GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_CONFIG GIT_CONFIG_GLOBAL \
+  GIT_CONFIG_SYSTEM GIT_CONFIG_PARAMETERS GIT_SSH GIT_SSH_COMMAND \
+  LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT LD_DEBUG LD_DEBUG_OUTPUT LD_PROFILE \
+  DYLD_INSERT_LIBRARIES DYLD_LIBRARY_PATH DYLD_FRAMEWORK_PATH \
+  DYLD_FALLBACK_LIBRARY_PATH DYLD_FALLBACK_FRAMEWORK_PATH DYLD_PRINT_TO_FILE
+
+case "$0" in
+  */*) script_parent=${0%/*} ;;
+  *) script_parent=. ;;
+esac
+script_directory=$(CDPATH='' cd -P -- "$script_parent" && pwd -P)
+repository_root=${script_directory%/tools/github}
+if [ "$repository_root" = "$script_directory" ]; then
+  /usr/bin/printf '%s\n' 'error: registrar repository root is unavailable' >&2
+  exit 2
+fi
+dependency_python="$repository_root/.pixi/envs/default/bin/python"
+if [ ! -x "$dependency_python" ] || [ -d "$dependency_python" ]; then
+  /usr/bin/printf '%s\n' \
+    'error: run pixi install before the registrar executable entry point' >&2
+  exit 2
+fi
+
+remote_mode=0
+for argument in "$@"; do
+  case "$argument" in
+    --plan|--apply) remote_mode=1 ;;
+  esac
+done
+clean_environment=(
+  'HOME=/dev/null'
+  'LC_ALL=C'
+  'ODYSSEUS_REGISTRAR_BOUNDARY=1'
+  'PATH=/usr/bin:/bin'
+  'TZ=UTC'
+  'XDG_CONFIG_HOME=/dev/null'
+)
+if [ "$remote_mode" -eq 1 ]; then
+  if [ -n "${GH_TOKEN:-}" ]; then clean_environment+=("GH_TOKEN=$GH_TOKEN"); fi
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    clean_environment+=("GITHUB_TOKEN=$GITHUB_TOKEN")
+  fi
+fi
+exec /usr/bin/env -i "${clean_environment[@]}" \
+  "$dependency_python" -I -E -s "$script_directory/${0##*/}" "$@"
+":"""
+
+from __future__ import annotations
+
+import argparse
+import ctypes
+import fcntl
+import hashlib
+import json
+import os
+import re
+import secrets
+import select
+import selectors
+import signal
+import stat
+import subprocess
+import sys
+import threading
+import time
+from collections import Counter
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
+from pathlib import Path, PurePosixPath
+from urllib.parse import urlsplit
+
+import yaml
+from yaml.constructor import ConstructorError
+from yaml.events import (
+    AliasEvent,
+    CollectionEndEvent,
+    CollectionStartEvent,
+    ScalarEvent,
+)
+from yaml.nodes import MappingNode
+from yaml.resolver import BaseResolver
+
+__doc__ = """Register the M1-M6 milestone epics and their children (issue #468).
 
 Reads issue identity and routing data under
 ``tools/github/milestone-epics.d/``. It resolves task content from the
@@ -21,22 +106,18 @@ This tool performs GitHub mutation and is intended to be run by the operator
 or the orchestrator that owns GitHub writes — not by sandboxed agents.
 """
 
-from __future__ import annotations
-
-import argparse
-import hashlib
-import json
-import os
-import re
-import secrets
-import stat
-import subprocess
-import sys
-from collections import Counter
-from dataclasses import dataclass, replace
-from pathlib import Path, PurePosixPath
-
-import yaml
+if __name__ == "__main__" and any(
+    argument in {"--plan", "--apply"} for argument in sys.argv[1:]
+):
+    if (
+        os.environ.get("ODYSSEUS_REGISTRAR_BOUNDARY") != "1"
+        or not sys.flags.isolated
+        or not sys.flags.ignore_environment
+        or not sys.flags.no_user_site
+    ):
+        raise SystemExit(
+            "error: run the executable registrar entry point for plan or apply"
+        )
 
 
 def _trusted_tool_path(raw_path: str) -> Path:
@@ -118,9 +199,42 @@ CHECKLIST_LINE_RE = re.compile(
 )
 ISSUE_INVENTORY_LIMIT = 10_000
 LABEL_INVENTORY_LIMIT = 1_000
-APPROVED_REMOTE = "origin"
-APPROVED_REMOTE_REF = "refs/heads/main"
 COMMAND_TIMEOUT_SECONDS = 30
+GITHUB_HOST = "github.com"
+GH_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024
+GIT_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024
+MAX_GH_ARGUMENT_BYTES = 131_071
+MAX_GH_ARGV_BYTES = 1024 * 1024
+GITHUB_ISSUE_TITLE_MAX_CHARACTERS = 256
+GITHUB_ISSUE_BODY_MAX_CHARACTERS = 65_536
+GITHUB_LABEL_NAME_MAX_CHARACTERS = 50
+GITHUB_LABEL_DESCRIPTION_MAX_CHARACTERS = 100
+GH_TERMINATION_GRACE_SECONDS = 0.5
+GIT_TERMINATION_GRACE_SECONDS = 0.5
+MAX_EXECUTABLE_BYTES = 128 * 1024 * 1024
+READ_CHUNK_BYTES = 65536
+MAX_PAYLOAD_DIRECTORY_ENTRIES = 128
+MAX_PAYLOAD_FILES = 32
+MAX_YAML_SOURCE_BYTES = 1024 * 1024
+MAX_YAML_ALIASES = 32
+MAX_YAML_DEPTH = 32
+MAX_YAML_NODES = 10_000
+MAX_YAML_SCALAR_CHARACTERS = 256 * 1024
+PROCESS_QUIESCENT_SCANS = 2
+GH_EXECUTABLE_CANDIDATES = (
+    Path("/usr/bin/gh"),
+    Path("/usr/local/bin/gh"),
+    Path("/opt/homebrew/bin/gh"),
+)
+GIT_EXECUTABLE_CANDIDATES = (
+    Path("/usr/bin/git"),
+    Path("/usr/local/bin/git"),
+    Path("/opt/homebrew/bin/git"),
+)
+_PROCESS_CONTAINMENT_LOCK = threading.Lock()
+_PR_SET_CHILD_SUBREAPER = 36
+_PR_GET_CHILD_SUBREAPER = 37
+_TERMINATION_SIGNALS = frozenset({signal.SIGINT, signal.SIGTERM, signal.SIGHUP})
 MANUAL_COMPLETION_CONDITIONS = {
     "successful_mesh_only_merge": (
         "Close this gate only after one successful exact-pin mesh-only issue merge."
@@ -132,6 +246,36 @@ MANUAL_FAILURE_EFFECTS = {
         "this gate open."
     ),
 }
+
+
+class _TerminationRequested(BaseException):
+    """One blocked process-termination signal that requires owned cleanup."""
+
+    def __init__(self, signal_number: int) -> None:
+        super().__init__(f"termination requested by signal {signal_number}")
+        self.signal_number = signal_number
+
+
+@contextmanager
+def _blocked_termination_signals():
+    """Block termination until the command tree is acquired and extinguished."""
+    blocker = getattr(signal, "pthread_sigmask", None)
+    pending_reader = getattr(signal, "sigpending", None)
+    if not callable(blocker) or not callable(pending_reader):
+        raise NotImplementedError("signal-safe process acquisition is unavailable")
+    previous = blocker(signal.SIG_BLOCK, _TERMINATION_SIGNALS)
+    try:
+        yield
+    finally:
+        blocker(signal.SIG_SETMASK, previous)
+
+
+def _raise_for_pending_termination() -> None:
+    """Raise the first pending termination signal in stable priority order."""
+    pending = signal.sigpending()
+    for signal_number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        if signal_number in pending:
+            raise _TerminationRequested(signal_number)
 
 
 def _required_string(
@@ -180,12 +324,166 @@ def _optional_boolean(
     return value
 
 
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """Load safe YAML and reject duplicate mapping keys."""
+
+
+def _construct_unique_mapping(
+    loader: _UniqueKeyLoader, node: MappingNode, deep: bool = False
+) -> dict[object, object]:
+    """Construct one mapping only when each parsed key is unique."""
+    if not isinstance(node, MappingNode):
+        raise ConstructorError(None, None, "expected a mapping node", node.start_mark)
+    for key_node, _value_node in node.value:
+        if key_node.tag == "tag:yaml.org,2002:merge":
+            raise ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                "YAML merge keys are not permitted",
+                key_node.start_mark,
+            )
+    loader.flatten_mapping(node)
+    mapping: dict[object, object] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            duplicate = key in mapping
+        except TypeError as exc:
+            raise ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                "found an unhashable key",
+                key_node.start_mark,
+            ) from exc
+        if duplicate:
+            raise ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                f"found duplicate key {key!r}",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueKeyLoader.add_constructor(
+    BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping
+)
+
+
+def _source_record(value: os.stat_result) -> tuple[int, ...]:
+    """Return fields that bind one source inode and its content state."""
+    return (
+        value.st_ctime_ns,
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_mtime_ns,
+        value.st_nlink,
+        value.st_size,
+    )
+
+
+def _read_bounded_yaml_file(directory_fd: int, name: str, source: Path) -> bytes:
+    """Read one direct regular file through its parent descriptor."""
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            name,
+            os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+            dir_fd=directory_fd,
+        )
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise OSError(f"{source} is not a regular file")
+        if opened.st_size > MAX_YAML_SOURCE_BYTES:
+            raise ValueError(
+                f"{source}: YAML source exceeds the "
+                f"{MAX_YAML_SOURCE_BYTES}-byte ceiling"
+            )
+
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(
+                descriptor,
+                min(READ_CHUNK_BYTES, MAX_YAML_SOURCE_BYTES - total + 1),
+            )
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_YAML_SOURCE_BYTES:
+                raise ValueError(
+                    f"{source}: YAML source exceeds the "
+                    f"{MAX_YAML_SOURCE_BYTES}-byte ceiling"
+                )
+            chunks.append(chunk)
+
+        final = os.fstat(descriptor)
+        rebound = os.lstat(name, dir_fd=directory_fd)
+        if _source_record(opened) != _source_record(final) or _source_record(
+            opened
+        ) != _source_record(rebound):
+            raise ValueError(f"{source}: YAML source changed during read")
+        return b"".join(chunks)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _load_bounded_yaml(source: str, path: Path) -> object:
+    """Load one YAML document within fixed parser resource budgets."""
+    aliases = 0
+    depth = 0
+    nodes = 0
+    open_anchors: list[str | None] = []
+    try:
+        for event in yaml.parse(source, Loader=yaml.SafeLoader):
+            if isinstance(event, AliasEvent):
+                if event.anchor in open_anchors:
+                    raise ValueError(
+                        f"{path}: recursive YAML alias {event.anchor!r} is not permitted"
+                    )
+                aliases += 1
+                nodes += 1
+                if aliases > MAX_YAML_ALIASES:
+                    raise ValueError(
+                        f"{path}: YAML contains more than {MAX_YAML_ALIASES} aliases"
+                    )
+            elif isinstance(event, CollectionStartEvent):
+                open_anchors.append(event.anchor)
+                depth += 1
+                nodes += 1
+                if depth > MAX_YAML_DEPTH:
+                    raise ValueError(
+                        f"{path}: YAML contains more than {MAX_YAML_DEPTH} "
+                        "collection levels"
+                    )
+            elif isinstance(event, CollectionEndEvent):
+                open_anchors.pop()
+                depth -= 1
+            elif isinstance(event, ScalarEvent):
+                nodes += 1
+                if len(event.value) > MAX_YAML_SCALAR_CHARACTERS:
+                    raise ValueError(
+                        f"{path}: YAML scalar exceeds "
+                        f"{MAX_YAML_SCALAR_CHARACTERS} characters"
+                    )
+            if nodes > MAX_YAML_NODES:
+                raise ValueError(
+                    f"{path}: YAML contains more than {MAX_YAML_NODES} nodes"
+                )
+        return yaml.load(source, Loader=_UniqueKeyLoader)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{path}: invalid YAML: {exc}") from exc
+
+
 def _read_payload_sources(payload_dir: Path) -> tuple[tuple[Path, str, str], ...]:
     """Read direct regular payload files without following symlinks."""
     if (
         not hasattr(os, "O_NOFOLLOW")
         or os.open not in getattr(os, "supports_dir_fd", ())
-        or os.listdir not in getattr(os, "supports_fd", ())
+        or os.scandir not in getattr(os, "supports_fd", ())
     ):
         raise ValueError(
             f"{payload_dir}: safe payload path capabilities are unavailable"
@@ -199,9 +497,24 @@ def _read_payload_sources(payload_dir: Path) -> tuple[tuple[Path, str, str], ...
             directory_fd = os.open(payload_dir, directory_flags | no_follow)
             if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
                 raise OSError(f"{payload_dir} is not a directory")
-            names = sorted(
-                name for name in os.listdir(directory_fd) if name.endswith(".yaml")
-            )
+            names: list[str] = []
+            entries = 0
+            with os.scandir(directory_fd) as inventory:
+                for entry in inventory:
+                    entries += 1
+                    if entries > MAX_PAYLOAD_DIRECTORY_ENTRIES:
+                        raise ValueError(
+                            f"{payload_dir}: payload directory contains more than "
+                            f"{MAX_PAYLOAD_DIRECTORY_ENTRIES} entries"
+                        )
+                    if entry.name.endswith(".yaml"):
+                        names.append(entry.name)
+                        if len(names) > MAX_PAYLOAD_FILES:
+                            raise ValueError(
+                                f"{payload_dir}: payload directory permits at most "
+                                f"{MAX_PAYLOAD_FILES} YAML files"
+                            )
+            names.sort()
         except OSError as exc:
             raise ValueError(
                 f"{payload_dir}: payload directory must be a non-symlink directory"
@@ -210,21 +523,12 @@ def _read_payload_sources(payload_dir: Path) -> tuple[tuple[Path, str, str], ...
         sources: list[tuple[Path, str, str]] = []
         for name in names:
             path = payload_dir / name
-            file_fd: int | None = None
             try:
-                file_fd = os.open(name, os.O_RDONLY | no_follow, dir_fd=directory_fd)
-                if not stat.S_ISREG(os.fstat(file_fd).st_mode):
-                    raise OSError(f"{path} is not a regular file")
-                with os.fdopen(file_fd, "rb") as stream:
-                    file_fd = None
-                    source_bytes = stream.read()
+                source_bytes = _read_bounded_yaml_file(directory_fd, name, path)
             except OSError as exc:
                 raise ValueError(
                     f"{path}: payload source must be a non-symlink regular file"
                 ) from exc
-            finally:
-                if file_fd is not None:
-                    os.close(file_fd)
             try:
                 content = source_bytes.decode("utf-8")
             except UnicodeDecodeError as exc:
@@ -270,12 +574,9 @@ def _read_workflow_source(
         directory_fd = os.open(workflow_dir, directory_flags | no_follow)
         if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
             raise OSError(f"{workflow_dir} is not a directory")
-        file_fd = os.open(normalized.name, os.O_RDONLY | no_follow, dir_fd=directory_fd)
-        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
-            raise OSError(f"{reference} is not a regular file")
-        with os.fdopen(file_fd, "rb") as stream:
-            file_fd = None
-            source_bytes = stream.read()
+        source_bytes = _read_bounded_yaml_file(
+            directory_fd, normalized.name, workflow_dir / normalized.name
+        )
     except OSError as exc:
         raise ValueError(
             f"{payload_path}: workflow reference {reference!r} must name a "
@@ -515,7 +816,7 @@ def load_payloads(payload_dir: Path = PAYLOAD_DIR) -> list[Milestone]:
     """Load routing payloads and canonical workflow task content, ordered M1..M6."""
     milestones: list[Milestone] = []
     for path, payload_text, payload_sha256 in _read_payload_sources(payload_dir):
-        doc = yaml.safe_load(payload_text)
+        doc = _load_bounded_yaml(payload_text, path)
         if not isinstance(doc, dict):
             raise ValueError(f"{path}: payload must be a mapping")
         milestone_id = _required_string(doc, "milestone", path)
@@ -539,7 +840,7 @@ def load_payloads(payload_dir: Path = PAYLOAD_DIR) -> list[Milestone]:
             doc.get("workflow"), path
         )
         workflow_path = REPO_ROOT / workflow_ref
-        workflow = yaml.safe_load(workflow_text)
+        workflow = _load_bounded_yaml(workflow_text, workflow_path)
         if not isinstance(workflow, dict):
             raise ValueError(f"{workflow_path}: workflow must be a mapping")
         if workflow.get("apiVersion") != "telemachy/v1":
@@ -1140,31 +1441,897 @@ def epic_issue_write(milestone: Milestone, numbers: dict[str, int]) -> IssueWrit
     )
 
 
-def gh(*args: str) -> str:
-    """Run a ``gh`` command and return stdout."""
-    try:
-        result = subprocess.run(
-            ["gh", *args],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=COMMAND_TIMEOUT_SECONDS,
+def _canonical_repo_target(target: str) -> str:
+    """Return one host-qualified repository target from the exact allowlist."""
+    if not isinstance(target, str) or not target:
+        raise ValueError("GitHub repository target must be a nonempty string")
+    unqualified = target
+    host_prefix = f"{GITHUB_HOST}/"
+    if unqualified.startswith(host_prefix):
+        unqualified = unqualified.removeprefix(host_prefix)
+    parts = unqualified.split("/")
+    if len(parts) != 2 or parts[0] != ORG or parts[1] not in KNOWN_REPOS:
+        raise ValueError(
+            f"GitHub repository target is outside the allowlist: {target!r}"
         )
-    except subprocess.TimeoutExpired as exc:
+    return f"{GITHUB_HOST}/{unqualified}"
+
+
+def _single_option_value(args: tuple[str, ...], option: str) -> str | None:
+    """Return one option value, and reject duplicate or incomplete fields."""
+    positions = [index for index, value in enumerate(args) if value == option]
+    if not positions:
+        return None
+    if len(positions) != 1 or positions[0] + 1 >= len(args):
+        raise ValueError(f"GitHub option {option!r} must have one value")
+    return args[positions[0] + 1]
+
+
+def _validate_github_field_limits(args: tuple[str, ...]) -> None:
+    """Reject GitHub fields that exceed the documented service ceilings."""
+    limits = (
+        ("--title", GITHUB_ISSUE_TITLE_MAX_CHARACTERS, "issue title"),
+        ("--body", GITHUB_ISSUE_BODY_MAX_CHARACTERS, "issue body"),
+        ("--label", GITHUB_LABEL_NAME_MAX_CHARACTERS, "label name"),
+        ("--add-label", GITHUB_LABEL_NAME_MAX_CHARACTERS, "label name"),
+        ("--remove-label", GITHUB_LABEL_NAME_MAX_CHARACTERS, "label name"),
+        (
+            "--description",
+            GITHUB_LABEL_DESCRIPTION_MAX_CHARACTERS,
+            "label description",
+        ),
+    )
+    for option, maximum, label in limits:
+        value = _single_option_value(args, option)
+        if value is not None and len(value) > maximum:
+            raise ValueError(f"GitHub {label} exceeds {maximum} characters")
+
+    if args[:2] in {("label", "create"), ("label", "delete")}:
+        if len(args) < 3 or len(args[2]) > GITHUB_LABEL_NAME_MAX_CHARACTERS:
+            raise ValueError(
+                f"GitHub label name exceeds {GITHUB_LABEL_NAME_MAX_CHARACTERS} "
+                "characters"
+            )
+
+    if args and args[0] == "api":
+        for index, value in enumerate(args[:-1]):
+            if value not in {"-f", "-F"}:
+                continue
+            field = args[index + 1]
+            name, separator, content = field.partition("=")
+            if not separator:
+                continue
+            if name == "name" and len(content) > GITHUB_LABEL_NAME_MAX_CHARACTERS:
+                raise ValueError(
+                    f"GitHub label name exceeds {GITHUB_LABEL_NAME_MAX_CHARACTERS} "
+                    "characters"
+                )
+            if (
+                name == "description"
+                and len(content) > GITHUB_LABEL_DESCRIPTION_MAX_CHARACTERS
+            ):
+                raise ValueError(
+                    "GitHub label description exceeds "
+                    f"{GITHUB_LABEL_DESCRIPTION_MAX_CHARACTERS} characters"
+                )
+
+
+def _bound_gh_args(*args: str) -> tuple[str, ...]:
+    """Bind one supported gh operation to github.com and an allowed repository."""
+    if not args or any(
+        not isinstance(value, str) or not value or "\0" in value for value in args
+    ):
+        raise ValueError("GitHub arguments must be nonempty strings without NUL bytes")
+    try:
+        encoded_lengths = tuple(len(value.encode("utf-8")) for value in args)
+    except UnicodeEncodeError as exc:
+        raise ValueError("GitHub arguments must be valid UTF-8 strings") from exc
+    if any(length > MAX_GH_ARGUMENT_BYTES for length in encoded_lengths):
+        raise ValueError(
+            f"GitHub argument exceeds {MAX_GH_ARGUMENT_BYTES} encoded bytes"
+        )
+    if sum(length + 1 for length in encoded_lengths) > MAX_GH_ARGV_BYTES:
+        raise ValueError(
+            f"GitHub aggregate argv exceeds {MAX_GH_ARGV_BYTES} encoded bytes"
+        )
+    _validate_github_field_limits(args)
+    if args[0] in {"issue", "label"}:
+        if "--hostname" in args:
+            raise ValueError("repository commands must use a host-qualified -R target")
+        positions = [
+            index for index, value in enumerate(args) if value in {"-R", "--repo"}
+        ]
+        if len(positions) != 1 or positions[0] + 1 >= len(args):
+            raise ValueError("GitHub repository command requires one exact -R target")
+        position = positions[0] + 1
+        bound = list(args)
+        bound[position] = _canonical_repo_target(bound[position])
+        return tuple(bound)
+    if args[0] != "api":
+        raise ValueError(f"unsupported GitHub operation: {args[0]!r}")
+
+    bound = list(args)
+    host_positions = [
+        index for index, value in enumerate(bound) if value == "--hostname"
+    ]
+    if len(host_positions) > 1:
+        raise ValueError("GitHub API operation has multiple host authorities")
+    if host_positions:
+        position = host_positions[0]
+        if position + 1 >= len(bound) or bound[position + 1] != GITHUB_HOST:
+            raise ValueError("GitHub API operation must target github.com")
+    else:
+        bound[1:1] = ["--hostname", GITHUB_HOST]
+
+    value_options = {"--hostname", "--method", "-f", "-F", "--jq"}
+    endpoint = None
+    index = 1
+    while index < len(bound):
+        value = bound[index]
+        if value in value_options:
+            if index + 1 >= len(bound):
+                raise ValueError(f"GitHub API option {value!r} requires a value")
+            index += 2
+            continue
+        if value.startswith("-"):
+            raise ValueError(f"unsupported GitHub API option: {value!r}")
+        endpoint = value
+        break
+    if endpoint == "graphql":
+        return tuple(bound)
+    match = re.fullmatch(rf"repos/{re.escape(ORG)}/([^/]+)/.+", endpoint or "")
+    if match is None or match.group(1) not in KNOWN_REPOS:
+        raise ValueError(f"GitHub API endpoint is outside the allowlist: {endpoint!r}")
+    return tuple(bound)
+
+
+def _trusted_executable_identity(path: Path, label: str) -> tuple[int, ...]:
+    """Return a stable identity for one approved, direct executable."""
+    try:
+        value = path.lstat()
+    except OSError as exc:
         raise RuntimeError(
-            f"gh {' '.join(args)} timed out after {COMMAND_TIMEOUT_SECONDS}s"
+            f"{path}: approved {label} executable is unavailable"
         ) from exc
-    if result.returncode != 0:
-        raise RuntimeError(f"gh {' '.join(args)} failed: {result.stderr.strip()}")
-    return result.stdout
+    if (
+        not path.is_absolute()
+        or not stat.S_ISREG(value.st_mode)
+        or value.st_uid not in {0, os.geteuid()}
+        or value.st_nlink != 1
+        or stat.S_IMODE(value.st_mode) & 0o022
+        or stat.S_IMODE(value.st_mode) & 0o111 == 0
+    ):
+        raise RuntimeError(f"{path}: approved {label} executable is not owner-bound")
+    return _stat_identity(value)
 
 
-def issue_number_from_url(url: str) -> int:
-    """Extract the issue number from a ``gh issue create`` URL."""
-    match = re.search(r"/issues/(\d+)$", url.strip())
-    if match is None:
+def _stat_identity(value: os.stat_result) -> tuple[int, ...]:
+    """Return the metadata fields used to bind an executable descriptor."""
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_uid,
+        value.st_gid,
+        value.st_nlink,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _gh_executable_identity(path: Path) -> tuple[int, ...]:
+    """Return the stable identity of one approved gh executable."""
+    return _trusted_executable_identity(path, "gh")
+
+
+def _git_executable_identity(path: Path) -> tuple[int, ...]:
+    """Return the stable identity of one approved Git executable."""
+    return _trusted_executable_identity(path, "Git")
+
+
+def _resolve_executable(
+    candidates: tuple[Path, ...], label: str
+) -> tuple[Path, tuple[int, ...]]:
+    """Resolve one fixed executable candidate and bind its direct identity."""
+    identity_reader = (
+        _git_executable_identity if label == "Git" else _gh_executable_identity
+    )
+    for candidate in candidates:
+        try:
+            identity = identity_reader(candidate)
+        except (OSError, RuntimeError):
+            continue
+        return candidate, identity
+    raise RuntimeError(f"no approved absolute {label} executable is available")
+
+
+def _required_seals() -> tuple[int, int, int]:
+    """Return the Linux operations and mask for one immutable memfd."""
+    names = (
+        "F_ADD_SEALS",
+        "F_GET_SEALS",
+        "F_SEAL_GROW",
+        "F_SEAL_SEAL",
+        "F_SEAL_SHRINK",
+        "F_SEAL_WRITE",
+    )
+    values = {name: getattr(fcntl, name, None) for name in names}
+    if any(not isinstance(value, int) for value in values.values()):
+        raise NotImplementedError("sealed executable support is unavailable")
+    seals = (
+        values["F_SEAL_GROW"]
+        | values["F_SEAL_SEAL"]
+        | values["F_SEAL_SHRINK"]
+        | values["F_SEAL_WRITE"]
+    )
+    return values["F_ADD_SEALS"], values["F_GET_SEALS"], seals
+
+
+def _descriptor_digest(descriptor: int) -> tuple[int, bytes]:
+    """Read one executable descriptor with a fixed aggregate byte ceiling."""
+    digest = hashlib.sha256()
+    size = 0
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    while True:
+        chunk = os.read(descriptor, READ_CHUNK_BYTES)
+        if not chunk:
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            return size, digest.digest()
+        size += len(chunk)
+        if size > MAX_EXECUTABLE_BYTES:
+            raise RuntimeError("trusted executable exceeds its byte ceiling")
+        digest.update(chunk)
+
+
+def _copy_descriptor(source: int, destination: int) -> tuple[int, bytes]:
+    """Copy exact executable bytes and return their size and digest."""
+    digest = hashlib.sha256()
+    size = 0
+    os.lseek(source, 0, os.SEEK_SET)
+    while True:
+        chunk = os.read(source, READ_CHUNK_BYTES)
+        if not chunk:
+            os.lseek(source, 0, os.SEEK_SET)
+            return size, digest.digest()
+        size += len(chunk)
+        if size > MAX_EXECUTABLE_BYTES:
+            raise RuntimeError("trusted executable exceeds its byte ceiling")
+        digest.update(chunk)
+        remaining = memoryview(chunk)
+        while remaining:
+            written = os.write(destination, remaining)
+            if written <= 0:
+                raise RuntimeError("sealed executable copy made no progress")
+            remaining = remaining[written:]
+
+
+@contextmanager
+def _sealed_executable(path: Path, expected: tuple[int, ...], label: str):
+    """Yield a Linux executable path backed by one sealed descriptor snapshot."""
+    if not sys.platform.startswith("linux"):
+        raise NotImplementedError("sealed executable support is unavailable")
+    creator = getattr(os, "memfd_create", None)
+    allow_sealing = getattr(os, "MFD_ALLOW_SEALING", None)
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    close_on_exec = getattr(os, "O_CLOEXEC", None)
+    if (
+        creator is None
+        or not isinstance(allow_sealing, int)
+        or not isinstance(no_follow, int)
+        or not isinstance(close_on_exec, int)
+    ):
+        raise NotImplementedError("sealed executable support is unavailable")
+    identity_reader = (
+        _git_executable_identity if label == "Git" else _gh_executable_identity
+    )
+    source = os.open(path, os.O_RDONLY | no_follow | close_on_exec)
+    sealed = -1
+    try:
+        if identity_reader(path) != expected:
+            raise RuntimeError(f"approved {label} executable changed before sealing")
+        source_metadata = os.fstat(source)
+        source_identity = _stat_identity(source_metadata)
+        if source_identity != expected:
+            raise RuntimeError(f"approved {label} executable changed while opening")
+        add_seals, get_seals, required = _required_seals()
+        # Do not use MFD_CLOEXEC. Script fixtures need the sealed descriptor to
+        # remain available to their absolute shebang interpreter after exec.
+        sealed = creator(f"odysseus-{label.lower()}", allow_sealing)
+        size, digest = _copy_descriptor(source, sealed)
+        if identity_reader(path) != expected or source_identity != _stat_identity(
+            os.fstat(source)
+        ):
+            raise RuntimeError(f"approved {label} executable changed while sealing")
+        os.fchmod(sealed, 0o500)
+        fcntl.fcntl(sealed, add_seals, required)
+        held = os.fstat(sealed)
+        held_size, held_digest = _descriptor_digest(sealed)
+        if (
+            not stat.S_ISREG(held.st_mode)
+            or held.st_size != size
+            or held_size != size
+            or held_digest != digest
+            or fcntl.fcntl(sealed, get_seals) & required != required
+        ):
+            raise RuntimeError(f"sealed {label} executable failed verification")
+        launch_path = f"/proc/self/fd/{sealed}"
+        linked = os.stat(launch_path)
+        if (linked.st_dev, linked.st_ino) != (held.st_dev, held.st_ino):
+            raise RuntimeError(f"sealed {label} executable route changed")
+        yield launch_path, (sealed,)
+    finally:
+        if sealed >= 0:
+            os.close(sealed)
+        os.close(source)
+
+
+def _enable_linux_subreaper() -> None:
+    """Enable and verify the Linux orphan-adoption boundary."""
+    if not sys.platform.startswith("linux"):
+        raise NotImplementedError("Linux descendant containment is unavailable")
+    if not callable(getattr(os, "pidfd_open", None)) or not callable(
+        getattr(signal, "pidfd_send_signal", None)
+    ):
+        raise NotImplementedError("Linux pidfd containment is unavailable")
+    library = ctypes.CDLL(None, use_errno=True)
+    prctl = getattr(library, "prctl", None)
+    if prctl is None:
+        raise NotImplementedError("Linux subreaper containment is unavailable")
+    prctl.argtypes = [
+        ctypes.c_int,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
+    ]
+    prctl.restype = ctypes.c_int
+    ctypes.set_errno(0)
+    if prctl(_PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+        error_number = ctypes.get_errno() or 1
+        raise OSError(error_number, "could not enable Linux subreaper containment")
+    state = ctypes.c_int(0)
+    ctypes.set_errno(0)
+    if prctl(_PR_GET_CHILD_SUBREAPER, ctypes.addressof(state), 0, 0, 0) != 0:
+        error_number = ctypes.get_errno() or 1
+        raise OSError(error_number, "could not verify Linux subreaper containment")
+    if state.value != 1:
+        raise OSError("Linux subreaper containment is not active")
+    if not Path(f"/proc/{os.getpid()}/task").is_dir():
+        raise NotImplementedError("Linux process inventory is unavailable")
+
+
+def _linux_process_identity(process_id: int) -> tuple[int, int] | None:
+    """Return one PID and kernel start time without following process names."""
+    try:
+        with open(f"/proc/{process_id}/stat", "rb", buffering=0) as stream:
+            content = stream.read(65537)
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    if len(content) > 65536:
+        raise RuntimeError("Linux process identity exceeded its byte ceiling")
+    closing = content.rfind(b")")
+    if closing < 1:
+        raise RuntimeError("Linux process identity is malformed")
+    fields = content[closing + 2 :].split()
+    if len(fields) <= 19:
+        raise RuntimeError("Linux process identity is incomplete")
+    try:
+        start_time = int(fields[19])
+    except ValueError as exc:
+        raise RuntimeError("Linux process identity is malformed") from exc
+    return process_id, start_time
+
+
+def _linux_child_pids(process_id: int) -> set[int]:
+    """Return children of every thread in one Linux process."""
+    task_root = Path(f"/proc/{process_id}/task")
+    try:
+        task_ids = tuple(
+            entry.name for entry in task_root.iterdir() if entry.name.isdecimal()
+        )
+    except (FileNotFoundError, ProcessLookupError):
+        return set()
+    children: set[int] = set()
+    for task_id in task_ids:
+        try:
+            with open(task_root / task_id / "children", "rb", buffering=0) as stream:
+                content = stream.read(1048577)
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        if len(content) > 1048576:
+            raise RuntimeError("Linux child inventory exceeded its byte ceiling")
+        for value in content.split():
+            if not value.isdigit():
+                raise RuntimeError("Linux child inventory is malformed")
+            child = int(value)
+            if child > 1:
+                children.add(child)
+    return children
+
+
+class _LinuxProcessScope:
+    """Track one command and every descendant adopted by this subreaper."""
+
+    def __init__(self) -> None:
+        _enable_linux_subreaper()
+        self.supervisor = os.getpid()
+        self.baseline = {
+            identity
+            for process_id in _linux_child_pids(self.supervisor)
+            if (identity := _linux_process_identity(process_id)) is not None
+        }
+        self.owned: dict[int, tuple[int, int]] = {}
+
+    def _track(self, process_id: int, *, root: bool = False) -> bool:
+        identity = _linux_process_identity(process_id)
+        if identity is None or (not root and identity in self.baseline):
+            return False
+        previous = self.owned.get(process_id)
+        if previous is not None and previous[0] == identity[1]:
+            return False
+        if previous is not None:
+            os.close(previous[1])
+        descriptor = os.pidfd_open(process_id, 0)
+        rebound = _linux_process_identity(process_id)
+        if rebound != identity:
+            os.close(descriptor)
+            if rebound is None:
+                return False
+            raise RuntimeError("Linux process identity changed while binding")
+        self.owned[process_id] = (identity[1], descriptor)
+        return True
+
+    def track_root(self, process_id: int) -> int:
+        if not self._track(process_id, root=True):
+            raise RuntimeError("could not bind the command leader")
+        return self.owned[process_id][1]
+
+    def discover(self) -> bool:
+        """Bind the current descendant closure and report any new identity."""
+        discovered = False
+        while True:
+            candidates = set(_linux_child_pids(self.supervisor))
+            for process_id, (start_time, _descriptor) in tuple(self.owned.items()):
+                if _linux_process_identity(process_id) == (process_id, start_time):
+                    candidates.update(_linux_child_pids(process_id))
+            changed = False
+            for process_id in candidates:
+                changed = self._track(process_id) or changed
+            discovered = discovered or changed
+            if not changed:
+                return discovered
+
+    @staticmethod
+    def _exited(descriptor: int) -> bool:
+        ready, _writable, _exceptional = select.select([descriptor], [], [], 0)
+        return bool(ready)
+
+    def leader_exited(self, descriptor: int) -> bool:
+        return self._exited(descriptor)
+
+    def _live_snapshot(self) -> tuple[tuple[int, int], ...]:
+        """Return live bound identities without performing another inventory."""
+        return tuple(
+            (process_id, descriptor)
+            for process_id, (_start_time, descriptor) in self.owned.items()
+            if not self._exited(descriptor)
+        )
+
+    def live(self) -> tuple[tuple[int, int], ...]:
+        """Return live identities after closing the final fork/exit window."""
+        self.discover()
+        live = self._live_snapshot()
+        if live:
+            return live
+
+        # A process can fork after its children file was read and exit before
+        # its pidfd is checked. Once every bound parent is exited, no further
+        # fork is possible; require consecutive unchanged rescans so every
+        # child reparented to this subreaper is bound before accepting empty.
+        unchanged_scans = 0
+        while unchanged_scans < PROCESS_QUIESCENT_SCANS:
+            changed = self.discover()
+            live = self._live_snapshot()
+            if live:
+                return live
+            unchanged_scans = 0 if changed else unchanged_scans + 1
+        return ()
+
+    def live_descendants(self, leader: int) -> tuple[tuple[int, int], ...]:
+        return tuple(item for item in self.live() if item[0] != leader)
+
+    @staticmethod
+    def _send(descriptor: int, signal_number: int) -> None:
+        try:
+            signal.pidfd_send_signal(descriptor, signal_number, None, 0)
+        except ProcessLookupError:
+            pass
+
+    def terminate(self, process: subprocess.Popen[bytes], grace: float) -> None:
+        """Terminate every bound member, including adopted detached sessions."""
+        cleanup_error: BaseException | None = None
+        for signal_number, interval in (
+            (signal.SIGTERM, max(0.0, grace)),
+            (signal.SIGKILL, max(0.1, grace)),
+        ):
+            deadline = time.monotonic() + interval
+            while True:
+                try:
+                    live = self.live()
+                except BaseException as exc:
+                    cleanup_error = cleanup_error or exc
+                    live = tuple(
+                        (process_id, descriptor)
+                        for process_id, (_start, descriptor) in self.owned.items()
+                        if not self._exited(descriptor)
+                    )
+                if not live:
+                    break
+                for _process_id, descriptor in live:
+                    try:
+                        self._send(descriptor, signal_number)
+                    except BaseException as exc:
+                        cleanup_error = cleanup_error or exc
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.01)
+        survivors = self.live()
+        if survivors:
+            raise RuntimeError(
+                "owned descendant processes survived containment cleanup"
+            ) from cleanup_error
+        try:
+            process.wait(timeout=max(0.1, grace))
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("command leader could not be reaped") from exc
+        self.reap_adopted(process.pid)
+        if cleanup_error is not None:
+            raise RuntimeError(
+                "descendant containment cleanup failed"
+            ) from cleanup_error
+
+    def reap_adopted(self, leader: int) -> None:
+        """Reap exact adopted descendants after the direct leader is reaped."""
+        for process_id in tuple(self.owned):
+            if process_id == leader:
+                continue
+            try:
+                os.waitpid(process_id, os.WNOHANG)
+            except ChildProcessError:
+                pass
+
+    def close(self) -> None:
+        for _start_time, descriptor in self.owned.values():
+            os.close(descriptor)
+        self.owned.clear()
+
+
+def _run_linux_bound_process(
+    executable: Path,
+    expected_identity: tuple[int, ...],
+    argv: tuple[str, ...],
+    environment: dict[str, str],
+    *,
+    deadline_ns: int,
+    output_limit: int,
+    termination_grace: float,
+    label: str,
+) -> tuple[int, bytes, bytes]:
+    """Run one sealed command in a Linux subreaper and pidfd boundary."""
+    with _PROCESS_CONTAINMENT_LOCK, _blocked_termination_signals():
+        scope = _LinuxProcessScope()
+        process: subprocess.Popen[bytes] | None = None
+        selector = selectors.DefaultSelector()
+        streams: dict[int, bytearray] = {}
+        stdout_fd = -1
+        stderr_fd = -1
+        try:
+            with _sealed_executable(executable, expected_identity, label) as (
+                launch_path,
+                inherited_descriptors,
+            ):
+                _raise_for_pending_termination()
+                if time.monotonic_ns() >= deadline_ns:
+                    raise TimeoutError
+                process = subprocess.Popen(
+                    argv,
+                    executable=launch_path,
+                    pass_fds=inherited_descriptors,
+                    cwd=REPO_ROOT,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=environment,
+                    close_fds=True,
+                    start_new_session=True,
+                )
+                leader_descriptor = scope.track_root(process.pid)
+                _raise_for_pending_termination()
+                if process.stdout is None or process.stderr is None:
+                    raise RuntimeError(f"{label} output pipes are unavailable")
+                stdout_fd = process.stdout.fileno()
+                stderr_fd = process.stderr.fileno()
+                streams = {stdout_fd: bytearray(), stderr_fd: bytearray()}
+                for stream in (process.stdout, process.stderr):
+                    os.set_blocking(stream.fileno(), False)
+                    selector.register(stream, selectors.EVENT_READ)
+                total = 0
+                while selector.get_map() or not scope.leader_exited(leader_descriptor):
+                    _raise_for_pending_termination()
+                    remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
+                    if remaining <= 0:
+                        raise TimeoutError
+                    scope.discover()
+                    if selector.get_map():
+                        events = selector.select(min(0.05, remaining))
+                    else:
+                        time.sleep(min(0.01, remaining))
+                        events = ()
+                    for key, _mask in events:
+                        try:
+                            chunk = os.read(
+                                key.fd,
+                                min(READ_CHUNK_BYTES, output_limit - total + 1),
+                            )
+                        except BlockingIOError:
+                            continue
+                        if not chunk:
+                            selector.unregister(key.fileobj)
+                            continue
+                        streams[key.fd].extend(chunk)
+                        total += len(chunk)
+                        if total > output_limit:
+                            raise RuntimeError(
+                                f"{label} output exceeded {output_limit} bytes"
+                            )
+                if scope.live_descendants(process.pid):
+                    raise RuntimeError(f"{label} left a descendant process running")
+                _raise_for_pending_termination()
+                remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
+                if remaining <= 0:
+                    raise TimeoutError
+                returncode = process.wait(timeout=remaining)
+                scope.reap_adopted(process.pid)
+                identity_reader = (
+                    _git_executable_identity
+                    if label == "Git"
+                    else _gh_executable_identity
+                )
+                if identity_reader(executable) != expected_identity:
+                    raise RuntimeError(
+                        f"approved {label} executable changed during invocation"
+                    )
+                _raise_for_pending_termination()
+                return (
+                    returncode,
+                    bytes(streams[stdout_fd]),
+                    bytes(streams[stderr_fd]),
+                )
+        except BaseException:
+            if process is not None:
+                scope.terminate(process, termination_grace)
+            raise
+        finally:
+            selector.close()
+            if process is not None:
+                for stream in (process.stdout, process.stderr):
+                    if stream is not None and not stream.closed:
+                        stream.close()
+            scope.close()
+
+
+def _resolve_gh_executable() -> Path:
+    """Resolve gh only through fixed platform entrypoints, never ambient PATH."""
+    return _resolve_executable(GH_EXECUTABLE_CANDIDATES, "gh")[0]
+
+
+def _resolve_git_executable() -> Path:
+    """Resolve Git only through fixed platform entrypoints, never ambient PATH."""
+    return _resolve_executable(GIT_EXECUTABLE_CANDIDATES, "Git")[0]
+
+
+def _gh_environment() -> dict[str, str]:
+    """Return the minimal environment required for a github.com API call."""
+    environment = {
+        "PATH": "/usr/bin:/bin",
+        "LC_ALL": "C",
+        "GH_HOST": GITHUB_HOST,
+        "GH_PROMPT_DISABLED": "1",
+        "GH_PAGER": "cat",
+        "GH_NO_UPDATE_NOTIFIER": "1",
+        "NO_COLOR": "1",
+        "HOME": "/dev/null",
+        "TZ": "UTC",
+        "XDG_CONFIG_HOME": "/dev/null",
+    }
+    for name in ("GH_TOKEN", "GITHUB_TOKEN"):
+        value = os.environ.get(name)
+        if value:
+            environment[name] = value
+    return environment
+
+
+def _git_environment() -> dict[str, str]:
+    """Return a fixed environment for local Git object inspection."""
+    return {
+        "GIT_ATTR_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_PAGER": "cat",
+        "GIT_PROTOCOL_FROM_USER": "0",
+        "GIT_TERMINAL_PROMPT": "0",
+        "HOME": "/dev/null",
+        "LC_ALL": "C",
+        "PATH": "/usr/bin:/bin",
+        "TZ": "UTC",
+        "XDG_CONFIG_HOME": "/dev/null",
+    }
+
+
+def _process_group_exists(process_id: int) -> bool:
+    try:
+        os.killpg(process_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Every member created by this boundary has our effective user. On
+        # macOS an extinct group can return EPERM after its leader is reaped;
+        # an inaccessible group is therefore not the owned invocation group.
+        return False
+    return True
+
+
+def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
+    """Extinguish the exact session created for one gh invocation."""
+    # Reap a leader that already exited before probing its former process group.
+    # On macOS an unreaped leader can make killpg(..., 0) report a group that
+    # cannot be signalled, which would mask the original boundary failure.
+    process.poll()
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    deadline = time.monotonic() + GH_TERMINATION_GRACE_SECONDS
+    while _process_group_exists(process.pid) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if _process_group_exists(process.pid):
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    try:
+        process.wait(timeout=GH_TERMINATION_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=GH_TERMINATION_GRACE_SECONDS)
+
+
+def _run_portable_gh_process(
+    executable: Path, args: tuple[str, ...], environment: dict[str, str]
+) -> tuple[int, bytes, bytes]:
+    """Run one credential-free test command on a non-Linux host."""
+    before = _gh_executable_identity(executable)
+    process = subprocess.Popen(
+        (str(executable), *args),
+        cwd=REPO_ROOT,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=environment,
+        close_fds=True,
+        start_new_session=True,
+    )
+    assert process.stdout is not None and process.stderr is not None
+    selector = selectors.DefaultSelector()
+    stdout_fd = process.stdout.fileno()
+    stderr_fd = process.stderr.fileno()
+    streams = {stdout_fd: bytearray(), stderr_fd: bytearray()}
+    for stream in (process.stdout, process.stderr):
+        os.set_blocking(stream.fileno(), False)
+        selector.register(stream, selectors.EVENT_READ)
+    deadline = time.monotonic() + COMMAND_TIMEOUT_SECONDS
+    total = 0
+    try:
+        while selector.get_map() or process.poll() is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError
+            for key, _mask in selector.select(min(0.05, remaining)):
+                chunk = os.read(key.fd, min(65536, GH_OUTPUT_LIMIT_BYTES - total + 1))
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                streams[key.fd].extend(chunk)
+                total += len(chunk)
+                if total > GH_OUTPUT_LIMIT_BYTES:
+                    raise RuntimeError(
+                        f"gh output exceeded {GH_OUTPUT_LIMIT_BYTES} bytes"
+                    )
+        returncode = process.wait(timeout=max(0.01, deadline - time.monotonic()))
+        if _process_group_exists(process.pid):
+            raise RuntimeError("gh left a descendant process running")
+    except BaseException:
+        _terminate_process_group(process)
+        raise
+    finally:
+        selector.close()
+        process.stdout.close()
+        process.stderr.close()
+    after = _gh_executable_identity(executable)
+    if after != before:
+        raise RuntimeError("approved gh executable changed during invocation")
+    return returncode, bytes(streams[stdout_fd]), bytes(streams[stderr_fd])
+
+
+def _run_gh_process(
+    executable: Path, args: tuple[str, ...], environment: dict[str, str]
+) -> tuple[int, bytes, bytes]:
+    """Run gh with bounded output and complete descendant containment."""
+    if sys.platform.startswith("linux"):
+        deadline_ns = time.monotonic_ns() + int(COMMAND_TIMEOUT_SECONDS * 1_000_000_000)
+        return _run_linux_bound_process(
+            executable,
+            _gh_executable_identity(executable),
+            (str(executable), *args),
+            environment,
+            deadline_ns=deadline_ns,
+            output_limit=GH_OUTPUT_LIMIT_BYTES,
+            termination_grace=GH_TERMINATION_GRACE_SECONDS,
+            label="gh",
+        )
+    if any(environment.get(name) for name in ("GH_TOKEN", "GITHUB_TOKEN")):
+        raise RuntimeError(
+            "credential-bearing gh descendant containment is unavailable on this host"
+        )
+    return _run_portable_gh_process(executable, args, environment)
+
+
+def gh(*args: str) -> str:
+    """Run one authority-bound ``gh`` command and return bounded stdout."""
+    bound_args = _bound_gh_args(*args)
+    executable = _resolve_gh_executable()
+    try:
+        returncode, stdout, stderr = _run_gh_process(
+            executable, bound_args, _gh_environment()
+        )
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"gh {' '.join(bound_args)} timed out after {COMMAND_TIMEOUT_SECONDS}s"
+        ) from exc
+    if returncode != 0:
+        detail = stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"gh {' '.join(bound_args)} failed: {detail}")
+    try:
+        return stdout.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("gh returned non-UTF-8 output") from exc
+
+
+def issue_number_from_url(url: str, *, expected_target: str) -> int:
+    """Extract a number only from the exact issue-create repository URL."""
+    canonical_target = _canonical_repo_target(expected_target)
+    parsed = urlsplit(url.strip())
+    expected_path_prefix = (
+        f"/{canonical_target.removeprefix(f'{GITHUB_HOST}/')}/issues/"
+    )
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != GITHUB_HOST
+        or parsed.query
+        or parsed.fragment
+        or not parsed.path.startswith(expected_path_prefix)
+    ):
+        raise ValueError(f"cannot bind issue receipt to {expected_target!r}: {url!r}")
+    number = parsed.path.removeprefix(expected_path_prefix)
+    if re.fullmatch(r"[1-9][0-9]*", number) is None:
         raise ValueError(f"cannot parse issue number from {url!r}")
-    return int(match.group(1))
+    return int(number)
 
 
 def issue_inventory(repo: str) -> list[dict[str, object]]:
@@ -1181,12 +2348,56 @@ def issue_inventory(repo: str) -> list[dict[str, object]]:
         "--json",
         "number,title,state,body,labels",
     )
-    entries = json.loads(out)
+    try:
+        entries = json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{repo}: issue inventory is not valid JSON") from exc
+    if not isinstance(entries, list):
+        raise RuntimeError(f"{repo}: issue inventory must be a list")
     if len(entries) >= ISSUE_INVENTORY_LIMIT:
         raise RuntimeError(
             f"{repo}: issue inventory reached {ISSUE_INVENTORY_LIMIT}; "
             "refusing a potentially incomplete reconciliation"
         )
+    required_fields = {"number", "title", "state", "body", "labels"}
+    seen_numbers: set[int] = set()
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict) or set(entry) != required_fields:
+            raise RuntimeError(
+                f"{repo}: issue inventory entry {index} has an invalid schema"
+            )
+        number = entry["number"]
+        if type(number) is not int or number <= 0:
+            raise RuntimeError(
+                f"{repo}: issue inventory entry {index} has an invalid issue number"
+            )
+        if number in seen_numbers:
+            raise RuntimeError(
+                f"{repo}: issue inventory contains duplicate issue number {number}"
+            )
+        seen_numbers.add(number)
+        if (
+            not isinstance(entry["title"], str)
+            or not isinstance(entry["state"], str)
+            or entry["state"] not in {"OPEN", "CLOSED"}
+            or not isinstance(entry["body"], str)
+        ):
+            raise RuntimeError(
+                f"{repo}: issue inventory entry {index} has invalid text fields"
+            )
+        labels = entry["labels"]
+        if not isinstance(labels, list):
+            raise RuntimeError(
+                f"{repo}: issue inventory entry {index} has invalid labels"
+            )
+        label_names: set[str] = set()
+        for label in labels:
+            name = label.get("name") if isinstance(label, dict) else None
+            if not isinstance(name, str) or not name or name in label_names:
+                raise RuntimeError(
+                    f"{repo}: issue inventory entry {index} has an invalid label"
+                )
+            label_names.add(name)
     return entries
 
 
@@ -1240,10 +2451,19 @@ def issue_label_names(entry: dict[str, object]) -> set[str]:
         raise RuntimeError("issue label payload is not a list")
     names: set[str] = set()
     for label in labels:
-        if not isinstance(label, dict) or "name" not in label:
+        name = label.get("name") if isinstance(label, dict) else None
+        if not isinstance(name, str) or not name or name in names:
             raise RuntimeError("issue label payload contains an invalid entry")
-        names.add(str(label["name"]))
+        names.add(name)
     return names
+
+
+def _issue_number(entry: dict[str, object]) -> int:
+    """Return one exact positive issue number without coercion."""
+    number = entry.get("number")
+    if type(number) is not int or number <= 0:
+        raise RuntimeError("issue payload contains an invalid issue number")
+    return number
 
 
 def _unique_issue_candidate(
@@ -1336,7 +2556,7 @@ def existing_open_epic(
                 f"{milestone.id}: marker-bound epic source drift (canonical body "
                 f"mismatch) in {milestone.epic_home}"
             )
-    return int(match["number"])
+    return _issue_number(match)
 
 
 def existing_child_issue(
@@ -1445,7 +2665,7 @@ def existing_child_issue(
         raise RuntimeError(
             f"{child.id}: marker-bound manual gate is missing {OPERATOR_GATE_LABEL!r}"
         )
-    return int(match["number"])
+    return _issue_number(match)
 
 
 def issue_creation_order(milestone: Milestone) -> tuple[Child, ...]:
@@ -1457,22 +2677,119 @@ def issue_creation_order(milestone: Milestone) -> tuple[Child, ...]:
 
 def _git_bytes(*args: str) -> bytes:
     """Run one read-only Git command and return its exact output bytes."""
+    command_label = f"git {' '.join(args)}"
+    if not args or any(
+        not isinstance(value, str) or not value or "\0" in value for value in args
+    ):
+        raise ValueError("Git arguments must be nonempty strings without NUL bytes")
+    if not sys.platform.startswith("linux"):
+        raise ValueError("git process containment is unavailable on this host")
+    deadline_ns = time.monotonic_ns() + int(COMMAND_TIMEOUT_SECONDS * 1_000_000_000)
     try:
-        result = subprocess.run(
-            ["git", "--no-replace-objects", *args],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            check=False,
-            timeout=COMMAND_TIMEOUT_SECONDS,
+        executable = _resolve_git_executable()
+        returncode, stdout, stderr = _run_linux_bound_process(
+            executable,
+            _git_executable_identity(executable),
+            (
+                str(executable),
+                "--no-pager",
+                "--no-replace-objects",
+                "--literal-pathspecs",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "credential.helper=",
+                *args,
+            ),
+            _git_environment(),
+            deadline_ns=deadline_ns,
+            output_limit=GIT_OUTPUT_LIMIT_BYTES,
+            termination_grace=GIT_TERMINATION_GRACE_SECONDS,
+            label="Git",
         )
-    except subprocess.TimeoutExpired as exc:
+    except TimeoutError as exc:
         raise ValueError(
-            f"git {' '.join(args)} timed out after {COMMAND_TIMEOUT_SECONDS}s"
+            f"{command_label} timed out after {COMMAND_TIMEOUT_SECONDS}s"
         ) from exc
-    if result.returncode != 0:
-        detail = result.stderr.decode("utf-8", errors="replace").strip()
-        raise ValueError(f"git {' '.join(args)} failed: {detail}")
-    return result.stdout
+    except (NotImplementedError, OSError, RuntimeError) as exc:
+        raise ValueError(f"{command_label} failed: {exc}") from exc
+    if returncode != 0:
+        detail = stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(f"{command_label} failed: {detail}")
+    return stdout
+
+
+def _git_blob_digest(content: bytes, object_id: str) -> str:
+    """Return the Git blob ID for exact content in the repository hash format."""
+    if len(object_id) == 40:
+        algorithm = "sha1"
+    elif len(object_id) == 64:
+        algorithm = "sha256"
+    else:
+        raise ValueError("Git returned an invalid blob object ID")
+    digest = hashlib.new(algorithm, usedforsecurity=False)
+    digest.update(f"blob {len(content)}\0".encode("ascii"))
+    digest.update(content)
+    return digest.hexdigest()
+
+
+def _git_selected_blobs(commit: str, paths: tuple[str, ...]) -> dict[str, bytes]:
+    """Bind selected commit paths to exact blob IDs and verified content."""
+    if not paths or len(paths) != len(set(paths)):
+        raise ValueError("selected Git blob paths must be nonempty and unique")
+    for path in paths:
+        normalized = PurePosixPath(path)
+        if (
+            not path
+            or normalized.is_absolute()
+            or normalized.as_posix() != path
+            or any(part in {"", ".", ".."} for part in normalized.parts)
+        ):
+            raise ValueError(f"invalid selected Git blob path: {path!r}")
+    output = _git_bytes(
+        "ls-tree",
+        "-z",
+        "--format=%(objecttype) %(objectname)%x09%(path)",
+        commit,
+        "--",
+        *paths,
+    )
+    records = output.split(b"\0")
+    if not records or records[-1] != b"":
+        raise ValueError(f"{commit}: selected Git blob inventory is truncated")
+    object_ids: dict[str, str] = {}
+    for record in records[:-1]:
+        prefix, separator, raw_path = record.partition(b"\t")
+        values = prefix.split(b" ")
+        if separator != b"\t" or len(values) != 2 or values[0] != b"blob":
+            raise ValueError(f"{commit}: selected Git blob inventory is malformed")
+        try:
+            path = raw_path.decode("utf-8")
+            object_id = values[1].decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                f"{commit}: selected Git blob inventory is not canonical text"
+            ) from exc
+        if (
+            path not in paths
+            or path in object_ids
+            or re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", object_id) is None
+        ):
+            raise ValueError(f"{commit}: selected Git blob inventory is inconsistent")
+        object_ids[path] = object_id
+    if set(object_ids) != set(paths):
+        raise ValueError(f"{commit}: selected Git blob inventory is incomplete")
+
+    contents: dict[str, bytes] = {}
+    for path in paths:
+        object_id = object_ids[path]
+        content = _git_bytes("cat-file", "blob", object_id)
+        if _git_blob_digest(content, object_id) != object_id:
+            raise ValueError(f"{commit}:{path}: selected Git blob content changed")
+        contents[path] = content
+    return contents
 
 
 def _verify_equivalent_historical_source(
@@ -1549,13 +2866,14 @@ def _verify_equivalent_historical_source(
             previous = sources.setdefault(path, digest)
             if previous != digest:
                 raise ValueError(f"{path}: selected source digests conflict")
+    try:
+        selected_blobs = _git_selected_blobs(historical_sha, tuple(sorted(sources)))
+    except ValueError as exc:
+        raise ValueError(
+            f"{historical_sha}: historical source blobs are unavailable"
+        ) from exc
     for path, expected_digest in sorted(sources.items()):
-        try:
-            source_bytes = _git_bytes("cat-file", "blob", f"{historical_sha}:{path}")
-        except ValueError as exc:
-            raise ValueError(
-                f"{historical_sha}:{path}: historical source blob is unavailable"
-            ) from exc
+        source_bytes = selected_blobs[path]
         if hashlib.sha256(source_bytes).hexdigest() != expected_digest:
             raise ValueError(
                 f"{historical_sha}:{path}: historical source blob does not match "
@@ -1600,22 +2918,6 @@ def verify_source_snapshot(milestones: list[Milestone], source_sha: str) -> str:
     if object_type != "commit":
         raise ValueError(f"{source_sha}: immutable source object must be a commit")
 
-    try:
-        remote_lines = (
-            _git_bytes("ls-remote", "--exit-code", APPROVED_REMOTE, APPROVED_REMOTE_REF)
-            .decode("ascii")
-            .splitlines()
-        )
-    except (UnicodeDecodeError, ValueError) as exc:
-        raise ValueError(
-            f"{source_sha}: current {APPROVED_REMOTE}/main source is unavailable"
-        ) from exc
-    expected_remote_line = f"{source_sha}\t{APPROVED_REMOTE_REF}"
-    if remote_lines != [expected_remote_line]:
-        raise ValueError(
-            f"{source_sha}: source is not the current {APPROVED_REMOTE}/main commit"
-        )
-
     payload_root = "tools/github/milestone-epics.d"
     try:
         tree_entries = _git_bytes(
@@ -1659,13 +2961,14 @@ def verify_source_snapshot(milestones: list[Milestone], source_sha: str) -> str:
                     f"{source_sha}:{path}: conflicting loaded source bytes"
                 )
 
+    try:
+        selected_blobs = _git_selected_blobs(source_sha, tuple(sorted(sources)))
+    except ValueError as exc:
+        raise ValueError(
+            f"{source_sha}: committed source blobs are unavailable"
+        ) from exc
     for path, expected_digest in sorted(sources.items()):
-        try:
-            source_bytes = _git_bytes("cat-file", "blob", f"{source_sha}:{path}")
-        except ValueError as exc:
-            raise ValueError(
-                f"{source_sha}:{path}: committed source blob is unavailable"
-            ) from exc
+        source_bytes = selected_blobs[path]
         actual_digest = hashlib.sha256(source_bytes).hexdigest()
         if actual_digest != expected_digest:
             raise ValueError(
@@ -1673,11 +2976,15 @@ def verify_source_snapshot(milestones: list[Milestone], source_sha: str) -> str:
                 "the loaded bytes"
             )
 
+    # Consult the fixed github.com authority only after every local source byte
+    # has matched its selected blob. Local remote names and URLs are mutable
+    # repository configuration and are never consulted.
     canonical_sha = _canonical_github_main_sha()
     if canonical_sha != source_sha:
         raise ValueError(
             f"{source_sha}: source is not canonical GitHub main ({canonical_sha})"
         )
+
     return source_sha
 
 
@@ -1715,7 +3022,7 @@ def _read_registration_state(
                 matching_entry = next(
                     entry
                     for entry in inventories[child.repo]
-                    if int(entry["number"]) == number
+                    if entry["number"] == number
                 )
                 if not child.manual and REGISTRATION_STAGED_LABEL in issue_label_names(
                     matching_entry
@@ -1895,6 +3202,12 @@ def _guarded_registration_stage(
     return RegistrationStage(stage.name, (acquire, *stage.writes, release))
 
 
+def _preflight_registration_stage(stage: RegistrationStage) -> None:
+    """Bind every command in one exact stage before any remote mutation."""
+    for write in stage.writes:
+        _bound_gh_args(*write.gh_args())
+
+
 class RegistrationLockOwnershipError(RuntimeError):
     """The active registration lock does not belong to this invocation."""
 
@@ -1986,7 +3299,9 @@ def _prepare_registration(
             f"{ORG}/Odysseus carries {REGISTRATION_LOCK_LABEL!r}; another "
             "registration stage may be active or require operator recovery"
         )
-    return bound, next_registration_stage(bound, state)
+    stage = next_registration_stage(bound, state)
+    _preflight_registration_stage(_guarded_registration_stage(stage))
+    return bound, stage
 
 
 def _apply_remote_write(
@@ -1995,7 +3310,7 @@ def _apply_remote_write(
     """Apply one reviewed write and reject ambiguous issue-create output."""
     output = gh(*write.gh_args())
     if isinstance(write, IssueWrite):
-        issue_number_from_url(output)
+        issue_number_from_url(output, expected_target=write.target)
         print(f"  created {output.strip()}")
     elif isinstance(write, LabelWrite):
         print(f"  created {write.target} label {write.name}")
@@ -2013,6 +3328,7 @@ def apply_plan(
         raise ValueError("reviewed plan digest must be one lowercase SHA-256 value")
     bound, business_stage = _prepare_registration(milestones, source_sha)
     stage = _guarded_registration_stage(business_stage)
+    _preflight_registration_stage(stage)
     actual_digest = registration_stage_digest(stage, source_sha)
     if reviewed_digest != actual_digest:
         raise ValueError(
@@ -2034,6 +3350,7 @@ def apply_plan(
 
     lock_description = _new_registration_lock_description()
     acquire = replace(planned_acquire, description=lock_description)
+    _bound_gh_args(*acquire.gh_args())
     acquired_lock = _acquire_registration_lock(acquire)
     lock_node_id = acquired_lock.node_id
     business_started = False
@@ -2047,6 +3364,7 @@ def apply_plan(
             )
         current_business_stage = next_registration_stage(bound, locked_state)
         current_stage = _guarded_registration_stage(current_business_stage)
+        _preflight_registration_stage(current_stage)
         current_digest = registration_stage_digest(current_stage, source_sha)
         if current_digest != reviewed_digest:
             _release_registration_lock(release, lock_description, lock_node_id)
@@ -2083,6 +3401,7 @@ def plan_mode(milestones: list[Milestone], source_sha: str) -> int:
     """Print the next reviewed registration stage without remote writes."""
     _, business_stage = _prepare_registration(milestones, source_sha)
     stage = _guarded_registration_stage(business_stage)
+    _preflight_registration_stage(stage)
     digest = registration_stage_digest(stage, source_sha)
     print(f"Verified source commit: {source_sha}")
     print(f"STAGE {stage.name}")

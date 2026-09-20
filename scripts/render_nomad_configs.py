@@ -6,11 +6,13 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable
 from contextlib import contextmanager
+import ctypes
 import hashlib
 import ipaddress
 import os
 from pathlib import Path
 import selectors
+import secrets
 import shutil
 import signal
 import stat
@@ -30,6 +32,8 @@ COMMAND_TIMEOUT_SECONDS = 10.0
 TERM_GRACE_SECONDS = 0.5
 KILL_GRACE_SECONDS = 1.0
 OUTPUT_LIMIT_BYTES = 256 * 1024
+MAX_NOMAD_CONFIG_BYTES = 1024 * 1024
+MAX_EXECUTABLE_BYTES = 64 * 1024 * 1024
 
 
 class DeferredSignal(BaseException):
@@ -70,6 +74,23 @@ class CommandResult(NamedTuple):
     stderr: bytes
 
 
+def run_cleanup_actions(
+    *actions: Callable[[], None],
+    pending_primary: BaseException | None = None,
+) -> None:
+    """Attempt every cleanup and keep an active primary failure authoritative."""
+    primary = sys.exc_info()[1] or pending_primary
+    first_cleanup_error: BaseException | None = None
+    for action in actions:
+        try:
+            action()
+        except BaseException as error:
+            if first_cleanup_error is None:
+                first_cleanup_error = error
+    if primary is None and first_cleanup_error is not None:
+        raise first_cleanup_error
+
+
 class BoundExecutable:
     def __init__(
         self,
@@ -82,6 +103,8 @@ class BoundExecutable:
         snapshot_state: os.stat_result,
         directory_state: os.stat_result,
         digest: bytes,
+        parent_descriptor: int = -1,
+        snapshot_directory_name: str = "",
         interpreter: BoundExecutable | None = None,
     ) -> None:
         self.name = name
@@ -92,6 +115,8 @@ class BoundExecutable:
         self.snapshot_state = snapshot_state
         self.directory_state = directory_state
         self.digest = digest
+        self.parent_descriptor = parent_descriptor
+        self.snapshot_directory_name = snapshot_directory_name
         self.interpreter = interpreter
 
     @property
@@ -110,7 +135,9 @@ class BoundExecutable:
         ):
             fail(f"private executable snapshot directory changed: {self.name}")
         content, current = read_bound_regular(
-            self.directory_descriptor, self.snapshot_name
+            self.directory_descriptor,
+            self.snapshot_name,
+            max_bytes=MAX_EXECUTABLE_BYTES,
         )
         if (
             current.st_uid != os.geteuid()
@@ -124,17 +151,25 @@ class BoundExecutable:
 
     def close(self) -> None:
         """Remove only the descriptor-bound private snapshot."""
-        try:
-            os.fchmod(self.directory_descriptor, 0o700)
-            os.unlink(self.snapshot_name, dir_fd=self.directory_descriptor)
-            if directory_path_matches(
-                self.directory_descriptor, self.snapshot_directory
-            ):
-                os.rmdir(self.snapshot_directory)
-        finally:
-            os.close(self.directory_descriptor)
-            if self.interpreter is not None:
-                self.interpreter.close()
+        actions: list[Callable[[], None]] = [
+            lambda: cleanup_private_snapshot(
+                self.directory_descriptor,
+                self.snapshot_directory,
+                self.snapshot_name,
+                self.snapshot_state,
+            ),
+            lambda: cleanup_private_snapshot_directory(
+                self.parent_descriptor,
+                self.snapshot_directory_name,
+                self.directory_descriptor,
+            ),
+            lambda: os.close(self.directory_descriptor),
+        ]
+        if self.parent_descriptor >= 0:
+            actions.append(lambda: os.close(self.parent_descriptor))
+        if self.interpreter is not None:
+            actions.append(self.interpreter.close)
+        run_cleanup_actions(*actions)
 
 
 class BoundCommand(NamedTuple):
@@ -201,6 +236,132 @@ def same_object(left: os.stat_result, right: os.stat_result) -> bool:
     return left.st_dev == right.st_dev and left.st_ino == right.st_ino
 
 
+def _rename_noreplace(directory: int, source: str, destination: str) -> None:
+    """Atomically rename one direct entry without replacing another entry."""
+    library = ctypes.CDLL(None, use_errno=True)
+    source_bytes = os.fsencode(source)
+    destination_bytes = os.fsencode(destination)
+    if sys.platform.startswith("linux") and hasattr(library, "renameat2"):
+        operation = library.renameat2
+        operation.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        operation.restype = ctypes.c_int
+        result = operation(
+            directory,
+            source_bytes,
+            directory,
+            destination_bytes,
+            1,
+        )
+    elif hasattr(library, "renameatx_np"):
+        operation = library.renameatx_np
+        operation.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        operation.restype = ctypes.c_int
+        result = operation(
+            directory,
+            source_bytes,
+            directory,
+            destination_bytes,
+            0x00000004,
+        )
+    else:
+        fail("atomic no-replace cleanup is unavailable")
+    if result != 0:
+        number = ctypes.get_errno()
+        raise OSError(number, os.strerror(number), source)
+
+
+def _restore_quarantined_entry(
+    directory: int,
+    quarantine: str,
+    original: str,
+) -> None:
+    try:
+        _rename_noreplace(directory, quarantine, original)
+    except FileExistsError:
+        return
+    os.fsync(directory)
+
+
+def _quarantine_owned_entry(
+    directory: int,
+    name: str,
+    expected: os.stat_result,
+    *,
+    is_directory: bool = False,
+) -> bool:
+    """Atomically isolate and delete only the exact expected direct entry."""
+    quarantine = ".odysseus-cleanup-" + secrets.token_hex(16)
+    try:
+        _rename_noreplace(directory, name, quarantine)
+    except FileNotFoundError:
+        return False
+    moved = os.stat(quarantine, dir_fd=directory, follow_symlinks=False)
+    if not same_object(expected, moved):
+        _restore_quarantined_entry(directory, quarantine, name)
+        return False
+    try:
+        if is_directory:
+            flags = (
+                os.O_RDONLY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            descriptor = os.open(quarantine, flags, dir_fd=directory)
+            try:
+                opened = os.fstat(descriptor)
+                if (
+                    not stat.S_ISDIR(opened.st_mode)
+                    or not same_object(expected, opened)
+                    or os.listdir(descriptor)
+                ):
+                    _restore_quarantined_entry(directory, quarantine, name)
+                    return False
+                os.rmdir(quarantine, dir_fd=directory)
+            except BaseException:
+                try:
+                    _restore_quarantined_entry(directory, quarantine, name)
+                finally:
+                    try:
+                        os.close(descriptor)
+                    except BaseException:
+                        pass
+                raise
+            else:
+                os.close(descriptor)
+        else:
+            terminal = os.stat(quarantine, dir_fd=directory, follow_symlinks=False)
+            if (
+                not stat.S_ISREG(terminal.st_mode)
+                or not same_object(expected, terminal)
+                or terminal.st_uid != os.geteuid()
+                or terminal.st_nlink != 1
+            ):
+                _restore_quarantined_entry(directory, quarantine, name)
+                return False
+            os.unlink(quarantine, dir_fd=directory)
+        os.fsync(directory)
+        return True
+    except BaseException:
+        try:
+            _restore_quarantined_entry(directory, quarantine, name)
+        except (FileExistsError, FileNotFoundError):
+            pass
+        raise
+
+
 def parse_identity(value: str, variable: str) -> tuple[int, int]:
     fields = value.split(":")
     if len(fields) != 2 or not all(field.isdigit() for field in fields):
@@ -239,6 +400,42 @@ def directory_path_matches(descriptor: int, path: str) -> bool:
     except FileNotFoundError:
         return False
     return stat.S_ISDIR(current.st_mode) and same_object(current, os.fstat(descriptor))
+
+
+def cleanup_private_snapshot(
+    directory: int,
+    path: str,
+    name: str,
+    created: os.stat_result | None,
+) -> None:
+    """Remove owned snapshot entries without deleting replacement objects."""
+
+    def restore_directory_mode() -> None:
+        os.fchmod(directory, 0o700)
+
+    def remove_owned_leaf() -> None:
+        if created is not None:
+            _quarantine_owned_entry(directory, name, created)
+
+    run_cleanup_actions(
+        restore_directory_mode,
+        remove_owned_leaf,
+    )
+
+
+def cleanup_private_snapshot_directory(
+    parent: int,
+    name: str,
+    directory: int,
+) -> None:
+    """Remove the private snapshot directory only through its retained parent."""
+    if parent >= 0 and name:
+        _quarantine_owned_entry(
+            parent,
+            name,
+            os.fstat(directory),
+            is_directory=True,
+        )
 
 
 def verify_approved_output(
@@ -296,7 +493,12 @@ def entry_state(directory: int, name: str) -> os.stat_result | None:
         return None
 
 
-def read_bound_regular(directory: int, name: str) -> tuple[bytes, os.stat_result]:
+def read_bound_regular(
+    directory: int,
+    name: str,
+    *,
+    max_bytes: int = MAX_NOMAD_CONFIG_BYTES,
+) -> tuple[bytes, os.stat_result]:
     before = entry_state(directory, name)
     if before is None:
         fail(f"required input is missing: {name}")
@@ -307,25 +509,57 @@ def read_bound_regular(directory: int, name: str) -> tuple[bytes, os.stat_result
         or before.st_uid != os.geteuid()
     ):
         fail(f"input must be a direct, singly linked, owner-bound regular file: {name}")
+    if before.st_size > max_bytes:
+        fail(f"input exceeds the {max_bytes}-byte limit: {name}")
     descriptor = os.open(
         name,
-        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0),
         dir_fd=directory,
     )
     try:
         opened = os.fstat(descriptor)
-        if not same_object(before, opened):
+        if not stat.S_ISREG(opened.st_mode) or not same_object(before, opened):
             fail(f"input changed while it was bound: {name}")
         chunks: list[bytes] = []
-        while True:
-            chunk = os.read(descriptor, 1024 * 1024)
+        total = 0
+        while total <= max_bytes:
+            chunk = os.read(descriptor, min(1024 * 1024, max_bytes + 1 - total))
             if not chunk:
                 break
             chunks.append(chunk)
+            total += len(chunk)
+        if total > max_bytes:
+            fail(f"input exceeds the {max_bytes}-byte limit: {name}")
         after = os.fstat(descriptor)
         if not same_file_state(opened, after):
             fail(f"input changed while it was read: {name}")
-        return b"".join(chunks), after
+        first = b"".join(chunks)
+        reread = bytearray()
+        offset = 0
+        while len(reread) <= max_bytes:
+            chunk = os.pread(
+                descriptor,
+                min(1024 * 1024, max_bytes + 1 - len(reread)),
+                offset,
+            )
+            if not chunk:
+                break
+            reread.extend(chunk)
+            offset += len(chunk)
+        terminal = os.fstat(descriptor)
+        named = entry_state(directory, name)
+        if (
+            len(reread) > max_bytes
+            or not same_file_state(after, terminal)
+            or named is None
+            or not same_file_state(terminal, named)
+            or bytes(reread) != first
+        ):
+            fail(f"input changed while it was read: {name}")
+        return first, terminal
     finally:
         os.close(descriptor)
 
@@ -385,10 +619,20 @@ def bind_executable(name: str, unavailable_message: str) -> BoundExecutable:
     selected = shutil.which(name)
     if not selected:
         fail(unavailable_message)
-    before = os.stat(selected, follow_symlinks=True)
-    source = os.open(selected, os.O_RDONLY)
+    before = os.stat(selected, follow_symlinks=False)
+    source = os.open(
+        selected,
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0),
+    )
     snapshot_directory = ""
+    snapshot_directory_name = ""
+    parent_descriptor = -1
     directory_descriptor = -1
+    snapshot_name = "executable"
+    snapshot_state: os.stat_result | None = None
     interpreter: BoundExecutable | None = None
     try:
         opened = os.fstat(source)
@@ -396,6 +640,7 @@ def bind_executable(name: str, unavailable_message: str) -> BoundExecutable:
             not stat.S_ISREG(opened.st_mode)
             or not same_file_state(before, opened)
             or not executable_for_current_user(opened)
+            or opened.st_size > MAX_EXECUTABLE_BYTES
         ):
             fail(f"selected executable is not a stable executable file: {name}")
 
@@ -440,24 +685,39 @@ def bind_executable(name: str, unavailable_message: str) -> BoundExecutable:
         snapshot_directory = tempfile.mkdtemp(
             prefix=f"odysseus-nomad-{name}-"
         )
+        snapshot_directory_name = os.path.basename(snapshot_directory)
         os.chmod(snapshot_directory, 0o700)
-        directory_descriptor = os.open(
-            snapshot_directory,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        parent_descriptor = os.open(
+            os.path.dirname(snapshot_directory),
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
         )
-        snapshot_name = "executable"
+        directory_descriptor = os.open(
+            snapshot_directory_name,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            dir_fd=parent_descriptor,
+        )
         snapshot = os.open(
             snapshot_name,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
             0o400,
             dir_fd=directory_descriptor,
         )
+        snapshot_state = os.fstat(snapshot)
         digest = hashlib.sha256()
+        copied = 0
         try:
             while True:
                 chunk = os.read(source, 1024 * 1024)
                 if not chunk:
                     break
+                copied += len(chunk)
+                if copied > MAX_EXECUTABLE_BYTES:
+                    fail(
+                        f"selected executable exceeds the byte limit: {name}"
+                    )
                 digest.update(chunk)
                 offset = 0
                 while offset < len(chunk):
@@ -485,16 +745,25 @@ def bind_executable(name: str, unavailable_message: str) -> BoundExecutable:
         if signed:
             reader = os.open(
                 snapshot_name,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
                 dir_fd=directory_descriptor,
             )
             try:
+                if not stat.S_ISREG(os.fstat(reader).st_mode):
+                    fail(f"signed executable snapshot is not regular: {name}")
                 snapshot_content = bytearray()
                 while True:
                     chunk = os.read(reader, 1024 * 1024)
                     if not chunk:
                         break
                     snapshot_content.extend(chunk)
+                    if len(snapshot_content) > MAX_EXECUTABLE_BYTES:
+                        fail(
+                            f"signed executable snapshot exceeds the byte limit: {name}"
+                        )
                 snapshot_state = os.fstat(reader)
                 digest = hashlib.sha256(snapshot_content)
             finally:
@@ -510,34 +779,47 @@ def bind_executable(name: str, unavailable_message: str) -> BoundExecutable:
             snapshot_state=snapshot_state,
             directory_state=directory_state,
             digest=digest.digest(),
+            parent_descriptor=parent_descriptor,
+            snapshot_directory_name=snapshot_directory_name,
             interpreter=interpreter,
         )
         bound.verify()
         directory_descriptor = -1
+        parent_descriptor = -1
         snapshot_directory = ""
         interpreter = None
         return bound
     finally:
-        os.close(source)
+        actions: list[Callable[[], None]] = [lambda: os.close(source)]
         if directory_descriptor >= 0:
-            os.fchmod(directory_descriptor, 0o700)
-            try:
-                os.unlink("executable", dir_fd=directory_descriptor)
-            except FileNotFoundError:
-                pass
-            os.close(directory_descriptor)
-        if snapshot_directory:
-            try:
-                os.rmdir(snapshot_directory)
-            except FileNotFoundError:
-                pass
+            actions.extend(
+                (
+                    lambda: cleanup_private_snapshot(
+                        directory_descriptor,
+                        snapshot_directory,
+                        snapshot_name,
+                        snapshot_state,
+                    ),
+                    lambda: cleanup_private_snapshot_directory(
+                        parent_descriptor,
+                        snapshot_directory_name,
+                        directory_descriptor,
+                    ),
+                    lambda: os.close(directory_descriptor),
+                )
+            )
+        if parent_descriptor >= 0:
+            actions.append(lambda: os.close(parent_descriptor))
         if interpreter is not None:
-            interpreter.close()
+            actions.append(interpreter.close)
+        run_cleanup_actions(*actions)
 
 
 def popen_bound(
     executable: BoundExecutable,
     arguments: tuple[str, ...],
+    *,
+    deadline: float | None = None,
     **kwargs: object,
 ) -> subprocess.Popen[bytes]:
     """Execute through already-open objects, never the snapshot pathname."""
@@ -547,26 +829,45 @@ def popen_bound(
     launch = executable.interpreter or executable
     launch_descriptor = os.open(
         launch.snapshot_name,
-        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0),
         dir_fd=launch.directory_descriptor,
     )
     try:
+        if not stat.S_ISREG(os.fstat(launch_descriptor).st_mode):
+            fail(f"newly opened executable is not regular: {launch.name}")
         verify_open_executable(launch, launch_descriptor)
         command = [executable.name]
         inherited = [launch_descriptor, launch.directory_descriptor]
         if executable.interpreter is not None:
             script_descriptor = os.open(
                 executable.snapshot_name,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
                 dir_fd=executable.directory_descriptor,
             )
+            if not stat.S_ISREG(os.fstat(script_descriptor).st_mode):
+                fail(f"newly opened script is not regular: {executable.name}")
             verify_open_executable(executable, script_descriptor)
             inherited.append(script_descriptor)
             command.append(f"/dev/fd/{script_descriptor}")
         command.extend(arguments)
-        environment = dict(os.environ)
-        environment["PATH"] = os.defpath
+        environment = {
+            "PATH": os.defpath,
+            "LANG": "C",
+            "LC_ALL": "C",
+        }
+        for variable in ("NOMAD_SERVER_IP", "NOMAD_ADVERTISE_ADDR"):
+            value = os.environ.get(variable)
+            if value is not None:
+                environment[variable] = value
         launch_path = f"/proc/self/fd/{launch_descriptor}"
+        if deadline is not None and time.monotonic() >= deadline:
+            fail(f"{executable.name} operation deadline expired before launch")
         return subprocess.Popen(
             command,
             executable=launch_path,
@@ -590,6 +891,8 @@ def verify_open_executable(executable: BoundExecutable, descriptor: int) -> None
         if not chunk:
             break
         content.extend(chunk)
+        if len(content) > MAX_EXECUTABLE_BYTES:
+            fail(f"newly opened executable exceeds the byte limit: {executable.name}")
     current = os.fstat(descriptor)
     os.lseek(descriptor, 0, os.SEEK_SET)
     if (
@@ -661,8 +964,14 @@ def run_supervised(
     arguments: tuple[str, ...],
     content: bytes,
     child_boundary: Callable[[], None],
+    *,
+    deadline: float | None = None,
 ) -> CommandResult:
     """Run one snapshot with finite time, output, and descendant ownership."""
+    if deadline is None:
+        deadline = time.monotonic() + COMMAND_TIMEOUT_SECONDS
+    if time.monotonic() >= deadline:
+        fail(f"{executable.name} operation deadline expired before launch")
     executable.verify()
     stdin = tempfile.TemporaryFile()
     stdin.write(content)
@@ -672,9 +981,12 @@ def run_supervised(
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     failure: str | None = None
     try:
+        if time.monotonic() >= deadline:
+            fail(f"{executable.name} operation deadline expired before launch")
         process = popen_bound(
             executable,
             arguments,
+            deadline=deadline,
             stdin=stdin,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -684,13 +996,11 @@ def run_supervised(
             fail(f"could not capture child output: {executable.name}")
         stream_selector.register(process.stdout, selectors.EVENT_READ, "stdout")
         stream_selector.register(process.stderr, selectors.EVENT_READ, "stderr")
-        deadline = time.monotonic() + COMMAND_TIMEOUT_SECONDS
         while process.poll() is None or stream_selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 failure = (
-                    f"{executable.name} timed out after "
-                    f"{COMMAND_TIMEOUT_SECONDS:g} seconds"
+                    f"{executable.name} timed out at the shared operation deadline"
                 )
                 break
             events = stream_selector.select(min(0.05, remaining))
@@ -713,28 +1023,42 @@ def run_supervised(
                 break
 
         if failure is not None:
-            if not terminate_process_group(process):
-                failure += "; process group did not become extinct"
+            def terminate_after_failure() -> None:
+                nonlocal failure
+                if not terminate_process_group(process):
+                    failure += "; process group did not become extinct"
+
+            run_cleanup_actions(
+                terminate_after_failure,
+                pending_primary=RuntimeError(failure),
+            )
         else:
             process.wait(timeout=KILL_GRACE_SECONDS)
             if process_group_exists(process.pid):
                 failure = f"{executable.name} left running descendants"
-                if not terminate_process_group(process):
-                    failure += "; process group did not become extinct"
+                def terminate_after_failure() -> None:
+                    nonlocal failure
+                    if not terminate_process_group(process):
+                        failure += "; process group did not become extinct"
+
+                run_cleanup_actions(
+                    terminate_after_failure,
+                    pending_primary=RuntimeError(failure),
+                )
     except BaseException:
         if process is not None:
-            terminate_process_group(process)
+            run_cleanup_actions(lambda: terminate_process_group(process))
         raise
     finally:
-        stream_selector.close()
-        stdin.close()
+        actions: list[Callable[[], None]] = [stream_selector.close, stdin.close]
         if process is not None:
             if process.stdout is not None:
-                process.stdout.close()
+                actions.append(process.stdout.close)
             if process.stderr is not None:
-                process.stderr.close()
-            executable.verify()
-            child_boundary()
+                actions.append(process.stderr.close)
+            actions.extend((executable.verify, child_boundary))
+        pending = RuntimeError(failure) if failure is not None else None
+        run_cleanup_actions(*actions, pending_primary=pending)
 
     if failure is not None:
         fail(failure)
@@ -777,7 +1101,7 @@ def write_new_regular(directory: int, name: str, content: bytes) -> os.stat_resu
                 and owned.st_uid == os.geteuid()
                 and same_object(owned, current)
             ):
-                os.unlink(name, dir_fd=directory)
+                _quarantine_owned_entry(directory, name, owned)
                 os.fsync(directory)
         except OSError:
             pass
@@ -792,11 +1116,7 @@ def remove_exact_publication(
     identity: os.stat_result,
 ) -> bool:
     """Unlink only the direct entry whose inode this run created."""
-    current = entry_state(directory, name)
-    if current is None or not same_object(identity, current):
-        return False
-    os.unlink(name, dir_fd=directory)
-    return True
+    return _quarantine_owned_entry(directory, name, identity)
 
 
 def published_file_state_matches(
@@ -851,6 +1171,8 @@ def render_sources(
     values: dict[bytes, bytes],
     envsubst: BoundExecutable,
     child_boundary: Callable[[], None],
+    *,
+    deadline: float | None = None,
 ) -> tuple[dict[str, bytes], dict[str, bytes], dict[str, os.stat_result]]:
     rendered: dict[str, bytes] = {}
     sources: dict[str, bytes] = {}
@@ -872,6 +1194,7 @@ def render_sources(
             ("${NOMAD_SERVER_IP} ${NOMAD_ADVERTISE_ADDR}",),
             source,
             child_boundary,
+            deadline=deadline,
         )
         if substitution.returncode != 0 or substitution.stdout != content:
             fail(f"envsubst did not produce the exact expected bytes for {name}")
@@ -907,6 +1230,8 @@ def validate_rendered(
     parser_command: BoundCommand,
     rendered: dict[str, bytes],
     child_boundary: Callable[[], None],
+    *,
+    deadline: float | None = None,
 ) -> None:
     """Parse the exact rendered bytes through stdin, not a mutable path."""
     is_nomad = parser_command.executable.name == "nomad"
@@ -921,6 +1246,7 @@ def validate_rendered(
             arguments,
             rendered[name],
             child_boundary,
+            deadline=deadline,
         )
         if result.returncode != 0:
             fail(f"Nomad HCL parser rejected the rendered configuration: {name}")
@@ -1016,6 +1342,7 @@ def run() -> None:
             )
 
         verify_child_boundary()
+        operation_deadline = time.monotonic() + COMMAND_TIMEOUT_SECONDS
 
         rendered, source_bytes, source_identities = render_sources(
             source_directory,
@@ -1025,11 +1352,17 @@ def run() -> None:
             },
             envsubst,
             verify_child_boundary,
+            deadline=operation_deadline,
         )
         verify_approved_output(output, approved_identity)
         if os.listdir(output):
             fail("approved output directory changed during rendering")
-        validate_rendered(parser_command, rendered, verify_child_boundary)
+        validate_rendered(
+            parser_command,
+            rendered,
+            verify_child_boundary,
+            deadline=operation_deadline,
+        )
         if not directory_path_matches(source_directory, source_path):
             fail("canonical Nomad source directory changed during validation")
         for name, identity in source_identities.items():
@@ -1081,43 +1414,65 @@ def run() -> None:
             final_directory_state,
             "final-state verification",
         )
+        for name, identity in source_identities.items():
+            current_bytes, current = read_bound_regular(source_directory, name)
+            if (
+                not same_file_state(current, identity)
+                or current_bytes != source_bytes[name]
+            ):
+                fail(f"canonical Nomad source changed during publication: {name}")
         completed = True
         for name in CONFIG_NAMES:
             print(f"rendered and HCL-validated {requested}/{name}")
     finally:
+        actions: list[Callable[[], None]] = []
         if output >= 0:
             if not completed:
-                removed = False
-                for name, identity in output_files.items():
-                    try:
-                        removed = (
-                            remove_exact_publication(output, name, identity) or removed
-                        )
-                    except OSError:
-                        pass
-                if removed:
-                    try:
+
+                def rollback_owned_publications() -> None:
+                    removed = False
+                    rollback_actions: list[Callable[[], None]] = []
+                    for name, identity in output_files.items():
+
+                        def remove_one(
+                            item_name: str = name,
+                            item_identity: os.stat_result = identity,
+                        ) -> None:
+                            nonlocal removed
+                            removed = (
+                                remove_exact_publication(
+                                    output,
+                                    item_name,
+                                    item_identity,
+                                )
+                                or removed
+                            )
+
+                        rollback_actions.append(remove_one)
+                    run_cleanup_actions(*rollback_actions)
+                    if removed:
                         os.fsync(output)
-                    except OSError:
-                        pass
-            try:
-                retained = bool(os.listdir(output))
-            except OSError:
-                retained = True
-            if not completed and retained:
-                print(
-                    "ERROR: incomplete output contains entries not owned by this "
-                    f"publication and they were retained: {requested}",
-                    file=sys.stderr,
-                )
-            os.close(output)
+
+                actions.append(rollback_owned_publications)
+
+                def report_retained_entries() -> None:
+                    if os.listdir(output):
+                        print(
+                            "ERROR: incomplete output contains entries not owned by this "
+                            f"publication and they were retained: {requested}",
+                            file=sys.stderr,
+                        )
+
+                actions.append(report_retained_entries)
+            actions.append(lambda: os.close(output))
         if source_directory >= 0:
-            os.close(source_directory)
-        os.close(parent)
+            actions.append(lambda: os.close(source_directory))
+        actions.append(lambda: os.close(parent))
         if parser_command is not None:
-            parser_command.executable.close()
+            actions.append(parser_command.executable.close)
         if envsubst is not None:
-            envsubst.close()
+            actions.append(envsubst.close)
+        run_cleanup_actions(*actions)
 
 
 def main() -> int:

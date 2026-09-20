@@ -162,6 +162,19 @@ FLEET="epimetheus apollo aeolus hephaestus" \
 # The wait gate automates the run identity, exit, terminal-marker, and weight
 # checks. The loss and accuracy lines remain manual review data.
 
+# Before starting full training, wait for every smoke container, collect its
+# evidence, and remove only that exact approved smoke run. Stop if any step
+# fails; do not bypass the launcher's existing-container check.
+FLEET="epimetheus apollo aeolus hephaestus" \
+  ALEXNET_RUN_ID="paste-exact-smoke-run-id" just alexnet-fleet-wait
+FLEET="epimetheus apollo aeolus hephaestus" \
+  ALEXNET_RUN_ID="paste-exact-smoke-run-id" just alexnet-fleet-collect
+FLEET="epimetheus apollo aeolus hephaestus" \
+  ALEXNET_TEARDOWN_APPROVED_FLEET="epimetheus apollo aeolus hephaestus" \
+  ALEXNET_RUN_ID="paste-exact-smoke-run-id" just alexnet-fleet-teardown
+# Require successful exact-run teardown before proceeding. Preserve collected
+# smoke evidence; the next deployment allocates a fresh run ID.
+
 # Full training run
 FLEET="epimetheus apollo aeolus hephaestus" \
   ALEXNET_DEPLOY_APPROVED_FLEET="epimetheus apollo aeolus hephaestus" \

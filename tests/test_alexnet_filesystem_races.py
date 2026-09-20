@@ -53,7 +53,6 @@ class CollectionFilesystemRaceTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    @unittest.expectedFailure
     def test_directory_creation_fails_closed_without_trusted_boundary(self) -> None:
         parent = self.root / "parent"
         parent.mkdir(mode=0o700)
