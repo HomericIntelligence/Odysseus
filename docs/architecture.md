@@ -357,6 +357,47 @@ write, replay, restart and parent wakeup. Its GitHub service is a controlled
 fixture. This evidence does not establish live GitHub writer fencing or the
 complete research-to-implementation flow.
 
+### First working agent
+
+The immediate target is one real agent, with capacity one, that works on an
+already-planned issue and is visible in Odysseus. Agamemnon owns registration,
+durable admission, and the issue claim. Keystone and `fleetd` deliver the
+admitted start and subsequent input. Hephaestus executes the model and tools
+inside the qualified boundary. Odysseus displays the canonical owner, actual
+activity, and observed message flow. A worker registration or conversation alone
+does not demonstrate work. Research intake, build offload, cluster allocation,
+and capacity experiments do not precede this target unless the issue needs them.
+
+The first dashboard can show ownership and flow with session commands disabled.
+The operator uses the existing admitted input and resolution interfaces. Private
+UI input and request adapters require same-host paths; a laptop backend cannot
+use a Linux guest path as a local spool or worker socket. Do not add cross-VM
+spool transport as a prerequisite for this read-only view.
+
+Hephaestus owns the connection between contained execution and worker admission.
+A supervisor, attachment, or provider start does not authorize a session.
+Admission must check the verified owned boundary and selected assignment. A real
+model turn must use that boundary for normal tools before execution is qualified.
+
+The first complete flow can use an operator. Retain the source changes and actual
+checks, then obtain independent review. A completed provider turn does not complete
+the canonical task. For contained work, an admitted cancel must confirm the exact
+supervisor disposal before the operator submits a task resolution. Cancellation
+stops the execution; the separate review decision determines the task outcome.
+Agamemnon's existing manual resolution interface checks the current claim,
+generation, inactive execution, cleanup evidence, and outstanding commands.
+Confirmed cancellation releases Fleet execution capacity. The canonical task
+claim remains for the separate resolution. Resolution persists the canonical
+outcome before it records the matching Fleet decision.
+
+The operator supplies the separate resolution credential and the real review
+reference. The worker must not receive that credential. The retained decision
+has `provenance: manual` and `verifiedApproval: false`. Odysseus can display that
+decision after a task refresh; it does not submit the resolution. The source PR
+and issue still follow their normal review, merge, and closure process. Automatic
+review verification and the independently approved-work acceptance metric remain
+separate requirements. A visible model turn alone does not meet this full flow.
+
 ### Execution and delivery gates
 
 Hephaestus is adding a contained exec-server supervisor with immutable image and
