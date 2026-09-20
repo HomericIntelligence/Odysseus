@@ -385,9 +385,7 @@ export function IssueIntake({
       if (!abort.signal.aborted) setRepositories(entries);
     })().catch(() => {
       if (!abort.signal.aborted)
-        setMessage(
-          "Registered repositories are unavailable. Sign in or reload to retry.",
-        );
+        setMessage("Registered repositories are unavailable. Reload to retry.");
     });
     return () => abort.abort();
   }, [enabled]);

@@ -19,7 +19,7 @@ integrates through well-defined subjects rather than direct service calls.
 Odysseus is the meta-repo and user-facing hub. It holds Architecture Decision
 Records, runbooks, canonical configs, and references every other repository as
 a git submodule. Its [Fleet web application](../web/README.md) lives in `web/`:
-the initial implementation provides authenticated work ownership, worker, live
+the initial implementation provides work ownership, worker, live
 message observation, GitHub pipeline projection, scoped session controls, and
 private agent requests. Agamemnon retains
 orchestration authority. The remaining
@@ -29,6 +29,15 @@ conversation-history/intake flows and infrastructure acceptance gates are tracke
 The web backend uses supported management APIs and Keystone observation
 subscriptions. Task dispatch remains on Keystone's canonical role subjects;
 HTTP management calls do not establish a second task queue.
+
+The laptop dashboard opens directly on loopback without a UI token, login,
+session cookie, or session expiry. Local-machine access is its trust boundary.
+Host, Origin, and cross-site checks remain required; writes need a matching
+Origin. The dashboard remains visible during reconnects,
+marks stale observations, and never automatically replays writes. Component
+credentials remain on the backend; command enablement, canonical admission,
+and private worker attachment checks remain required. Remote browser access
+requires a separate TLS/authentication deployment.
 
 ---
 
@@ -185,8 +194,9 @@ The full HMAS pipeline, end to end (wire contracts in
 Interviews, escalations, and dashboards flow back up the same subjects, so
 each hop is bidirectional. Role-addressed work and lifecycle messages flow
 **through** Keystone. Supported management interfaces provide resource inspection
-and commands, including Odysseus's authenticated backend adapters; they do not
-create an additional work queue. Keystone is a transport detail, not a pipeline stage. All workers
+and commands, including Odysseus's backend adapters with component credentials.
+They do not create an additional work queue. Keystone is a transport detail,
+not a pipeline stage. All workers
 run AchaeanFleet container images and integrate advise-before / learn-after
 around every task.
 
@@ -208,7 +218,7 @@ branch or a local test does not establish a deployed service.
 | Orchestration graph, claims, generations and command intent | Agamemnon's GitHub-backed records | Read `/v1/fleet` resources; submit supported management commands |
 | Pipeline board and implementation labels | Derived GitHub Project; Hephaestus owns issue-stage labels | Display each source and its freshness separately |
 | Desired pools and execution policy | Myrmidons Git manifests | Display configured and observed state separately |
-| Conversations, pending requests, answers and execution evidence | Hephaestus private runtime storage | Read scoped private evidence through the authenticated backend |
+| Conversations, pending requests, answers and execution evidence | Hephaestus private runtime storage | Read scoped private evidence through the backend's checked private attachment |
 | Recovery command receipts | Private worker/adapter journals | Display outcomes; never authorize replacement work from a journal |
 | Live message observations | Keystone observations; retained metrics/logs belong to Argus | Render bounded metadata and expose gaps; never consume work for visualization |
 
@@ -304,9 +314,9 @@ does not permit another create. This record is Nestor's research intake state,
 not Agamemnon's task graph. Live GitHub concurrency and restart tests remain
 required before this bootstrap can admit research work.
 
-Odysseus now provides an opt-in Research intake form and authenticated backend
-proxy for `POST /v1/research/intakes` and the corresponding status read. The
-browser retains publishable request content and identity before submission;
+Odysseus now provides an opt-in Research intake form and backend proxy using
+component credentials for `POST /v1/research/intakes` and the corresponding status
+read. The browser retains publishable request content and identity before submission;
 explicit retries preserve both, and read-only status checks compare the retained
 request digest. Nestor credentials stay on the backend. Only a matching
 `created` record with a confirmed issue receipt becomes a link in the UI.
@@ -320,7 +330,7 @@ owns the deterministic durable Pending L3 task and immutable provenance; import
 does not dispatch work. Odysseus retains one explicit browser reference for
 uncertain-response recovery. It creates no backend task queue or alternate issue.
 The same browser lock coordinates import, retry and intake replacement; no reload
-or sign-in automatically repeats a POST.
+or reconnect automatically repeats a POST.
 
 An independently enabled planned-issue action uses Agamemnon's registered work
 repository projection and `/v1/fleet/issue-intakes` inspection/import interface.

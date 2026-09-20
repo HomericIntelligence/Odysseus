@@ -277,9 +277,6 @@ function Flow({
 
 function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [authenticated, setAuthenticated] = useState(false);
-  const [token, setToken] = useState("");
-  const [loginError, setLoginError] = useState("");
   const [connection, setConnection] = useState("connecting");
   const [now, setNow] = useState(Date.now());
   const [tab, setTab] = useState("System flow");
@@ -315,18 +312,6 @@ function App() {
     return () => clearInterval(timer);
   }, []);
   useEffect(() => {
-    void fetch("/api/snapshot")
-      .then(async (response) => {
-        if (response.ok) {
-          setSnapshot(await response.json());
-          setAuthenticated(true);
-        } else
-          setConnection(response.status === 401 ? "signed out" : "unavailable");
-      })
-      .catch(() => setConnection("unavailable"));
-  }, []);
-  useEffect(() => {
-    if (!authenticated) return;
     const events = new EventSource("/api/events");
     events.addEventListener("snapshot", (event) => {
       try {
@@ -338,17 +323,9 @@ function App() {
     });
     events.onerror = () => {
       setConnection("reconnecting");
-      void fetch("/api/snapshot")
-        .then((r) => {
-          if (r.status === 401) {
-            events.close();
-            setAuthenticated(false);
-          }
-        })
-        .catch(() => {});
     };
     return () => events.close();
-  }, [authenticated]);
+  }, []);
   const live =
     connection === "connected" &&
     Boolean(snapshot && now - Date.parse(snapshot.generatedAt) < 5000);
@@ -376,10 +353,10 @@ function App() {
         historical: true,
       })
     : null;
-  // Keep intent in App memory while the private controls are hidden at sign-out.
+  // Keep private intent in App memory through observation disconnects.
   const sessionControls = useSessionControls({
     item: selected,
-    live: authenticated && ownershipLive,
+    live: ownershipLive,
   });
   const matchQuery = (item: unknown) =>
     !query || JSON.stringify(item).toLowerCase().includes(query.toLowerCase());
@@ -408,62 +385,6 @@ function App() {
     setPacket(p);
     setSelected(matchPacket(items, p) ?? null);
   };
-  if (!authenticated)
-    return (
-      <main className="login-page">
-        <div className="login-card">
-          <span className="brand-mark">Ο</span>
-          <p className="eyebrow">HOMERIC INTELLIGENCE</p>
-          <h1>Welcome to Odysseus.</h1>
-          <p>
-            Your fleet, its work, and every observed connection in one place.
-          </p>
-          <form
-            onSubmit={async (event) => {
-              event.preventDefault();
-              setLoginError("");
-              try {
-                const response = await fetch("/api/session", {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ token }),
-                });
-                if (!response.ok) {
-                  setLoginError("The access token was not accepted.");
-                  return;
-                }
-                setToken("");
-                setAuthenticated(true);
-              } catch {
-                setLoginError("The local backend is unavailable.");
-              }
-            }}
-          >
-            <label htmlFor="access-token">Local access token</label>
-            <input
-              id="access-token"
-              type="password"
-              autoComplete="off"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              required
-            />
-            <button className="primary" type="submit">
-              Open mission control <span>↗</span>
-            </button>
-            {loginError && (
-              <p role="alert" className="warning">
-                {loginError}
-              </p>
-            )}
-          </form>
-          <p className="fine-print">
-            Use the private access-token file shown when the local web service
-            starts. Provider and cluster credentials stay on the backend.
-          </p>
-        </div>
-      </main>
-    );
   return (
     <div className="app-shell">
       <aside className="sidebar">

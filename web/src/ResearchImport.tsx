@@ -440,7 +440,7 @@ export function ResearchImport({
             }
             setMessage(
               response.status === 401
-                ? "Import outcome unknown. Sign in again, then explicitly retry the same import."
+                ? "Import outcome unknown. The backend refused access; retry the same import explicitly."
                 : "Import outcome unknown. Retry the same import explicitly.",
             );
             return;

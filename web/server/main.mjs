@@ -1,6 +1,3 @@
-import { mkdir, readFile, writeFile, stat } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
-import { homedir } from "node:os";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FleetView } from "./view.mjs";
@@ -13,27 +10,6 @@ import {
   pollFleet,
 } from "./collector.mjs";
 
-const stateDir =
-  process.env.ODYSSEUS_WEB_STATE_DIR ??
-  resolve(homedir(), ".local/state/odysseus-web");
-await mkdir(stateDir, { recursive: true, mode: 0o700 });
-let token = process.env.ODYSSEUS_WEB_TOKEN;
-if (!token) {
-  const path = resolve(stateDir, "access-token");
-  try {
-    await writeFile(path, randomBytes(32).toString("base64url"), {
-      mode: 0o600,
-      flag: "wx",
-    });
-  } catch (error) {
-    if (error.code !== "EEXIST") throw error;
-  }
-  const info = await stat(path);
-  if ((info.mode & 0o077) !== 0 || info.uid !== process.getuid())
-    throw new Error("Access token must be private and user-owned");
-  token = (await readFile(path, "utf8")).trim();
-  console.log(`Local sign-in token: ${path}`);
-}
 const view = new FleetView({ historyLimit: 250 });
 const commands = createCommandService(
   process.env.ODYSSEUS_ENABLE_COMMANDS === "1"
@@ -50,7 +26,6 @@ const commands = createCommandService(
 );
 const server = createDashboardServer({
   view,
-  token,
   commands,
   research:
     process.env.ODYSSEUS_ENABLE_RESEARCH_INTAKE === "1"

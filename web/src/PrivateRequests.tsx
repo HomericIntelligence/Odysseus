@@ -28,7 +28,7 @@ export type PrivateResponse =
 export type RequestDraft = { key: string; answers: Record<string, string> };
 type Scope = { sessionId: string; workerId: string; generation: number };
 
-/** Private details are read only while this authenticated view is mounted. */
+/** Private details are read only while these session controls are mounted. */
 export function PrivateRequests({
   scope,
   enabled,

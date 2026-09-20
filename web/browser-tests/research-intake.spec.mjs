@@ -8,7 +8,6 @@ import { createDashboardServer } from "../server/http.mjs";
 
 let server, url, calls, reply;
 let view, importServer, importCalls, importReply;
-const token = randomBytes(24).toString("hex");
 const sha = (text) => createHash("sha256").update(text).digest("hex");
 function confirmed(input) {
   const canonical = {
@@ -66,7 +65,6 @@ test.beforeEach(async () => {
   // The real backend proxy uses only this private transport fixture.
   server = createDashboardServer({
     view,
-    token,
     staticDir: resolve("dist"),
     research: {
       url: "http://127.0.0.1:9999",
@@ -97,8 +95,6 @@ test.afterEach(async () => {
 });
 async function open(page) {
   await page.goto(url);
-  await page.getByLabel("Local access token").fill(token);
-  await page.getByRole("button", { name: "Open mission control" }).click();
   await page
     .getByRole("button", { name: "Research intake", exact: true })
     .click();
@@ -124,7 +120,6 @@ test("planned issue action uses registered repositories without Nestor or an aut
   };
   const isolated = createDashboardServer({
     view: new FleetView(),
-    token,
     staticDir: resolve("dist"),
     issueImport: {
       url: "http://127.0.0.1:9876/operator-base",
@@ -141,8 +136,6 @@ test("planned issue action uses registered repositories without Nestor or an aut
   await new Promise((done) => isolated.listen(0, "127.0.0.1", done));
   try {
     await page.goto(`http://127.0.0.1:${isolated.address().port}`);
-    await page.getByLabel("Local access token").fill(token);
-    await page.getByRole("button", { name: "Open mission control" }).click();
     await page
       .getByRole("button", { name: "Research intake", exact: true })
       .click();
@@ -234,7 +227,6 @@ async function plannedBrowserFixture(override) {
   const ownedView = new FleetView();
   const isolated = createDashboardServer({
     view: ownedView,
-    token,
     staticDir: resolve("dist"),
     issueImport: {
       url: "http://127.0.0.1:9876/operator-base",
@@ -317,8 +309,6 @@ test("planned issue keeps an uncertain import across reload and shows only the e
   const plan = inspection.plan;
   try {
     await page.goto(address);
-    await page.getByLabel("Local access token").fill(token);
-    await page.getByRole("button", { name: "Open mission control" }).click();
     await page
       .getByRole("button", { name: "Research intake", exact: true })
       .click();
@@ -437,8 +427,6 @@ test("planned issue keeps an uncertain import across reload and shows only the e
 
 async function inspectPlanned(page, fixture) {
   await page.goto(fixture.address);
-  await page.getByLabel("Local access token").fill(token);
-  await page.getByRole("button", { name: "Open mission control" }).click();
   await page
     .getByRole("button", { name: "Research intake", exact: true })
     .click();
@@ -639,7 +627,6 @@ test("actual controller planned issue export displays a reserved owner without i
   let claimed = false;
   const isolated = createDashboardServer({
     view: currentView,
-    token,
     staticDir: resolve("dist"),
     issueImport: {
       url: "http://127.0.0.1:9876",
@@ -677,8 +664,6 @@ test("actual controller planned issue export displays a reserved owner without i
   await new Promise((done) => isolated.listen(0, "127.0.0.1", done));
   try {
     await page.goto(`http://127.0.0.1:${isolated.address().port}`);
-    await page.getByLabel("Local access token").fill(token);
-    await page.getByRole("button", { name: "Open mission control" }).click();
     await page
       .getByRole("button", { name: "Research intake", exact: true })
       .click();
@@ -1565,9 +1550,8 @@ test("research import duplicate clicks and competing tabs share one locked refer
   expect(importCalls[1].body).toBe(importCalls[0].body);
 });
 
-test("research import sign-in renewal never posts automatically or changes an unknown reference", async ({
+test("research import reload never posts automatically or changes an unknown reference", async ({
   page,
-  context,
 }) => {
   const record = await confirmCurrentIntake(page);
   const imported = importedReceipt(record);
@@ -1580,12 +1564,11 @@ test("research import sign-in renewal never posts automatically or changes an un
     page.getByRole("status", { name: "Research task status" }),
   ).toContainText(/unknown/i);
   const original = importCalls[0].body;
-  await context.clearCookies();
   await page.reload();
-  await expect(page.getByLabel("Local access token")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "System flow", exact: true }),
+  ).toBeVisible();
   expect(importCalls).toHaveLength(1);
-  await page.getByLabel("Local access token").fill(token);
-  await page.getByRole("button", { name: "Open mission control" }).click();
   await page
     .getByRole("button", { name: "Research intake", exact: true })
     .click();

@@ -54,12 +54,10 @@ function receipt(input = request, phase = "created") {
   };
 }
 async function fixture(t, fetchImpl, extra = {}) {
-  const token = randomBytes(24).toString("hex");
   const upstreamToken = randomBytes(24).toString("hex");
   const calls = [];
   const server = createDashboardServer({
     view: new FleetView(),
-    token,
     research: {
       url: "http://127.0.0.1:9999",
       token: upstreamToken,
@@ -77,13 +75,7 @@ async function fixture(t, fetchImpl, extra = {}) {
     server.close();
   });
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const login = await fetch(`${origin}/api/session`, {
-    method: "POST",
-    headers: { origin, "content-type": "application/json" },
-    body: JSON.stringify({ token }),
-  });
-  const cookie = login.headers.get("set-cookie").split(";")[0];
-  const headers = { cookie, origin, "content-type": "application/json" };
+  const headers = { origin, "content-type": "application/json" };
   const submit = (input = request, overrides = {}) =>
     fetch(`${origin}/api/research/intakes`, {
       method: "POST",
@@ -94,16 +86,13 @@ async function fixture(t, fetchImpl, extra = {}) {
   const inspect = (digest = receipt().requestDigest) =>
     fetch(
       `${origin}/api/research/intakes/${request.intakeId}?requestDigest=${digest}`,
-      { headers: { cookie } },
     );
-  return { origin, cookie, headers, calls, submit, inspect, upstreamToken };
+  return { origin, headers, calls, submit, inspect, upstreamToken };
 }
 
-test("authenticated intake forwards exact publishable content and keeps Nestor credentials on backend", async (t) => {
+test("keyless local intake forwards exact publishable content and keeps Nestor credentials on backend", async (t) => {
   const f = await fixture(t, async () => Response.json(receipt()));
-  const capability = await fetch(`${f.origin}/api/capabilities`, {
-    headers: { cookie: f.cookie },
-  });
+  const capability = await fetch(`${f.origin}/api/capabilities`);
   assert.deepEqual((await capability.json()).researchIntake, { enabled: true });
   const result = await f.submit();
   assert.equal(result.status, 200);
@@ -117,14 +106,25 @@ test("authenticated intake forwards exact publishable content and keeps Nestor c
   assert.deepEqual(JSON.parse(options.body), request);
 });
 
-test("intake write requires local authentication and same-origin intent before contacting Nestor", async (t) => {
+test("intake write requires a local host and same-origin intent before contacting Nestor", async (t) => {
   const f = await fixture(t, async () => Response.json(receipt()));
-  for (const [headers, status] of [
-    [{}, 401],
-    [{ cookie: f.cookie }, 403],
-    [{ ...f.headers, origin: "https://foreign.example" }, 403],
+  for (const [headers, error] of [
+    [{ "content-type": "application/json" }, "Origin required"],
+    [{ ...f.headers, origin: "https://foreign.example" }, "Forbidden origin"],
+    [
+      {
+        ...f.headers,
+        host: "foreign.example",
+        origin: "http://foreign.example",
+      },
+      "Forbidden origin",
+    ],
+    [{ ...f.headers, "sec-fetch-site": "cross-site" }, "Forbidden origin"],
   ]) {
-    assert.equal((await f.submit(request, { headers })).status, status);
+    const result = await f.submit(request, { headers });
+    assert.equal(result.status, 403);
+    assert.deepEqual(await result.json(), { error });
+    assert.equal(f.calls.length, 0);
   }
   assert.equal(f.calls.length, 0);
 });
@@ -245,9 +245,7 @@ test("status requires one valid digest and a valid ID before upstream access", a
     `${request.intakeId}?requestDigest=${"a".repeat(64)}&requestDigest=${"a".repeat(64)}`,
     `bad!id?requestDigest=${"a".repeat(64)}`,
   ]) {
-    const result = await fetch(`${f.origin}/api/research/intakes/${suffix}`, {
-      headers: { cookie: f.cookie },
-    });
+    const result = await fetch(`${f.origin}/api/research/intakes/${suffix}`);
     assert.equal(result.status, 400);
   }
   assert.equal(f.calls.length, 0);
@@ -262,14 +260,12 @@ test("intake configuration is disabled by default and invalid endpoints fail at 
     assert.throws(() =>
       createDashboardServer({
         view: new FleetView(),
-        token: "fixture-ui",
         research,
       }),
     );
   }
   const server = createDashboardServer({
     view: new FleetView(),
-    token: "fixture-ui",
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -278,15 +274,9 @@ test("intake configuration is disabled by default and invalid endpoints fail at 
     server.close();
   });
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const login = await fetch(`${origin}/api/session`, {
-    method: "POST",
-    headers: { origin, "content-type": "application/json" },
-    body: JSON.stringify({ token: "fixture-ui" }),
-  });
-  const cookie = login.headers.get("set-cookie").split(";")[0];
   const result = await fetch(`${origin}/api/research/intakes`, {
     method: "POST",
-    headers: { cookie, origin, "content-type": "application/json" },
+    headers: { origin, "content-type": "application/json" },
     body: JSON.stringify(request),
   });
   assert.equal(result.status, 503);

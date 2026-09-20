@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -13,7 +13,28 @@ import { FleetView } from "../server/view.mjs";
 
 const fixtureCredential = randomBytes(24).toString("base64url");
 
-test("planned issue routes stay authenticated and unavailable without configuration", async (t) => {
+test("local dashboard opens without a token or session cookie", async (t) => {
+  const { url, view } = await fixture(t);
+  view.setResources("sessions", [{ id: "local-work", agentId: "worker-one" }]);
+  const response = await fetch(`${url}/api/snapshot`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("set-cookie"), null);
+  assert.equal((await response.json()).resources.sessions[0].id, "local-work");
+  const capabilities = await fetch(`${url}/api/capabilities`);
+  assert.equal(capabilities.status, 200);
+  assert.equal((await capabilities.json()).sessionCommands.enabled, false);
+});
+
+test("a non-loopback listener cannot expose dashboard data", async (t) => {
+  const { server, url } = await fixture(t);
+  const address = server.address();
+  // Exercise the listener policy without opening a non-loopback socket.
+  server.address = () => ({ ...address, address: "0.0.0.0" });
+  const response = await fetch(`${url}/api/snapshot`);
+  assert.equal(response.status, 403);
+});
+
+test("planned issue routes preserve local request checks and stay unavailable without configuration", async (t) => {
   const { url, view } = await fixture(t);
   const input = {
     schema: "hi/agamemnon/issue-import/v1",
@@ -29,21 +50,24 @@ test("planned issue routes stay authenticated and unavailable without configurat
     ["/api/issue-intakes", "POST"],
     [`/api/tasks/issue-${"a".repeat(64)}`, "GET"],
   ];
-  const send = (path, method, cookie) =>
+  const send = (path, method, headers = {}) =>
     fetch(`${url}${path}`, {
       method,
       headers: {
         origin: url,
         "content-type": "application/json",
-        ...(cookie ? { cookie } : {}),
+        ...headers,
       },
       ...(method === "POST" ? { body: JSON.stringify(input) } : {}),
     });
   for (const [path, method] of routes)
-    assert.equal((await send(path, method)).status, 401);
-  const cookie = await login(url);
+    assert.equal(
+      (await send(path, method, { "sec-fetch-site": "cross-site" })).status,
+      403,
+    );
+
   for (const [path, method] of routes) {
-    const response = await send(path, method, cookie);
+    const response = await send(path, method);
     assert.equal(response.status, 503, path);
     assert.deepEqual(await response.json(), {
       error: "not_configured",
@@ -75,14 +99,16 @@ test("planned issue repository selection comes from authenticated controller con
     },
   });
   assert.equal(
-    (await fetch(`${url}/api/issue-intakes/repositories`)).status,
-    401,
+    (
+      await fetch(`${url}/api/issue-intakes/repositories`, {
+        headers: { origin: "https://elsewhere.example" },
+      })
+    ).status,
+    403,
   );
   assert.deepEqual(calls, []);
-  const cookie = await login(url);
-  const response = await fetch(`${url}/api/issue-intakes/repositories`, {
-    headers: { cookie },
-  });
+
+  const response = await fetch(`${url}/api/issue-intakes/repositories`);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), registry);
   assert.equal(calls.length, 1);
@@ -94,9 +120,7 @@ test("planned issue repository selection comes from authenticated controller con
   assert.equal(calls[0].headers.authorization, `Bearer ${apiKey}`);
   assert.equal(calls[0].redirect, "error");
   assert.ok(calls[0].signal instanceof AbortSignal);
-  const capability = await (
-    await fetch(`${url}/api/capabilities`, { headers: { cookie } })
-  ).json();
+  const capability = await (await fetch(`${url}/api/capabilities`)).json();
   assert.equal(capability.issueImport.enabled, true);
   assert.equal(capability.researchIntake.enabled, false);
   assert.equal(capability.researchImport.enabled, false);
@@ -122,11 +146,8 @@ test("planned issue registry rejects duplicate native IDs and preserves reordere
       },
     },
   });
-  const cookie = await login(url);
-  const read = () =>
-    fetch(`${url}/api/issue-intakes/repositories`, {
-      headers: { cookie },
-    });
+
+  const read = () => fetch(`${url}/api/issue-intakes/repositories`);
   const positive = await read();
   assert.equal(positive.status, 200);
   assert.deepEqual(await positive.json(), {
@@ -242,16 +263,14 @@ async function plannedIssueFixture(t, options = {}) {
       },
     },
   });
-  const cookie = await login(server.url);
-  return { ...server, cookie, calls, apiKey, input, inspection, receipt, task };
+
+  return { ...server, calls, apiKey, input, inspection, receipt, task };
 }
 
 test("planned issue inspection and explicit import preserve the selected native identity and snapshot", async (t) => {
-  const { url, cookie, calls, input, inspection, receipt, view, apiKey } =
+  const { url, calls, input, inspection, receipt, view, apiKey } =
     await plannedIssueFixture(t);
-  const inspected = await fetch(`${url}/api/issue-intakes/project/42`, {
-    headers: { cookie },
-  });
+  const inspected = await fetch(`${url}/api/issue-intakes/project/42`);
   assert.equal(inspected.status, 200);
   assert.deepEqual(await inspected.json(), inspection);
   assert.deepEqual(
@@ -260,7 +279,7 @@ test("planned issue inspection and explicit import preserve the selected native 
   );
   const imported = await fetch(`${url}/api/issue-intakes`, {
     method: "POST",
-    headers: { cookie, origin: url, "content-type": "application/json" },
+    headers: { origin: url, "content-type": "application/json" },
     body: JSON.stringify(input),
   });
   assert.equal(imported.status, 201);
@@ -291,7 +310,7 @@ test("planned issue inspection and explicit import preserve the selected native 
 });
 
 test("planned issue selectors and request bodies reject ambiguous input before controller calls", async (t) => {
-  const { url, cookie, calls, input } = await plannedIssueFixture(t);
+  const { url, calls, input } = await plannedIssueFixture(t);
   for (const path of [
     "/api/issue-intakes/project/42?digest=private",
     "/api/issue-intakes/project/42?planCommentId=one&planCommentId=two",
@@ -300,11 +319,7 @@ test("planned issue selectors and request bodies reject ambiguous input before c
     "/api/issue-intakes/project/42/extra",
     "/api/issue-intakes/%2Fother/42",
   ]) {
-    assert.equal(
-      (await fetch(`${url}${path}`, { headers: { cookie } })).status,
-      400,
-      path,
-    );
+    assert.equal((await fetch(`${url}${path}`)).status, 400, path);
   }
   const validBody = JSON.stringify(input);
   for (const invalid of [
@@ -319,7 +334,7 @@ test("planned issue selectors and request bodies reject ambiguous input before c
   ]) {
     const response = await fetch(`${url}/api/issue-intakes`, {
       method: "POST",
-      headers: { cookie, origin: url, "content-type": "application/json" },
+      headers: { origin: url, "content-type": "application/json" },
       body: typeof invalid === "string" ? invalid : JSON.stringify(invalid),
     });
     assert.equal(response.status, 400);
@@ -334,7 +349,7 @@ test("planned issue comment inspection binds the exact selected same-issue plan 
     nodeId: "IC_selected",
     digest: "b".repeat(64),
   };
-  const { url, cookie, calls, inspection } = await plannedIssueFixture(t, {
+  const { url, calls, inspection } = await plannedIssueFixture(t, {
     reply: async (_call, value) =>
       new Response(JSON.stringify({ ...value.inspection, plan }), {
         status: 200,
@@ -342,7 +357,6 @@ test("planned issue comment inspection binds the exact selected same-issue plan 
   });
   const response = await fetch(
     `${url}/api/issue-intakes/project/42?planCommentId=IC_selected`,
-    { headers: { cookie } },
   );
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ...inspection, plan });
@@ -354,10 +368,8 @@ test("planned issue comment inspection binds the exact selected same-issue plan 
 });
 
 test("planned issue task status is a neutral intrinsic projection without another task authority", async (t) => {
-  const { url, cookie, calls, receipt, task } = await plannedIssueFixture(t);
-  const response = await fetch(`${url}/api/tasks/${receipt.taskId}`, {
-    headers: { cookie },
-  });
+  const { url, calls, receipt, task } = await plannedIssueFixture(t);
+  const response = await fetch(`${url}/api/tasks/${receipt.taskId}`);
   assert.equal(response.status, 200);
   const value = await response.json();
   assert.deepEqual(value, {
@@ -411,10 +423,7 @@ test("neutral task route accepts claimed research provenance and rejects mixed k
     reply: async (call) =>
       Response.json(call.path.startsWith("/v1/tasks/") ? document : resource),
   });
-  const read = (taskId) =>
-    fetch(`${direct.url}/api/tasks/${taskId}`, {
-      headers: { cookie: direct.cookie },
-    });
+  const read = (taskId) => fetch(`${direct.url}/api/tasks/${taskId}`);
   const positive = await read(receipt.taskId);
   assert.equal(positive.status, 200);
   const projected = await positive.json();
@@ -462,10 +471,10 @@ test("neutral task route accepts claimed research provenance and rejects mixed k
 });
 
 test("planned issue identity rejects a lone surrogate before any controller call", async (t) => {
-  const { url, cookie, calls, input } = await plannedIssueFixture(t);
+  const { url, calls, input } = await plannedIssueFixture(t);
   const response = await fetch(`${url}/api/issue-intakes`, {
     method: "POST",
-    headers: { cookie, origin: url, "content-type": "application/json" },
+    headers: { origin: url, "content-type": "application/json" },
     body: JSON.stringify({ ...input, issueId: "I_\ud800" }),
   });
   assert.equal(response.status, 400);
@@ -474,7 +483,7 @@ test("planned issue identity rejects a lone surrogate before any controller call
 });
 
 test("planned issue receipts reject duplicate keys in actual upstream JSON", async (t) => {
-  const { url, cookie, calls, input } = await plannedIssueFixture(t, {
+  const { url, calls, input } = await plannedIssueFixture(t, {
     reply: async (_call, { receipt }) =>
       new Response(
         JSON.stringify(receipt).replace(
@@ -486,7 +495,7 @@ test("planned issue receipts reject duplicate keys in actual upstream JSON", asy
   });
   const response = await fetch(`${url}/api/issue-intakes`, {
     method: "POST",
-    headers: { cookie, origin: url, "content-type": "application/json" },
+    headers: { origin: url, "content-type": "application/json" },
     body: JSON.stringify(input),
   });
   assert.equal(response.status, 503);
@@ -509,7 +518,7 @@ test("actual controller issue fixture passes the adapter with Pending and reserv
   );
   const producer = JSON.parse(raw);
   let claimed = false;
-  const { url, cookie, calls, view } = await plannedIssueFixture(t, {
+  const { url, calls, view } = await plannedIssueFixture(t, {
     reply: async (call) => {
       let body;
       if (call.method === "POST") {
@@ -531,7 +540,7 @@ test("actual controller issue fixture passes the adapter with Pending and reserv
     },
   });
   const get = async (path) => {
-    const response = await fetch(`${url}${path}`, { headers: { cookie } });
+    const response = await fetch(`${url}${path}`);
     assert.equal(response.status, 200);
     return response.json();
   };
@@ -548,7 +557,7 @@ test("actual controller issue fixture passes the adapter with Pending and reserv
   for (const expected of [producer.importReceipt, producer.replayReceipt]) {
     const response = await fetch(`${url}/api/issue-intakes`, {
       method: "POST",
-      headers: { cookie, origin: url, "content-type": "application/json" },
+      headers: { origin: url, "content-type": "application/json" },
       body: JSON.stringify(producer.importRequest),
     });
     assert.equal(response.status, claimed ? 200 : 201);
@@ -586,7 +595,6 @@ async function fixture(t, options = {}) {
   const view = options.view ?? new FleetView();
   const server = createDashboardServer({
     view,
-    token: fixtureCredential,
     ...options,
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -596,16 +604,6 @@ async function fixture(t, options = {}) {
   });
   const url = `http://127.0.0.1:${server.address().port}`;
   return { server, view, url };
-}
-async function login(url) {
-  const response = await fetch(`${url}/api/session`, {
-    method: "POST",
-    headers: { origin: url, "content-type": "application/json" },
-    body: JSON.stringify({ token: fixtureCredential }),
-  });
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("set-cookie"), /HttpOnly.*SameSite=Strict/);
-  return response.headers.get("set-cookie").split(";")[0];
 }
 
 test("a request-target decoder failure produces a bounded response without rejecting the handler", async (t) => {
@@ -642,7 +640,7 @@ test("private Unicode input survives an HTTP chunk boundary inside a code point"
       },
     },
   });
-  const cookie = await login(url);
+
   const input = { text: "Review this 🌍 change\nwithout changing the input." };
   const bytes = Buffer.from(JSON.stringify(input));
   const split = bytes.indexOf(Buffer.from("🌍")) + 2;
@@ -651,7 +649,7 @@ test("private Unicode input survives an HTTP chunk boundary inside a code point"
       `${url}/api/commands`,
       {
         method: "POST",
-        headers: { cookie, origin: url, "content-type": "application/json" },
+        headers: { origin: url, "content-type": "application/json" },
       },
       (response) => {
         response.resume();
@@ -667,21 +665,20 @@ test("private Unicode input survives an HTTP chunk boundary inside a code point"
   assert.deepEqual(submitted, [input]);
 });
 
-test("work and flow metadata require a local authenticated session", async (t) => {
+test("local work and flow metadata exclude private resource fields", async (t) => {
   const { url, view } = await fixture(t);
-  assert.equal((await fetch(`${url}/api/snapshot`)).status, 401);
-  const cookie = await login(url);
+
   view.setResources("sessions", [
     { id: "s1", agentId: "myrmidon-1", token: fixtureCredential },
   ]);
-  const response = await fetch(`${url}/api/snapshot`, { headers: { cookie } });
+  const response = await fetch(`${url}/api/snapshot`);
   assert.equal(response.status, 200);
   const body = await response.text();
   assert.equal(body.includes("myrmidon-1"), true);
   assert.equal(body.includes(fixtureCredential), false);
 });
 
-test("command submission requires an authenticated same-origin JSON request and bounded body", async (t) => {
+test("command submission requires same-origin JSON intent and a bounded body", async (t) => {
   const submitted = [];
   const commands = {
     capabilities: { sessionCommands: { enabled: true } },
@@ -708,40 +705,34 @@ test("command submission requires an authenticated same-origin JSON request and 
       headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify(input),
     });
-  assert.equal((await send({ origin: url })).status, 401);
-  const cookie = await login(url);
-  assert.equal((await send({ cookie })).status, 403);
+  assert.equal((await send({})).status, 403);
   assert.equal(
-    (await send({ cookie, origin: "https://elsewhere.example" })).status,
+    (await send({ origin: "https://elsewhere.example" })).status,
     403,
   );
-  assert.deepEqual(
-    await (
-      await fetch(`${url}/api/capabilities`, { headers: { cookie } })
-    ).json(),
-    {
-      ...commands.capabilities,
-      researchIntake: { enabled: false },
-      researchImport: { enabled: false },
-    },
+  assert.equal(
+    (await send({ origin: url, "sec-fetch-site": "cross-site" })).status,
+    403,
   );
-  const accepted = await send({ cookie, origin: url });
+  assert.deepEqual(submitted, []);
+  assert.deepEqual(await (await fetch(`${url}/api/capabilities`)).json(), {
+    ...commands.capabilities,
+    researchIntake: { enabled: false },
+    researchImport: { enabled: false },
+  });
+  const accepted = await send({ origin: url });
   assert.equal(accepted.status, 202);
   assert.equal((await accepted.json()).status, "submitted");
   assert.deepEqual(submitted, [command]);
   assert.equal(
-    (
-      await send(
-        { cookie, origin: url },
-        { ...command, text: "x".repeat(131073) },
-      )
-    ).status,
+    (await send({ origin: url }, { ...command, text: "x".repeat(131073) }))
+      .status,
     400,
   );
   assert.equal(submitted.length, 1);
 });
 
-test("private request details require sign-in and return only the selected owner scope", async (t) => {
+test("private request details preserve local origin and selected owner scope", async (t) => {
   const calls = [];
   const { url } = await fixture(t, {
     commands: {
@@ -764,9 +755,17 @@ test("private request details require sign-in and return only the selected owner
     },
   });
   const endpoint = `${url}/api/requests?sessionId=s1&workerId=w1&generation=3`;
-  assert.equal((await fetch(endpoint)).status, 401);
-  const cookie = await login(url);
-  const response = await fetch(endpoint, { headers: { cookie } });
+  assert.equal(
+    (
+      await fetch(endpoint, {
+        headers: { origin: "https://elsewhere.example" },
+      })
+    ).status,
+    403,
+  );
+  assert.deepEqual(calls, []);
+
+  const response = await fetch(endpoint);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(calls, [{ sessionId: "s1", workerId: "w1", generation: 3 }]);
@@ -774,36 +773,28 @@ test("private request details require sign-in and return only the selected owner
     (await response.json()).requests[0].command,
     "synthetic private command",
   );
-  assert.equal(
-    (await fetch(`${endpoint}&workerId=w2`, { headers: { cookie } })).status,
-    400,
-  );
-  const snapshot = await (
-    await fetch(`${url}/api/snapshot`, { headers: { cookie } })
-  ).text();
+  assert.equal((await fetch(`${endpoint}&workerId=w2`)).status, 400);
+  const snapshot = await (await fetch(`${url}/api/snapshot`)).text();
   assert.equal(snapshot.includes("synthetic private command"), false);
 });
 
-test("cross-origin login/stream and arbitrary Host requests are rejected", async (t) => {
+test("cross-origin snapshot/stream and arbitrary Host requests are rejected", async (t) => {
   const { url } = await fixture(t);
   assert.equal(
     (
-      await fetch(`${url}/api/session`, {
-        method: "POST",
+      await fetch(`${url}/api/snapshot`, {
         headers: {
           origin: "https://elsewhere.example",
-          "content-type": "application/json",
         },
-        body: JSON.stringify({ token: fixtureCredential }),
       })
     ).status,
     403,
   );
-  const cookie = await login(url);
+
   assert.equal(
     (
       await fetch(`${url}/api/events`, {
-        headers: { origin: "https://elsewhere.example", cookie },
+        headers: { origin: "https://elsewhere.example" },
       })
     ).status,
     403,
@@ -811,7 +802,7 @@ test("cross-origin login/stream and arbitrary Host requests are rejected", async
   const status = await new Promise((resolve, reject) => {
     get(
       `${url}/api/snapshot`,
-      { headers: { host: "elsewhere.example", cookie } },
+      { headers: { host: "elsewhere.example" } },
       (response) => {
         response.resume();
         resolve(response.statusCode);
@@ -821,13 +812,12 @@ test("cross-origin login/stream and arbitrary Host requests are rejected", async
   assert.equal(status, 403);
 });
 
-test("SSE sends an authenticated snapshot with a replay cursor and visible restart gap", async (t) => {
+test("local SSE sends a snapshot with a replay cursor and visible restart gap", async (t) => {
   const { url } = await fixture(t);
-  const cookie = await login(url);
+
   const abort = new AbortController();
   t.after(() => abort.abort());
   const response = await fetch(`${url}/api/events?after=old-epoch:9`, {
-    headers: { cookie },
     signal: abort.signal,
   });
   assert.equal(response.status, 200);
@@ -840,24 +830,14 @@ test("SSE sends an authenticated snapshot with a replay cursor and visible resta
   await reader.cancel();
 });
 
-test("invalid login and unrelated mutations fail without proxying work", async (t) => {
+test("unrelated mutations fail without proxying work", async (t) => {
   const { url } = await fixture(t);
-  assert.equal(
-    (
-      await fetch(`${url}/api/session`, {
-        method: "POST",
-        headers: { origin: url, "content-type": "application/json" },
-        body: '{"token":"wrong"}',
-      })
-    ).status,
-    401,
-  );
-  const cookie = await login(url);
+
   assert.equal(
     (
       await fetch(`${url}/api/anything`, {
         method: "POST",
-        headers: { origin: url, cookie },
+        headers: { origin: url },
       })
     ).status,
     404,
@@ -995,13 +975,17 @@ async function researchImportFixture(t, options = {}) {
   };
 }
 
-test("research import authentication and origin failures have no upstream or worker effects", async (t) => {
+test("research import origin and cross-site failures have no upstream or worker effects", async (t) => {
   const { url, view, upstreamCalls, commandCalls, send } =
     await researchImportFixture(t);
-  assert.equal((await send({ origin: url })).status, 401);
-  const cookie = await login(url);
+  assert.equal((await send({})).status, 403);
+
   assert.equal(
-    (await send({ cookie, origin: "https://elsewhere.example" })).status,
+    (await send({ origin: "https://elsewhere.example" })).status,
+    403,
+  );
+  assert.equal(
+    (await send({ origin: url, "sec-fetch-site": "cross-site" })).status,
     403,
   );
   assert.deepEqual(upstreamCalls, []);
@@ -1010,11 +994,11 @@ test("research import authentication and origin failures have no upstream or wor
   assert.deepEqual(view.snapshot().observations, []);
 });
 
-test("research import authenticated route forwards only the confirmed reference and returns its canonical task", async (t) => {
+test("local research import forwards only the confirmed reference and returns its canonical task", async (t) => {
   const { url, input, receipt, apiKey, upstreamCalls, commandCalls, send } =
     await researchImportFixture(t);
-  const cookie = await login(url);
-  const response = await send({ cookie, origin: url });
+
+  const response = await send({ origin: url });
   assert.equal(response.status, 201);
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), receipt);
@@ -1031,13 +1015,11 @@ test("research import authenticated route forwards only the confirmed reference 
 
 test("research import capability is explicit and disabled configuration submits nothing", async (t) => {
   const { url } = await fixture(t);
-  const cookie = await login(url);
-  const capabilities = await (
-    await fetch(`${url}/api/capabilities`, { headers: { cookie } })
-  ).json();
+
+  const capabilities = await (await fetch(`${url}/api/capabilities`)).json();
   const response = await fetch(`${url}/api/research/imports`, {
     method: "POST",
-    headers: { cookie, origin: url, "content-type": "application/json" },
+    headers: { origin: url, "content-type": "application/json" },
     body: JSON.stringify({
       schema: "hi/agamemnon/research-import/v1",
       intakeId: "research-01",
@@ -1055,10 +1037,8 @@ test("research import capability is explicit and disabled configuration submits 
 
 test("research import capability reports configured service without submitting", async (t) => {
   const { url, upstreamCalls } = await researchImportFixture(t);
-  const cookie = await login(url);
-  const response = await fetch(`${url}/api/capabilities`, {
-    headers: { cookie },
-  });
+
+  const response = await fetch(`${url}/api/capabilities`);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(upstreamCalls, []);
@@ -1067,7 +1047,7 @@ test("research import capability reports configured service without submitting",
 
 test("research import router rejects missing origin and malformed bodies before forwarding", async (t) => {
   const { url, input, upstreamCalls } = await researchImportFixture(t);
-  const cookie = await login(url);
+
   for (const [name, body, headers, expected] of [
     ["missing origin", JSON.stringify(input), {}, 403],
     [
@@ -1094,7 +1074,7 @@ test("research import router rejects missing origin and malformed bodies before 
     await t.test(name, async () => {
       const response = await fetch(`${url}/api/research/imports`, {
         method: "POST",
-        headers: { cookie, "content-type": "application/json", ...headers },
+        headers: { "content-type": "application/json", ...headers },
         body,
       });
       assert.equal(response.status, expected);
@@ -1104,7 +1084,7 @@ test("research import router rejects missing origin and malformed bodies before 
   }
   const accepted = await fetch(`${url}/api/research/imports`, {
     method: "POST",
-    headers: { cookie, origin: url, "content-type": "application/json" },
+    headers: { origin: url, "content-type": "application/json" },
     body: JSON.stringify(input).padEnd(4096),
   });
   assert.equal(accepted.status, 201);
@@ -1112,22 +1092,22 @@ test("research import router rejects missing origin and malformed bodies before 
   assert.deepEqual(JSON.parse(upstreamCalls[0].body), input);
 });
 
-test("research task read requires authentication before any canonical lookup", async (t) => {
+test("research task read rejects foreign origin before any canonical lookup", async (t) => {
   const { url, receipt, upstreamCalls, commandCalls } =
     await researchImportFixture(t);
-  const response = await fetch(`${url}/api/research/tasks/${receipt.taskId}`);
-  assert.equal(response.status, 401);
+  const response = await fetch(`${url}/api/research/tasks/${receipt.taskId}`, {
+    headers: { origin: "https://elsewhere.example" },
+  });
+  assert.equal(response.status, 403);
   assert.deepEqual(upstreamCalls, []);
   assert.deepEqual(commandCalls, []);
 });
 
-test("research task authenticated read projects the known unclaimed task using only canonical GET", async (t) => {
+test("local research task read projects the known unclaimed task using only canonical GET", async (t) => {
   const { url, view, receipt, apiKey, upstreamCalls, commandCalls } =
     await researchImportFixture(t);
-  const cookie = await login(url);
-  const response = await fetch(`${url}/api/research/tasks/${receipt.taskId}`, {
-    headers: { cookie },
-  });
+
+  const response = await fetch(`${url}/api/research/tasks/${receipt.taskId}`);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), {
@@ -1154,8 +1134,13 @@ test("research task authenticated read projects the known unclaimed task using o
   assert.deepEqual(view.snapshot().resources.sessions, []);
 });
 
-async function mainProcess(t, configuration) {
+async function mainProcess(
+  t,
+  configuration = {},
+  prepareDirectory = async () => {},
+) {
   const directory = await mkdtemp(join(tmpdir(), "odysseus-main-fixture-"));
+  await prepareDirectory(directory, configuration);
   const reservation = createServer();
   await new Promise((resolve) => reservation.listen(0, "127.0.0.1", resolve));
   const port = reservation.address().port;
@@ -1164,8 +1149,6 @@ async function mainProcess(t, configuration) {
     PATH: dirname(process.execPath),
     HOME: directory,
     LANG: "C.UTF-8",
-    ODYSSEUS_WEB_STATE_DIR: join(directory, "state"),
-    ODYSSEUS_WEB_TOKEN: fixtureCredential,
     ODYSSEUS_WEB_PORT: String(port),
   };
   for (const [key, value] of Object.entries(configuration))
@@ -1248,8 +1231,59 @@ async function mainProcess(t, configuration) {
     false,
     "A port collision is a fixture setup failure",
   );
-  return { url: `http://127.0.0.1:${port}`, outcome, stderr };
+  return {
+    url: `http://127.0.0.1:${port}`,
+    outcome,
+    stderr,
+    stdout,
+    directory,
+  };
 }
+
+test("main serves loopback with no key and no writable UI-token state", async (t) => {
+  const marker =
+    "This file prevents creating the former default state directory.";
+  const main = await mainProcess(t, {}, async (directory) => {
+    await writeFile(join(directory, ".local"), marker, { flag: "wx" });
+  });
+  assert.equal(main.outcome.kind, "listening");
+  const response = await fetch(`${main.url}/api/snapshot`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("set-cookie"), null);
+  assert.equal(
+    (await response.json()).sources.agamemnon.status,
+    "not_configured",
+  );
+  assert.equal(await readFile(join(main.directory, ".local"), "utf8"), marker);
+  assert.equal(main.stdout.includes("Local sign-in token"), false);
+});
+
+test("main ignores legacy UI settings and preserves an existing token file", async (t) => {
+  const retained = "synthetic legacy token remains unchanged\n";
+  const main = await mainProcess(t, {}, async (directory, configuration) => {
+    const legacyState = join(directory, "legacy-state");
+    await mkdir(legacyState, { mode: 0o700 });
+    await writeFile(join(legacyState, "access-token"), retained, {
+      mode: 0o600,
+      flag: "wx",
+    });
+    configuration.ODYSSEUS_WEB_STATE_DIR = legacyState;
+    configuration.ODYSSEUS_WEB_TOKEN = "synthetic-legacy-override";
+  });
+  assert.equal(main.outcome.kind, "listening");
+  const response = await fetch(`${main.url}/api/capabilities`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("set-cookie"), null);
+  assert.equal((await response.json()).sessionCommands.enabled, false);
+  assert.equal(
+    await readFile(
+      join(main.directory, "legacy-state", "access-token"),
+      "utf8",
+    ),
+    retained,
+  );
+  assert.equal(main.stdout.includes("Local sign-in token"), false);
+});
 
 test("planned issue main process uses the explicit feature flag and controller credentials", async (t) => {
   const registry = {
@@ -1292,14 +1326,13 @@ test("planned issue main process uses the explicit feature flag and controller c
         AGAMEMNON_API_KEY: authorityKey,
       });
       assert.equal(main.outcome.kind, "listening");
-      const cookie = await login(main.url);
+
       const capabilities = await (
-        await fetch(`${main.url}/api/capabilities`, { headers: { cookie } })
+        await fetch(`${main.url}/api/capabilities`)
       ).json();
       assert.equal(capabilities.issueImport?.enabled === true, flag === "1");
       const response = await fetch(
         `${main.url}/api/issue-intakes/repositories`,
-        { headers: { cookie } },
       );
       assert.equal(response.status, flag ? 200 : 503);
       if (flag) assert.deepEqual(await response.json(), registry);
@@ -1341,15 +1374,14 @@ test("research import main process requires explicit opt-in and wires the config
         AGAMEMNON_API_KEY: apiKey,
       });
       assert.equal(main.outcome.kind, "listening");
-      const cookie = await login(main.url);
+
       const capabilities = await (
-        await fetch(`${main.url}/api/capabilities`, { headers: { cookie } })
+        await fetch(`${main.url}/api/capabilities`)
       ).json();
       assert.deepEqual(capabilities.researchImport, { enabled });
       const response = await fetch(`${main.url}/api/research/imports`, {
         method: "POST",
         headers: {
-          cookie,
           origin: main.url,
           "content-type": "application/json",
         },
@@ -1394,7 +1426,7 @@ test("research import main process rejects enabled invalid configuration before 
 
 test("research task router rejects selectors and bodies before any upstream read", async (t) => {
   const { url, receipt, upstreamCalls } = await researchImportFixture(t);
-  const cookie = await login(url);
+
   for (const suffix of [
     `${receipt.taskId}?namespace=other`,
     `${receipt.taskId}?digest=secret`,
@@ -1403,9 +1435,7 @@ test("research task router rejects selectors and bodies before any upstream read
     `research-${"A".repeat(64)}`,
     "%2Fother",
   ]) {
-    const response = await fetch(`${url}/api/research/tasks/${suffix}`, {
-      headers: { cookie },
-    });
+    const response = await fetch(`${url}/api/research/tasks/${suffix}`);
     assert.equal(response.status, 400);
     assert.equal(response.headers.get("cache-control"), "no-store");
   }
@@ -1415,7 +1445,6 @@ test("research task router rejects selectors and bodies before any upstream read
       {
         method: "GET",
         headers: {
-          cookie,
           "content-length": "2",
           "content-type": "application/json",
         },
@@ -1433,21 +1462,17 @@ test("research task router rejects selectors and bodies before any upstream read
     (
       await fetch(`${url}/api/research/tasks/${receipt.taskId}`, {
         method: "POST",
-        headers: { cookie, origin: url },
+        headers: { origin: url },
       })
     ).status,
     404,
   );
-  assert.equal(
-    (await fetch(`${url}/api/research/tasks`, { headers: { cookie } })).status,
-    404,
-  );
+  assert.equal((await fetch(`${url}/api/research/tasks`)).status, 404);
   assert.deepEqual(upstreamCalls, []);
   const disabled = await fixture(t);
-  const disabledCookie = await login(disabled.url);
+
   const response = await fetch(
     `${disabled.url}/api/research/tasks/${receipt.taskId}`,
-    { headers: { cookie: disabledCookie } },
   );
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), {
@@ -1456,18 +1481,18 @@ test("research task router rejects selectors and bodies before any upstream read
   });
 });
 
-test("actual import observations reach bounded authenticated SSE history without leaking payload or freshness", async (t) => {
+test("actual import observations reach bounded local SSE history without leaking payload or freshness", async (t) => {
   const view = new FleetView({ historyLimit: 3 });
   const originalSources = structuredClone(view.snapshot().sources);
   const initialCursor = view.snapshot().cursor;
   const { url, input, receipt, apiKey, upstreamCalls } =
     await researchImportFixture(t, { view });
-  const cookie = await login(url);
+
   const observed = [];
   for (let i = 0; i < 3; i++) {
     const response = await fetch(`${url}/api/research/imports`, {
       method: "POST",
-      headers: { cookie, origin: url, "content-type": "application/json" },
+      headers: { origin: url, "content-type": "application/json" },
       body: JSON.stringify(input),
     });
     assert.equal(response.status, 201);
@@ -1493,7 +1518,7 @@ test("actual import observations reach bounded authenticated SSE history without
   t.after(() => abort.abort());
   const response = await fetch(
     `${url}/api/events?after=${encodeURIComponent(initialCursor)}`,
-    { headers: { cookie }, signal: abort.signal },
+    { signal: abort.signal },
   );
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store");

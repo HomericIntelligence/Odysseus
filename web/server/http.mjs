@@ -1,5 +1,4 @@
 import { createServer } from "node:http";
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { createIntakeService } from "./intakes.mjs";
@@ -9,9 +8,6 @@ import {
   parseIssueImportJson,
 } from "./research-imports.mjs";
 
-const hash = (value) => createHash("sha256").update(value).digest();
-const equal = (left, right) =>
-  typeof left === "string" && timingSafeEqual(hash(left), hash(right));
 const json = (response, status, data) => {
   response.writeHead(status, {
     "content-type": "application/json",
@@ -38,16 +34,13 @@ async function body(request, limit = 4096, uniqueKeys = false) {
 
 export function createDashboardServer({
   view,
-  token,
   staticDir,
-  sessionTtlMs = 1800000,
   commands,
   research,
   researchImport,
   issueImport,
 } = {}) {
-  if (!view || !token)
-    throw new Error("View and private UI token are required");
+  if (!view) throw new Error("View is required");
   const intakes = research ? createIntakeService(research) : null;
   const imports = researchImport
     ? createResearchImportService(researchImport)
@@ -55,7 +48,6 @@ export function createDashboardServer({
   const issueImports = issueImport
     ? createIssueImportService(issueImport)
     : null;
-  const sessions = new Map();
   let streams = 0;
   let pendingCommands = 0;
   let pendingReads = 0;
@@ -67,7 +59,10 @@ export function createDashboardServer({
       "content-security-policy",
       "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
     );
-    const port = server.address()?.port;
+    const address = server.address();
+    if (address?.address !== "127.0.0.1")
+      return json(response, 403, { error: "Loopback listener required" });
+    const port = address.port;
     const host = request.headers.host;
     const allowedHosts = [`127.0.0.1:${port}`, `localhost:${port}`];
     const origin = request.headers.origin;
@@ -83,34 +78,7 @@ export function createDashboardServer({
     } catch {
       return json(response, 400, { error: "Invalid request target" });
     }
-    for (const [key, expiry] of sessions)
-      if (expiry <= Date.now()) sessions.delete(key);
-    const cookie = request.headers.cookie
-      ?.split(";")
-      .map((part) => part.trim())
-      .find((part) => part.startsWith("odysseus_session="))
-      ?.slice(17);
-    if (url.pathname === "/api/session" && request.method === "POST") {
-      if (!origin) return json(response, 403, { error: "Origin required" });
-      try {
-        const input = await body(request);
-        if (!equal(input.token, token))
-          return json(response, 401, { error: "Invalid access token" });
-        const session = randomBytes(32).toString("base64url");
-        if (sessions.size >= 8) sessions.delete(sessions.keys().next().value);
-        sessions.set(session, Date.now() + sessionTtlMs);
-        response.setHeader(
-          "set-cookie",
-          `odysseus_session=${session}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(sessionTtlMs / 1000)}`,
-        );
-        return json(response, 200, { authenticated: true });
-      } catch {
-        return json(response, 400, { error: "Invalid login request" });
-      }
-    }
     if (url.pathname.startsWith("/api/")) {
-      if (!sessions.has(cookie))
-        return json(response, 401, { error: "Local sign-in required" });
       if (request.method === "GET" && url.pathname === "/api/capabilities")
         return json(response, 200, {
           ...(commands?.capabilities ?? {
@@ -359,11 +327,7 @@ export function createDashboardServer({
         let cursor =
           request.headers["last-event-id"] ?? url.searchParams.get("after");
         const send = () => {
-          if (
-            !sessions.has(cookie) ||
-            sessions.get(cookie) <= Date.now() ||
-            response.writableLength > 262144
-          ) {
+          if (response.writableLength > 262144) {
             response.end();
             return;
           }
