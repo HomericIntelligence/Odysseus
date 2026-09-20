@@ -1,6 +1,6 @@
 # Homeric Fleet implementation plan
 
-Updated: 2026-09-11. Status: consolidated implementation plan; acceptance has not run.
+Updated: 2026-09-20. Status: implementation plan; real-worker acceptance has not run.
 
 This plan integrates the laptop/SSH/Slurm operational requirements with the
 [Odysseus architecture](architecture.md) and the subsequently approved Fleet
@@ -553,6 +553,65 @@ contracts before dependent integrations. Odysseus owns the web application,
 cross-component documentation, and integration harness. Preserve review/publication
 rules, accepted ADRs, and canonical configuration coordination; update submodule
 pins only after explicit integration sign-off.
+
+### Immediate delivery order
+
+The immediate priority is one real agent that does admitted work and is visible
+in Odysseus. Use capacity one and an existing planned issue. Research intake,
+subordinate build offload, cluster deployment, and capacity experiments remain
+later work unless the selected issue needs them. Preserve those requirements for
+the subsequent Fleet acceptance stages.
+
+1. Connect verified contained execution to worker admission through Hephaestus.
+   Complete source review and CI for that change. Qualify the pinned Codex
+   runtime, independently established authentication, one isolated workspace,
+   and normal model/tool routing. Startup composition alone does not authorize
+   execution. Reject unsupported or unverified execution.
+2. Register the pool and worker through Agamemnon. Import the selected planned
+   issue through its existing interface. Confirm the durable task claim,
+   session, execution, and generation before dispatch.
+3. Deliver the admitted `start` through Keystone and `fleetd`. Deliver a separate
+   admitted `input` to begin work. A start acknowledgment confirms a conversation;
+   actual model and tool events establish activity.
+4. Connect the merged Odysseus backend to the controller's complete Fleet resource
+   collections and the actual gateway observation stream. Reuse planned-issue
+   intake, canonical ownership, session views, and message-flow display. Enable
+   private input and request controls only when their local attachment or
+   authenticated remote transport is available.
+5. Observe the same issue, logical agent, worker, host, session, and generation
+   while tools execute. Check that activity becomes stale when facts cease.
+   Check that observation-stream loss is visible and that actual message traces
+   correlate with the owner.
+6. Retain the source changes and actual verification output. Obtain independent
+   review under the source repository's normal process. A provider turn outcome
+   or dashboard observation does not replace this evidence.
+7. Use the admitted cancel path to stop the contained execution and confirm its
+   exact disposal. Then submit the independent decision through Agamemnon's
+   separate operator resolution interface. Preserve the current claim,
+   generation, matching inactive turn, cleanup evidence, and command receipts.
+   An uncertain result requires reconciliation with the same decision identity.
+8. Refresh the canonical task in Odysseus. Confirm its completed outcome and
+   released admission against Agamemnon. Retain the separate source PR merge and
+   issue-closure evidence required by the selected issue.
+
+This first flow is operator-assisted. Manual resolution records
+`provenance: manual` and `verifiedApproval: false`; the UI shows that limit.
+Keep the separate resolution credential out of workers and attachment adapters.
+The existing UI reads this result but has no resolution write action. Automatic
+validation of review/check evidence remains required for autonomous completion
+and the independently approved-work acceptance metric.
+
+For the first laptop dashboard, keep `ODYSSEUS_ENABLE_COMMANDS=0` when the worker
+and its private paths are in the Linux guest. Use the existing operator input
+path and read-only dashboard observations. A local directory mapping does not
+provide cross-VM transport. This first view does not require a new spool service.
+
+Record the tested commits, image digest, issue and task IDs, claim generation,
+worker and host identity, conversation ID, and event cursors. Keep authentication
+and private conversation data in backend/runtime storage. A registered card, an
+idle conversation, or an inserted activity record is not a working agent.
+
+### Remaining release phases
 
 | Phase | Deliverables | Required evidence before promotion |
 |---|---|---|
