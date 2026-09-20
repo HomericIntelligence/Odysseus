@@ -1,11 +1,9 @@
-import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { FleetView } from "../server/view.mjs";
 import { createDashboardServer } from "../server/http.mjs";
 
-const fixtureCredential = randomBytes(24).toString("base64url");
 const buildContract = JSON.parse(
   readFileSync(
     new URL("../tests/fixtures/agamemnon-build-contract.json", import.meta.url),
@@ -18,7 +16,7 @@ test("subordinate build details separate the tool owner, retained parent and con
 }) => {
   const raw = buildContract.persistedGrantDocument.record;
   view.setResources("build-jobs", [raw]);
-  await login(page);
+  await openDashboard(page);
   await page.getByRole("button", { name: raw.id, exact: true }).click();
   const details = page.getByLabel("Item and trace details");
   await expect(details).toContainText("tool-worker-1");
@@ -50,7 +48,7 @@ test("malformed build identity stays visible with a display key and no private p
   raw.id = "/private/sentinel";
   raw.build.snapshotWorkspace = `${raw.id}-attempt-1`;
   view.setResources("build-jobs", [raw]);
-  await login(page);
+  await openDashboard(page);
   const unavailable = page.getByRole("button", {
     name: "Build identity unavailable",
     exact: true,
@@ -94,7 +92,6 @@ test.beforeEach(async () => {
   view.setSource("test-fixture", "connected");
   server = createDashboardServer({
     view,
-    token: fixtureCredential,
     staticDir: resolve("dist"),
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -104,21 +101,67 @@ test.afterEach(async () => {
   server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
 });
-async function login(page) {
+async function openDashboard(page) {
   await page.goto(url);
-  await page.getByLabel("Local access token").fill(fixtureCredential);
-  await page.getByRole("button", { name: "Open mission control" }).click();
   await expect(
     page.getByRole("heading", { name: "System flow", exact: true }),
   ).toBeVisible();
 }
+
+test("direct navigation opens the dashboard without a local access key", async ({
+  page,
+  context,
+}) => {
+  const posts = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST") posts.push(request.url());
+  });
+  await page.goto(url);
+  await expect(
+    page.getByRole("heading", { name: "System flow", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Local access token")).toHaveCount(0);
+  await expect(page.locator(".connection")).toContainText("Live view");
+  await expect(
+    page.getByRole("heading", { name: "Waiting for admitted work" }),
+  ).toBeVisible();
+  await expect(page.locator(".packet")).toHaveCount(0);
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "System flow", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".connection")).toContainText("Live view");
+  expect(await context.cookies()).toEqual([]);
+  expect(posts).toEqual([]);
+});
+
+test("an unavailable observation stream leaves the dashboard visible and reconnects", async ({
+  page,
+}) => {
+  await page.route("**/api/events", (route) => route.abort("failed"));
+  await page.goto(url);
+  await expect(
+    page.getByRole("heading", { name: "System flow", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".connection")).toContainText("reconnecting");
+  await expect(page.getByLabel("Local access token")).toHaveCount(0);
+  await expect(
+    page.getByText("Waiting for connection", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".stats > div").first().locator("strong"),
+  ).toHaveText("0/ 108 target");
+  await expect(page.locator(".packet")).toHaveCount(0);
+  await page.unroute("**/api/events");
+  await expect(page.locator(".connection")).toContainText("Live view");
+});
 
 test("empty data has no fabricated workers, work items or traffic", async ({
   page,
 }) => {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await login(page);
+  await openDashboard(page);
   await expect(
     page.getByRole("heading", { name: "Waiting for admitted work" }),
   ).toBeVisible();
@@ -149,7 +192,7 @@ test("live item details and packet traces follow actual source updates and match
     },
   ]);
   view.setResources("sessions", [session()]);
-  await login(page);
+  await openDashboard(page);
   await page
     .getByRole("button", { name: "Browser fixture: review a change" })
     .click();
@@ -205,7 +248,7 @@ test("host filters apply to registered worker cards", async ({ page }) => {
     { id: "m1-worker", host: "m1" },
     { id: "m2-worker", host: "m2" },
   ]);
-  await login(page);
+  await openDashboard(page);
   await page.getByRole("button", { name: "Workers", exact: true }).click();
   await page.getByLabel("Filter host").selectOption("m1");
   await expect(page.locator(".worker-card")).toHaveCount(1);

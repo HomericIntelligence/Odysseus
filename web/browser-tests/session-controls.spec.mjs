@@ -1,10 +1,7 @@
-import { randomBytes } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { FleetView } from "../server/view.mjs";
 import { createDashboardServer } from "../server/http.mjs";
-
-const fixtureCredential = randomBytes(24).toString("base64url");
 
 let view, server, url;
 const session = (id = "one") => ({
@@ -31,7 +28,6 @@ test.beforeEach(async () => {
   // transport substitutes; synthetic session IDs can never reach a real service.
   server = createDashboardServer({
     view,
-    token: fixtureCredential,
     staticDir: resolve("dist"),
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -42,7 +38,7 @@ test.afterEach(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
-async function login(page, capability = {}) {
+async function openSession(page, capability = {}) {
   await page.route("**/api/capabilities", (route) =>
     route.fulfill({
       json: {
@@ -56,8 +52,6 @@ async function login(page, capability = {}) {
     }),
   );
   await page.goto(url);
-  await page.getByLabel("Local access token").fill(fixtureCredential);
-  await page.getByRole("button", { name: "Open mission control" }).click();
   await page
     .getByRole("button", { name: "Session control fixture one", exact: true })
     .click();
@@ -86,7 +80,7 @@ test("build workspace refusal is visible for private requests and retains an unc
       },
     });
   });
-  await login(page, {
+  await openSession(page, {
     operations: ["input", "respond"],
     approvalWorkerIds: ["worker-one"],
   });
@@ -126,7 +120,7 @@ test("uncertain input preserves command identity and never follows a changed sel
           : { status: "submitted", commandId: request.commandId },
     });
   });
-  await login(page);
+  await openSession(page);
   await page.getByLabel("Session input").fill("Private test message");
   await page.getByRole("button", { name: "Send input", exact: true }).click();
   await expect(page.getByLabel("Session commands")).toContainText(
@@ -176,7 +170,7 @@ test("capabilities and observed admission state gate commands", async ({
       json: { error: "unexpected fixture dispatch" },
     });
   });
-  await login(page, { inputWorkerIds: [] });
+  await openSession(page, { inputWorkerIds: [] });
   await expect(page.getByLabel("Session input")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Start session", exact: true }),
@@ -197,19 +191,11 @@ test("capabilities and observed admission state gate commands", async ({
   expect(requests).toHaveLength(0);
 });
 
-test("sign-in renewal retains an uncertain command for same-identity retry", async ({
+test("observation reconnect retains an uncertain command for explicit same-identity retry", async ({
   page,
+  context,
 }) => {
   const requests = [];
-  let signedOut = false;
-  await page.route("**/api/snapshot", (route) =>
-    signedOut
-      ? route.fulfill({
-          status: 401,
-          json: { error: "Local sign-in required" },
-        })
-      : route.continue(),
-  );
   await page.route("**/api/commands", async (route) => {
     const request = route.request().postDataJSON();
     requests.push(request);
@@ -225,22 +211,30 @@ test("sign-in renewal retains an uncertain command for same-identity retry", asy
           : { status: "submitted", commandId: request.commandId },
     });
   });
-  await login(page);
-  await page.getByLabel("Session input").fill("Retain through sign-in renewal");
+  await openSession(page);
+  await page.getByLabel("Session input").fill("Retain through reconnect");
   await page.getByRole("button", { name: "Send input", exact: true }).click();
   await expect(page.getByLabel("Session commands")).toContainText(
     "Outcome unknown",
   );
-  signedOut = true;
+  await context.setOffline(true);
   server.closeAllConnections();
-  await expect(page.getByLabel("Local access token")).toBeVisible();
-  await expect(page.getByLabel("Retained private request")).toHaveCount(0);
-  signedOut = false;
-  await page.getByLabel("Local access token").fill(fixtureCredential);
-  await page.getByRole("button", { name: "Open mission control" }).click();
+  await expect(page.locator(".connection")).toContainText("reconnecting");
+  await expect(
+    page.getByRole("heading", { name: "System flow", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Retained private request")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Retry same request", exact: true }),
+  ).toBeDisabled();
+  expect(requests).toHaveLength(1);
+  view.setSource("agamemnon", "connected");
+  await context.setOffline(false);
+  await expect(page.locator(".connection")).toContainText("Live view");
   await expect(page.getByLabel("Session commands")).toContainText(
     "Outcome unknown",
   );
+  expect(requests).toHaveLength(1);
   await page
     .getByRole("button", { name: "Retry same request", exact: true })
     .click();
@@ -266,7 +260,7 @@ test("conflicts retain the original interruption request for explicit retry", as
           : { status: "submitted", commandId: request.commandId },
     });
   });
-  await login(page);
+  await openSession(page);
   await page
     .getByRole("button", { name: "Request interruption", exact: true })
     .click();
@@ -300,7 +294,7 @@ test("pre-dispatch rejection retains input and cancellation never reports comple
           : { status: "submitted", commandId: request.commandId },
     });
   });
-  await login(page);
+  await openSession(page);
   await page.getByLabel("Session input").fill("Retain this unsent draft");
   await page.getByRole("button", { name: "Send input", exact: true }).click();
   await expect(page.getByLabel("Session commands")).toContainText(
@@ -324,7 +318,7 @@ test("pre-dispatch rejection retains input and cancellation never reports comple
 
 test("generation zero cannot enable session commands", async ({ page }) => {
   view.setResources("sessions", [{ ...session(), generation: 0 }]);
-  await login(page);
+  await openSession(page);
   await expect(page.getByLabel("Session commands")).toContainText(
     "Select a current session with an observed worker and generation",
   );
@@ -369,7 +363,7 @@ test("private command approval retains the exact response after an uncertain sub
           : { commandId: input.commandId, status: "submitted" },
     });
   });
-  await login(page, {
+  await openSession(page, {
     operations: ["respond"],
     approvalWorkerIds: ["worker-one"],
   });
@@ -420,7 +414,7 @@ test("file requests without private evidence permit decline but never approval",
       },
     }),
   );
-  await login(page, {
+  await openSession(page, {
     operations: ["respond"],
     approvalWorkerIds: ["worker-one"],
   });
@@ -435,19 +429,11 @@ test("file requests without private evidence permit decline but never approval",
   ).toBeEnabled();
 });
 
-test("agent questions retain private answers through sign-in renewal", async ({
+test("agent questions retain private answers through observation reconnect without posting", async ({
   page,
+  context,
 }) => {
-  let signedOut = false;
   const sent = [];
-  await page.route("**/api/snapshot", (route) =>
-    signedOut
-      ? route.fulfill({
-          status: 401,
-          json: { error: "Local sign-in required" },
-        })
-      : route.continue(),
-  );
   await page.route("**/api/requests?*", (route) =>
     route.fulfill({
       json: {
@@ -495,7 +481,7 @@ test("agent questions retain private answers through sign-in renewal", async ({
       json: { commandId: input.commandId, status: "submitted" },
     });
   });
-  await login(page, {
+  await openSession(page, {
     operations: ["respond"],
     approvalWorkerIds: ["worker-one"],
   });
@@ -507,16 +493,22 @@ test("agent questions retain private answers through sign-in renewal", async ({
     "type",
     "password",
   );
-  signedOut = true;
+  await context.setOffline(true);
   server.closeAllConnections();
-  await expect(page.getByLabel("Local access token")).toBeVisible();
+  await expect(page.locator(".connection")).toContainText("reconnecting");
+  await expect(
+    page.getByRole("heading", { name: "System flow", exact: true }),
+  ).toBeVisible();
   await expect(page.getByLabel("Private agent requests")).toHaveCount(0);
-  signedOut = false;
-  await page.getByLabel("Local access token").fill(fixtureCredential);
-  await page.getByRole("button", { name: "Open mission control" }).click();
+  expect(sent).toHaveLength(0);
+  view.setSource("agamemnon", "connected");
+  await context.setOffline(false);
+  await expect(page.locator(".connection")).toContainText("Live view");
   await expect(page.getByLabel("Private fixture note?")).toHaveValue(
     "Synthetic private answer",
   );
+  await expect(page.getByLabel("Which fixture target?")).toHaveValue("M2");
+  expect(sent).toHaveLength(0);
   await page.getByRole("button", { name: "Send answers", exact: true }).click();
   await expect(page.getByLabel("Session commands")).toContainText(
     "Submitted to controller",
@@ -555,7 +547,7 @@ test("private requests from another generation cannot enable approval", async ({
       },
     }),
   );
-  await login(page, {
+  await openSession(page, {
     operations: ["respond"],
     approvalWorkerIds: ["worker-one"],
   });
@@ -580,7 +572,7 @@ test("mobile session controls stay visible and submit only the selected cancella
       json: { status: "submitted", commandId: request.commandId },
     });
   });
-  await login(page);
+  await openSession(page);
   const controls = page.getByLabel("Session commands");
   await expect(controls).toBeVisible();
   const bounds = await controls.boundingBox();

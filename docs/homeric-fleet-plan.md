@@ -123,9 +123,18 @@ from backend observation to browser rendering under the measured acceptance load
 
 The browser uses the Odysseus backend, which calls supported component interfaces
 and subscribes through Keystone. Bind the initial web service to laptop loopback;
-use authenticated browser sessions and validate HTTP/WebSocket origins. Credentials
-remain on the backend. The browser receives no SSH keys, Teleport certificates,
-OpenBao tokens, or direct worker route.
+open the dashboard directly without a UI token, login, session cookie, or session
+expiry. Local-machine access is the UI trust boundary. Validate Host and Origin,
+reject cross-site requests, and require a matching Origin for writes. Keep the
+dashboard visible while reconnecting, mark stale observations, and disable
+commands when canonical ownership is stale. Reconnect and reload never replay
+writes automatically. Existing local access-token files remain untouched and
+unused. Remote access requires a separate TLS/authentication deployment.
+
+Component credentials remain on the backend. Explicit feature enablement,
+Agamemnon admission, and private worker attachment checks remain required.
+The browser receives no SSH keys, Teleport certificates, OpenBao tokens, or
+direct worker route.
 
 Provide xterm.js diagnostic terminal attachment and retained output with reconnect
 cursors through the backend. Codex app-server messages remain authoritative for
@@ -691,9 +700,9 @@ that metadata. Publishable requirements stay in the work issue; private intervie
 content stays private. This addition is a Proposed architecture extension with
 live GitHub write/concurrency and restart tests still required.
 
-The Odysseus Research intake slice now supplies a form and authenticated backend
-proxy to Nestor's explicit Fleet intake/status API. It retains the same
-publishable request and identity in browser storage before submission and across
+The Odysseus Research intake slice now supplies a form and backend proxy using
+component credentials for Nestor's explicit Fleet intake/status API. It retains
+the same publishable request and identity in browser storage before submission and across
 reloads, rejects changed retries, and displays an issue link only after Nestor
 confirms a matching receipt. It neither dispatches research agents nor stores a
 second work queue. The [intake API guide](research-intake-api.md) documents its
@@ -714,8 +723,8 @@ is a required deployment condition. Automatic first-epic creation and enforced
 writer handoff remain intake/recovery work, and must be completed for the full
 research-to-implementation acceptance flow.
 
-Private command/file approval and question forms now use authenticated backend
-reads from a configured same-host worker socket. Each read binds current
+Private command/file approval and question forms now use backend reads from a
+configured private same-host worker socket. Each read binds current
 controller ownership and the provider turn; file acceptance also binds the
 displayed change evidence. Responses pass through a private spool reference and
 Agamemnon's durable `respond` command. Missing file evidence disables acceptance.
