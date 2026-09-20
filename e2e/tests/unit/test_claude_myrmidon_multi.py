@@ -1953,6 +1953,7 @@ class TestClaudeAuthIsolation(_GlobalStateMixin):
         lifecycle = []
         cidfiles = []
         receipt_parents = []
+        retained_parent_fds = []
         state_homes = []
         inventory_reads = {}
         created_by_id = {}
@@ -1969,6 +1970,9 @@ class TestClaudeAuthIsolation(_GlobalStateMixin):
                 parent_fd = int(match.group(1))
                 cidfile_name = match.group(2)
                 parent_state = os.fstat(parent_fd)
+                # Keep both directory objects alive so inode reuse cannot make
+                # distinct invocation receipts appear to share an identity.
+                retained_parent_fds.append(os.dup(parent_fd))
                 container_id = format(len(cidfiles) + 1, "064x")
                 cidfiles.append((parent_state.st_dev, parent_state.st_ino, cidfile_name))
                 receipt_parents.append((parent_state.st_dev, parent_state.st_ino))
@@ -2071,7 +2075,11 @@ class TestClaudeAuthIsolation(_GlobalStateMixin):
                 self.assertEqual(harness.invoke_claude("new", **options), "ok")
                 self.assertEqual(harness.invoke_claude("resume", **options), "ok")
         finally:
-            cleanup()
+            try:
+                cleanup()
+            finally:
+                for descriptor in retained_parent_fds:
+                    os.close(descriptor)
 
         self.assertEqual(len(cidfiles), 2)
         self.assertNotEqual(cidfiles[0], cidfiles[1])
@@ -8215,7 +8223,7 @@ No changes required.
                     "-m",
                     "original",
                 )
-                expected_head = _git(checkout, "rev-parse", "HEAD")
+                expected_head = _git(checkout, "rev-parse", "HEAD").stdout.strip()
                 with patch.object(
                     module, "_RUNTIME_STORE", object()
                 ), patch.object(
