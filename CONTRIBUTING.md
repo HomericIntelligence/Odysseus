@@ -1,10 +1,10 @@
 # Contributing to Odysseus
 
 Thank you for your interest in contributing to Odysseus! This is the meta-repo and unified
-architecture hub for the HomericIntelligence distributed agent mesh. Odysseus itself contains
-no application code -- its value is coordination: Architecture Decision Records, operational
-runbooks, shared infrastructure configs, and submodule references for every component in the
-ecosystem.
+architecture hub for the HomericIntelligence distributed agent mesh. It contains the Fleet web
+application under `web/` as well as its coordination surfaces: Architecture Decision Records,
+operational runbooks, shared infrastructure configs, and submodule references for every
+component in the ecosystem.
 
 ## Quick Links
 
@@ -59,8 +59,10 @@ Odysseus is a meta-repo. Contributions fall into these categories:
 
 - **Architecture Decision Records (ADRs)** -- Propose new architectural decisions in
   `docs/adr/`. Copy the format from an existing ADR, use the next sequential number,
-  and set Status to "Proposed" until merged. ADRs are append-only: once accepted, they
-  are never edited. Superseding decisions get a new ADR that references the old one.
+  and keep Status as "Proposed" until a reviewed status change records formal human
+  acceptance. Merge alone does not imply acceptance. ADRs are append-only: once
+  accepted, they are never edited. Superseding decisions get a new ADR that references
+  the old one.
 
 - **Runbooks** -- Add operational procedures in `docs/runbooks/`. Runbooks should be
   written as numbered steps that can be executed top-to-bottom without prior context.
@@ -271,20 +273,22 @@ activation.
 - **Review threads must be resolved** - All PR review conversations must be resolved before merge (`required_review_thread_resolution`).
 - **Signed commits required** - Commits on `main` must be signed (`required_signatures`).
 - **CI status checks must pass** - The 11 live contexts are `lint`, `unit-tests`, `integration-tests`, `security/dependency-scan`, `security/secrets-scan`, `build`, `schema-validation`, `deps/version-sync`, `test`, `install`, and `release`.
-- **Current merge metadata** - GitHub currently reports `allow_merge_commit: true`, `allow_squash_merge: true`, and `allow_rebase_merge: false`. This rollout configures the merge queue itself to use `SQUASH`.
-- **Merge queue is staged** - Workflow readiness lands first. A human-reviewed, post-merge operator step dry-runs the live-derived payload, activates one pilot, and records a queued smoke result before any fleet rollout.
+- **Current merge metadata** - GitHub currently reports `allow_merge_commit: false`, `allow_squash_merge: true`, and `allow_rebase_merge: false`.
+- **Merge queue is not live authority** - The active ruleset has no merge-queue rule and does not require strict up-to-date status checks. Any future queue rollout remains a separately reviewed operator change and cannot be assumed by contributor instructions.
 
 ### Merge Convention
 
-Always use the following command to merge your PR:
-
-```bash
-gh pr merge --auto --squash
-```
-
-This enables auto-merge using squash. After queue activation, GitHub enqueues the
-PR once its entry conditions are met and retests the synthetic merge group
-against the current `main` tip.
+Repository agents may enable the supported squash auto-merge on their own pull
+request only when the current task authorizes merge and after an exact-head
+Athena GO, all required checks from the expected apps, zero unresolved review
+threads, and fresh source head/base-tip readback. The live repository has no
+merge queue or strict
+up-to-date-check rule, so do not describe an ordinary squash or auto-merge as
+atomic source-and-base admission. Under explicit current-user merge authority,
+re-read the head and base immediately before the supported squash merge, verify
+the merged commit and pull request afterward, and disclose that residual race.
+If the task requires the stronger atomic predicate proposed by ADR-020, stop for
+a repository admin until that primitive is deployed.
 
 ### For Repo Admins
 

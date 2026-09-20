@@ -46,6 +46,7 @@ check-submodule-drift:
 
 # Guard first-party docs against deprecated workflow field names (issue #25)
 check-doc-field-drift:
+    bash tests/test-doc-field-drift.sh
     ./scripts/check-doc-field-drift.sh
 
 # Odysseus Fleet web application (Node >=22.12; all credentials stay in the backend)

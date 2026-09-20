@@ -56,7 +56,7 @@ Odysseus/
 │   │   ├── 006-decouple-from-ai-maestro.md
 │   │   ├── 007-symlinks-over-submodules.md
 │   │   ├── 008-nats-tls-encryption.md
-│   │   ├── 009-defer-multi-host-nomad-scheduling.md
+│   │   ├── 023-defer-multi-host-nomad-scheduling.md
 │   │   ├── 009-nats-authentication.md
 │   │   ├── 010-nats-mtls-subject-scoped-auth.md
 │   │   └── 011-extract-python-orchestration-to-agamemnon.md
@@ -66,6 +66,7 @@ Odysseus/
 │       └── disaster-recovery.md
 ├── e2e/                          # End-to-end Compose stacks + claude-myrmidon harness
 ├── tools/                        # Console scripts + GitHub helper CLIs (no submodules)
+├── web/                          # Fleet web application and component adapters
 ├── configs/
 │   ├── nomad/
 │   │   ├── client.hcl
@@ -94,6 +95,8 @@ Odysseus/
 ├── shared/                       # git submodules
 │   ├── Mnemosyne
 │   └── Hephaestus
+├── agentic/                      # agent-facing source repositories
+│   └── Athena
 ├── .gitmodules
 ├── AGENTS.md                     # This file — the authoritative agent contract
 ├── CLAUDE.md                     # Pointer to AGENTS.md
@@ -127,7 +130,7 @@ Odysseus/
 
 ### Out of scope — agents must not touch
 
-- **Accepted ADRs** (`docs/adr/00*.md` with `Status: Accepted`) — append-only invariant
+- **Accepted ADRs** (any `docs/adr/*.md` whose parsed status is `Accepted`) — append-only invariant
   per Key Principles item 3 above. Write a new superseding ADR instead.
 - **Submodule working trees** from the meta-repo — changes must go through each
   submodule's own repository and PR process.
@@ -141,8 +144,11 @@ Odysseus/
 
 ## Permitted Actions
 
-The following actions are authorized for myrmidon agents, grounded in
-`e2e/claude-myrmidon.py`:
+The following actions are authorized for myrmidon agents. The tool allowlist is
+grounded in `e2e/claude-myrmidon.py`; repository merge policy is authoritative
+over that harness's current stale `--auto --rebase` ship instruction. The
+runtime-safety change must repair that prompt before the legacy harness can be
+treated as a compliant merge path.
 
 ### Permitted tools
 
@@ -156,8 +162,8 @@ Source: `e2e/claude-myrmidon.py:259` — `--allowedTools Bash,Read,Write,Edit,Gl
 
 - `gh issue view`, `gh issue comment` — read issues and post progress updates
   (`e2e/claude-myrmidon.py:380`)
-- `gh pr create`, `gh pr merge --auto --rebase` — open PRs and enable auto-merge
-  (`e2e/claude-myrmidon.py:695–701`)
+- `gh pr create`, `gh pr merge --auto --squash` — open PRs and enable the
+  repository-supported squash auto-merge on an authorized PR
 - `git add`, `git commit` — stage and commit changes on a feature branch
 - `git push -u origin <branch>` — push a feature branch (never `main` or `--force`)
 - `just <recipe>`, `pixi run <task>` — task execution (this contract mandates these
@@ -168,7 +174,8 @@ Source: `e2e/claude-myrmidon.py:259` — `--allowedTools Bash,Read,Write,Edit,Gl
 
 - Create feature branches named `<issue-number>-<slug>`
 - Open a PR targeting `main` with `Closes #<issue>` in the body
-- Enable auto-merge (`--auto --rebase`) on the agent's own PR
+- Enable squash auto-merge (`--auto --squash`) on the agent's own PR when the
+  current task authorizes merge and its required review/check boundaries pass
 - Comment on the issue being worked with status updates
 
 ---
@@ -177,7 +184,8 @@ Source: `e2e/claude-myrmidon.py:259` — `--allowedTools Bash,Read,Write,Edit,Gl
 
 The following actions are unconditionally prohibited:
 
-- **Edit an accepted ADR** — `docs/adr/00*.md` (Status: Accepted) are append-only.
+- **Edit an accepted ADR** — any `docs/adr/*.md` whose parsed status is
+  `Accepted` is append-only.
   Write a new ADR with the next sequential number that references the old one.
 - **Bump submodule pins** — do not modify `.gitmodules` or run
   `git submodule update --remote` without explicit cross-repo integration approval.
@@ -202,8 +210,11 @@ The following actions are unconditionally prohibited:
 
 ## Evidence & Integrity Policy
 
-Per [ADR-014](docs/adr/014-runnable-evidence-for-metric-claims.md). This policy is
-binding on every agent (Nestor, Agamemnon, Myrmidon, and any host-side session).
+This is an explicit repository policy and is binding on every agent (Nestor,
+Agamemnon, Myrmidon, and any host-side session). Proposed
+[ADR-014](docs/adr/014-runnable-evidence-for-metric-claims.md) records a possible
+future architecture for runnable evidence; its Proposed status is not the source
+of this policy's authority.
 
 **The governing rule: a truthful failure is acceptable; invented success is not.**
 An agent that reports "the run did not complete in the available window" has
@@ -246,8 +257,11 @@ The myrmidon pipeline runs Claude Code with `--dangerously-skip-permissions`
 
 Compensating controls in place:
 
-1. **Containerized** — the `achaean-claude` image is an isolated, ephemeral runtime;
-   the host filesystem is not directly accessible.
+1. **Container boundary** — the `achaean-claude` image is ephemeral, but the
+   current harness deliberately mounts the repository worktree and selected host
+   Claude/GitHub configuration. The host filesystem is therefore partially
+   accessible through those declared mounts; containerization is not a complete
+   credential or repository boundary.
 2. **Scoped tool allowlist** — `--allowedTools Bash,Read,Write,Edit,Glob,Grep` restricts
    which tools the agent can call (`e2e/claude-myrmidon.py:259`).
 3. **Timeout** — the container session is hard-limited to 1800 seconds
@@ -309,7 +323,10 @@ To escalate: post a comment on the relevant GitHub issue describing the blocker 
 
 - Use `pixi run` or `just` for all task execution. Never run scripts directly.
 - When adding a new submodule: `git submodule add <url> <path>`, update `.gitmodules`, and document the repo in `docs/architecture.md`.
-- When writing a new ADR: use `docs/adr/template.md` as the template, use the next sequential number, and set Status to "Proposed" until merged.
+- When writing a new ADR: use `docs/adr/template.md` as the template, use the
+  next sequential number, and keep Status `Proposed` until a separate,
+  human-reviewed acceptance change records `Accepted`; merge alone is not
+  acceptance.
 - Runbooks should be written as numbered steps that can be executed top-to-bottom without prior context.
 - **ai-maestro has been fully removed per ADR-006.** Agamemnon replaces its task coordination role.
 

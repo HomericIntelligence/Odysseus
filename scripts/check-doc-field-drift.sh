@@ -22,7 +22,7 @@
 # Exit codes:
 #   0  No deprecated workflow field names found.
 #   1  Drift detected — a deprecated field name appears in a guarded doc.
-#   2  Usage error.
+#   2  Usage or operational/unavailable failure.
 
 set -uo pipefail
 
@@ -48,32 +48,125 @@ cd "$REPO_ROOT" || exit 2
 # (.github/ISSUE_TEMPLATE uses YAML frontmatter with a 'title:' key that is not
 # a workflow field — exclude to avoid false positives).
 #
-# Capture git ls-files into a variable first so its exit status is checkable.
-# Process substitution exit status is not propagated by pipefail, so a bare
-# mapfile < <(git ls-files | awk ...) would silently produce an empty list on
-# git failure and exit 0 — a false pass.
-raw_docs="$(git ls-files -- '*.md')" || {
-  printf 'error: git ls-files failed\n' >&2
+# Capture the NUL-delimited inventory in a private temporary file so both Git's
+# exit status and unusual tracked path bytes are preserved. Process-substitution
+# status is not propagated by pipefail, while a shell variable cannot contain
+# NUL bytes.
+tracked_inventory="$(mktemp)" || {
+  printf 'error: cannot allocate tracked-document inventory\n' >&2
   exit 2
 }
-mapfile -t docs < <(printf '%s\n' "$raw_docs" \
-  | awk '!/^(infrastructure|control|provisioning|ci-cd|research|shared|testing|\.github)\//')
-
-if (( ${#docs[@]} == 0 )); then
-  echo "check-doc-field-drift: no first-party docs to scan"
-  exit 0
+# shellcheck disable=SC2329  # Invoked indirectly by the trap below.
+cleanup() {
+  rm -f -- "$tracked_inventory"
+}
+trap cleanup EXIT HUP INT TERM
+if ! git ls-files -z -- '*.md' > "$tracked_inventory"; then
+  printf 'error: git ls-files failed\n' >&2
+  exit 2
 fi
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)" || exit 2
+python3 - "$tracked_inventory" "$REPO_ROOT" "$script_dir" <<'PY'
+import os
+import json
+import re
+import sys
+from pathlib import Path
 
-# Match deprecated names only as workflow-schema field keys
-# (e.g. "title:" / "depends_on:" in a YAML task block), so prose and
-# PR-title guidance are not false-positives.
-pattern='^[[:space:]]*-?[[:space:]]*(title|depends_on):'
+inventory_path, root_text, script_dir = sys.argv[1:]
+sys.path.insert(0, script_dir)
+from tracked_scan import UnsafeTrackedPathError, read_regular_no_follow
 
-if grep -nE "$pattern" "${docs[@]}"; then
-  echo "ERROR: deprecated workflow field name(s) found in first-party docs." >&2
-  echo "Use 'subject' instead of 'title' and 'blocked_by' instead of 'depends_on'." >&2
-  exit 1
-fi
+excluded = (
+    "infrastructure/", "control/", "provisioning/", "ci-cd/", "research/",
+    "shared/", "testing/", ".github/",
+)
+pattern = re.compile(
+    r"^[ \t]*-?[ \t]*(?:title|depends_on|['\"]title['\"]|"
+    r"['\"]depends_on['\"])[ \t]*:"
+)
 
-echo "check-doc-field-drift: OK — no deprecated workflow field names in first-party docs"
-exit 0
+def api_title_lines(lines):
+    """Recognize the two documented API contracts whose field is still title.
+
+    These are not Telemachy workflow tasks. Require complete JSON and the
+    known field sets; unknown examples still receive the normal drift check.
+    """
+    exempt = set()
+    start = None
+    for index, line in enumerate(lines):
+        if start is None:
+            if line.strip() == "```json":
+                start = index + 1
+            continue
+        if line.strip() != "```":
+            continue
+        try:
+            value = json.loads("\n".join(lines[start:index]))
+        except ValueError:
+            value = None
+        if isinstance(value, dict):
+            intake = (
+                value.get("schema") == "hi/nestor/intake-request/v1"
+                and set(value) == {"schema", "intakeId", "workRepository", "title", "body"}
+            )
+            data = value.get("data")
+            event = (
+                value.get("event") == "task.created"
+                and set(value) == {"event", "data", "timestamp"}
+                and isinstance(data, dict)
+                and set(data) == {"task_id", "team_id", "title", "description", "status", "assigned_to"}
+            )
+            if intake or event:
+                exempt.update(
+                    position + 1 for position in range(start, index)
+                    if re.match(r'^\s*"title"\s*:', lines[position])
+                )
+        start = None
+    return exempt
+
+found = False
+scanned = 0
+for encoded in Path(inventory_path).read_bytes().split(b"\0"):
+    if not encoded:
+        continue
+    relative = os.fsdecode(encoded)
+    if relative.startswith(excluded):
+        continue
+    try:
+        content = read_regular_no_follow(Path(root_text), relative)
+    except (UnsafeTrackedPathError, OSError) as exc:
+        print(f"error: document-field scan unavailable for {relative!r}: {exc}", file=sys.stderr)
+        raise SystemExit(2)
+    if content is None:
+        continue
+    scanned += 1
+    lines = content.decode("utf-8", errors="replace").splitlines()
+    exempt = api_title_lines(lines)
+    for number, line in enumerate(lines, 1):
+        if number not in exempt and pattern.search(line):
+            print(f"{relative}:{number}:{line}")
+            found = True
+if not scanned:
+    print("check-doc-field-drift: no first-party docs to scan")
+# Keep content drift distinct from Python/import/inventory failures, which
+# conventionally exit 1 and must be reported as unavailable rather than as a
+# false policy finding.
+raise SystemExit(3 if found else 0)
+PY
+scan_status=$?
+case "$scan_status" in
+  0)
+    echo "check-doc-field-drift: OK — no deprecated workflow field names in first-party docs"
+    exit 0
+    ;;
+  3)
+    echo "ERROR: deprecated workflow field name(s) found in first-party docs." >&2
+    echo "Use 'subject' instead of 'title' and 'blocked_by' instead of 'depends_on'." >&2
+    exit 1
+    ;;
+  *)
+    printf 'error: document-field scan failed or was unavailable\n' >&2
+    exit 2
+    ;;
+esac
