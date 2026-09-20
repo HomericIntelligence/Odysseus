@@ -87,7 +87,16 @@ authorized `state:*` labels.
 
 Odysseus owns the web frontend and backend for intake, interviews, workflows,
 conversations, approvals, controls, evidence, and Argus dashboards. Initial access
-is laptop-loopback-only, with authenticated sessions and validated browser origins.
+is laptop-loopback-only. Open the dashboard directly without a UI token, login,
+session cookie, or session expiry. Local-machine access is the UI trust boundary.
+Retain Host and Origin checks, reject cross-site requests, and require matching
+Origin for writes. Existing local access-token files remain untouched and unused.
+Remote browser access requires a separately reviewed TLS/authentication deployment.
+
+Keep the dashboard visible while connecting or reconnecting. Stale ownership
+disables commands; reconnection never automatically repeats a write. Backend
+component credentials, explicit command enablement, Agamemnon admission, and
+private worker attachment requirements remain in effect.
 
 Each item identifies its component, logical agent, role, stage, execution, worker,
 host, allocation, generation, last observation, and blockers. Assignment and
@@ -102,7 +111,7 @@ observations outside GitHub.
 Diagnostic terminal attachment passes through the backend. Codex app-server
 messages remain authoritative for conversation control and approvals.
 
-The authenticated web backend may read scoped pending requests and file-change
+The web backend may read scoped pending requests and file-change
 evidence through a configured private worker attachment. Bind session, worker,
 generation, current thread/turn and request identity on every read and response.
 File acceptance must also bind the displayed changes. If evidence is unavailable,

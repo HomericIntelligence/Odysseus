@@ -1,6 +1,6 @@
 # Homeric Fleet implementation plan
 
-Updated: 2026-09-11. Status: consolidated implementation plan; acceptance has not run.
+Updated: 2026-09-20. Status: implementation plan; real-worker acceptance has not run.
 
 This plan integrates the laptop/SSH/Slurm operational requirements with the
 [Odysseus architecture](architecture.md) and the subsequently approved Fleet
@@ -123,9 +123,18 @@ from backend observation to browser rendering under the measured acceptance load
 
 The browser uses the Odysseus backend, which calls supported component interfaces
 and subscribes through Keystone. Bind the initial web service to laptop loopback;
-use authenticated browser sessions and validate HTTP/WebSocket origins. Credentials
-remain on the backend. The browser receives no SSH keys, Teleport certificates,
-OpenBao tokens, or direct worker route.
+open the dashboard directly without a UI token, login, session cookie, or session
+expiry. Local-machine access is the UI trust boundary. Validate Host and Origin,
+reject cross-site requests, and require a matching Origin for writes. Keep the
+dashboard visible while reconnecting, mark stale observations, and disable
+commands when canonical ownership is stale. Reconnect and reload never replay
+writes automatically. Existing local access-token files remain untouched and
+unused. Remote access requires a separate TLS/authentication deployment.
+
+Component credentials remain on the backend. Explicit feature enablement,
+Agamemnon admission, and private worker attachment checks remain required.
+The browser receives no SSH keys, Teleport certificates, OpenBao tokens, or
+direct worker route.
 
 Provide xterm.js diagnostic terminal attachment and retained output with reconnect
 cursors through the backend. Codex app-server messages remain authoritative for
@@ -554,6 +563,65 @@ cross-component documentation, and integration harness. Preserve review/publicat
 rules, accepted ADRs, and canonical configuration coordination; update submodule
 pins only after explicit integration sign-off.
 
+### Immediate delivery order
+
+The immediate priority is one real agent that does admitted work and is visible
+in Odysseus. Use capacity one and an existing planned issue. Research intake,
+subordinate build offload, cluster deployment, and capacity experiments remain
+later work unless the selected issue needs them. Preserve those requirements for
+the subsequent Fleet acceptance stages.
+
+1. Connect verified contained execution to worker admission through Hephaestus.
+   Complete source review and CI for that change. Qualify the pinned Codex
+   runtime, independently established authentication, one isolated workspace,
+   and normal model/tool routing. Startup composition alone does not authorize
+   execution. Reject unsupported or unverified execution.
+2. Register the pool and worker through Agamemnon. Import the selected planned
+   issue through its existing interface. Confirm the durable task claim,
+   session, execution, and generation before dispatch.
+3. Deliver the admitted `start` through Keystone and `fleetd`. Deliver a separate
+   admitted `input` to begin work. A start acknowledgment confirms a conversation;
+   actual model and tool events establish activity.
+4. Connect the merged Odysseus backend to the controller's complete Fleet resource
+   collections and the actual gateway observation stream. Reuse planned-issue
+   intake, canonical ownership, session views, and message-flow display. Enable
+   private input and request controls only when their local attachment or
+   authenticated remote transport is available.
+5. Observe the same issue, logical agent, worker, host, session, and generation
+   while tools execute. Check that activity becomes stale when facts cease.
+   Check that observation-stream loss is visible and that actual message traces
+   correlate with the owner.
+6. Retain the source changes and actual verification output. Obtain independent
+   review under the source repository's normal process. A provider turn outcome
+   or dashboard observation does not replace this evidence.
+7. Use the admitted cancel path to stop the contained execution and confirm its
+   exact disposal. Then submit the independent decision through Agamemnon's
+   separate operator resolution interface. Preserve the current claim,
+   generation, matching inactive turn, cleanup evidence, and command receipts.
+   An uncertain result requires reconciliation with the same decision identity.
+8. Refresh the canonical task in Odysseus. Confirm its completed outcome and
+   released admission against Agamemnon. Retain the separate source PR merge and
+   issue-closure evidence required by the selected issue.
+
+This first flow is operator-assisted. Manual resolution records
+`provenance: manual` and `verifiedApproval: false`; the UI shows that limit.
+Keep the separate resolution credential out of workers and attachment adapters.
+The existing UI reads this result but has no resolution write action. Automatic
+validation of review/check evidence remains required for autonomous completion
+and the independently approved-work acceptance metric.
+
+For the first laptop dashboard, keep `ODYSSEUS_ENABLE_COMMANDS=0` when the worker
+and its private paths are in the Linux guest. Use the existing operator input
+path and read-only dashboard observations. A local directory mapping does not
+provide cross-VM transport. This first view does not require a new spool service.
+
+Record the tested commits, image digest, issue and task IDs, claim generation,
+worker and host identity, conversation ID, and event cursors. Keep authentication
+and private conversation data in backend/runtime storage. A registered card, an
+idle conversation, or an inserted activity record is not a working agent.
+
+### Remaining release phases
+
 | Phase | Deliverables | Required evidence before promotion |
 |---|---|---|
 | 1. Architecture and persistence | Proposed ADRs; ownership/storage boundaries; API/manifests; durable claims and command intent; restart hydration; Projects projection | GitHub failure injection rejects dispatch; no memory-only Fleet; duplicate/concurrent claims fenced; restart reproduces state; Project mapping and repair work |
@@ -632,9 +700,9 @@ that metadata. Publishable requirements stay in the work issue; private intervie
 content stays private. This addition is a Proposed architecture extension with
 live GitHub write/concurrency and restart tests still required.
 
-The Odysseus Research intake slice now supplies a form and authenticated backend
-proxy to Nestor's explicit Fleet intake/status API. It retains the same
-publishable request and identity in browser storage before submission and across
+The Odysseus Research intake slice now supplies a form and backend proxy using
+component credentials for Nestor's explicit Fleet intake/status API. It retains
+the same publishable request and identity in browser storage before submission and across
 reloads, rejects changed retries, and displays an issue link only after Nestor
 confirms a matching receipt. It neither dispatches research agents nor stores a
 second work queue. The [intake API guide](research-intake-api.md) documents its
@@ -655,8 +723,8 @@ is a required deployment condition. Automatic first-epic creation and enforced
 writer handoff remain intake/recovery work, and must be completed for the full
 research-to-implementation acceptance flow.
 
-Private command/file approval and question forms now use authenticated backend
-reads from a configured same-host worker socket. Each read binds current
+Private command/file approval and question forms now use backend reads from a
+configured private same-host worker socket. Each read binds current
 controller ownership and the provider turn; file acceptance also binds the
 displayed change evidence. Responses pass through a private spool reference and
 Agamemnon's durable `respond` command. Missing file evidence disables acceptance.

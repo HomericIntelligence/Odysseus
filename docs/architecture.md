@@ -21,7 +21,7 @@ interaction is a NATS message.
 Odysseus is the meta-repo and user-facing hub. It holds Architecture Decision
 Records, runbooks, canonical configs, and references every other repository as
 a git submodule. Its [Fleet web application](../web/README.md) lives in `web/`:
-the initial implementation provides authenticated work ownership, worker, live
+the initial implementation provides work ownership, worker, live
 message observation, GitHub pipeline projection, scoped session controls, and
 private agent requests. Agamemnon retains
 orchestration authority. The remaining
@@ -31,6 +31,15 @@ conversation-history/intake flows and infrastructure acceptance gates are tracke
 The web backend uses supported management APIs and Keystone observation
 subscriptions. Task dispatch remains on Keystone's canonical role subjects;
 HTTP management calls do not establish a second task queue.
+
+The laptop dashboard opens directly on loopback without a UI token, login,
+session cookie, or session expiry. Local-machine access is its trust boundary.
+Host, Origin, and cross-site checks remain required; writes need a matching
+Origin. The dashboard remains visible during reconnects,
+marks stale observations, and never automatically replays writes. Component
+credentials remain on the backend; command enablement, canonical admission,
+and private worker attachment checks remain required. Remote browser access
+requires a separate TLS/authentication deployment.
 
 ---
 
@@ -207,8 +216,9 @@ Under this proposal, interviews, escalations, and dashboards would flow back up
 the same subjects, so each hop would be bidirectional. Role-addressed work and
 lifecycle messages would flow **through** Keystone. Supported management
 interfaces would provide resource inspection and commands, including
-Odysseus's authenticated backend adapters, without creating an additional work
-queue. Keystone would remain a transport detail rather than a pipeline stage.
+Odysseus's backend adapters with component credentials, without creating an
+additional work queue. Keystone would remain a transport detail rather than a
+pipeline stage.
 The target workers would run AchaeanFleet images and request contextual advice
 without turning missing/stale advice into a veto. Learning is not implicit task
 authority: a worker writes a lesson only when that cross-repository effect is
@@ -232,7 +242,7 @@ branch or a local test does not establish a deployed service.
 | Orchestration graph, claims, generations and command intent | Agamemnon's GitHub-backed records | Read `/v1/fleet` resources; submit supported management commands |
 | Pipeline board and implementation labels | Derived GitHub Project; Hephaestus owns issue-stage labels | Display each source and its freshness separately |
 | Desired pools and execution policy | Myrmidons Git manifests | Display configured and observed state separately |
-| Conversations, pending requests, answers and execution evidence | Hephaestus private runtime storage | Read scoped private evidence through the authenticated backend |
+| Conversations, pending requests, answers and execution evidence | Hephaestus private runtime storage | Read scoped private evidence through the backend's checked private attachment |
 | Recovery command receipts | Private worker/adapter journals | Display outcomes; never authorize replacement work from a journal |
 | Live message observations | Keystone observations; retained metrics/logs belong to Argus | Render bounded metadata and expose gaps; never consume work for visualization |
 
@@ -328,9 +338,9 @@ does not permit another create. This record is Nestor's research intake state,
 not Agamemnon's task graph. Live GitHub concurrency and restart tests remain
 required before this bootstrap can admit research work.
 
-Odysseus now provides an opt-in Research intake form and authenticated backend
-proxy for `POST /v1/research/intakes` and the corresponding status read. The
-browser retains publishable request content and identity before submission;
+Odysseus now provides an opt-in Research intake form and backend proxy using
+component credentials for `POST /v1/research/intakes` and the corresponding status
+read. The browser retains publishable request content and identity before submission;
 explicit retries preserve both, and read-only status checks compare the retained
 request digest. Nestor credentials stay on the backend. Only a matching
 `created` record with a confirmed issue receipt becomes a link in the UI.
@@ -344,7 +354,7 @@ owns the deterministic durable Pending L3 task and immutable provenance; import
 does not dispatch work. Odysseus retains one explicit browser reference for
 uncertain-response recovery. It creates no backend task queue or alternate issue.
 The same browser lock coordinates import, retry and intake replacement; no reload
-or sign-in automatically repeats a POST.
+or reconnect automatically repeats a POST.
 
 An independently enabled planned-issue action uses Agamemnon's registered work
 repository projection and `/v1/fleet/issue-intakes` inspection/import interface.
@@ -380,6 +390,47 @@ JetStream broker into the native Agamemnon consumer, including lost publication
 receipt, failed durable write, replay, restart, and parent wakeup. Its GitHub
 service is a controlled fixture. This evidence does not establish deployment,
 live GitHub writer fencing, or the complete research-to-implementation flow.
+
+### First working agent
+
+The immediate target is one real agent, with capacity one, that works on an
+already-planned issue and is visible in Odysseus. Agamemnon owns registration,
+durable admission, and the issue claim. Keystone and `fleetd` deliver the
+admitted start and subsequent input. Hephaestus executes the model and tools
+inside the qualified boundary. Odysseus displays the canonical owner, actual
+activity, and observed message flow. A worker registration or conversation alone
+does not demonstrate work. Research intake, build offload, cluster allocation,
+and capacity experiments do not precede this target unless the issue needs them.
+
+The first dashboard can show ownership and flow with session commands disabled.
+The operator uses the existing admitted input and resolution interfaces. Private
+UI input and request adapters require same-host paths; a laptop backend cannot
+use a Linux guest path as a local spool or worker socket. Do not add cross-VM
+spool transport as a prerequisite for this read-only view.
+
+Hephaestus owns the connection between contained execution and worker admission.
+A supervisor, attachment, or provider start does not authorize a session.
+Admission must check the verified owned boundary and selected assignment. A real
+model turn must use that boundary for normal tools before execution is qualified.
+
+The first complete flow can use an operator. Retain the source changes and actual
+checks, then obtain independent review. A completed provider turn does not complete
+the canonical task. For contained work, an admitted cancel must confirm the exact
+supervisor disposal before the operator submits a task resolution. Cancellation
+stops the execution; the separate review decision determines the task outcome.
+Agamemnon's existing manual resolution interface checks the current claim,
+generation, inactive execution, cleanup evidence, and outstanding commands.
+Confirmed cancellation releases Fleet execution capacity. The canonical task
+claim remains for the separate resolution. Resolution persists the canonical
+outcome before it records the matching Fleet decision.
+
+The operator supplies the separate resolution credential and the real review
+reference. The worker must not receive that credential. The retained decision
+has `provenance: manual` and `verifiedApproval: false`. Odysseus can display that
+decision after a task refresh; it does not submit the resolution. The source PR
+and issue still follow their normal review, merge, and closure process. Automatic
+review verification and the independently approved-work acceptance metric remain
+separate requirements. A visible model turn alone does not meet this full flow.
 
 ### Execution and delivery gates
 

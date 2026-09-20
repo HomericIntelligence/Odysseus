@@ -1,10 +1,7 @@
-import { randomBytes } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { FleetView } from "../server/view.mjs";
 import { createDashboardServer } from "../server/http.mjs";
-
-const fixtureCredential = randomBytes(24).toString("base64url");
 
 let view, server, url;
 const fixture = () => ({
@@ -42,7 +39,6 @@ test.beforeEach(async () => {
   view.setSource("agamemnon", "connected");
   server = createDashboardServer({
     view,
-    token: fixtureCredential,
     staticDir: resolve("dist"),
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -54,8 +50,6 @@ test.afterEach(async () => {
 });
 async function openPipeline(page) {
   await page.goto(url);
-  await page.getByLabel("Local access token").fill(fixtureCredential);
-  await page.getByRole("button", { name: "Open mission control" }).click();
   await page.getByRole("button", { name: "Pipeline", exact: true }).click();
 }
 

@@ -12,9 +12,8 @@ and experiment execution remain implementation work.
 1. Install Node.js 22.12 or newer and `just`.
 2. From the Odysseus repository, run `just web-install`.
 3. Run `just web-test` and `just web-build`.
-4. Run `just web-start`. The service binds to `127.0.0.1:8765` and prints the
-   location of its private local access-token file. Open that address and use the
-   file's token to sign in. The token is distinct from provider authentication.
+4. Run `just web-start`. The service binds to `127.0.0.1:8765`. Open that address
+   to see the dashboard directly; no local access token or sign-in is required.
 5. Configure the supported sources below and restart the backend to connect
    actual component records and observations. Without sources the application
    deliberately shows an empty view.
@@ -22,15 +21,13 @@ and experiment execution remain implementation work.
 | Variable | Purpose |
 |---|---|
 | `ODYSSEUS_WEB_PORT` | Loopback port; default `8765` |
-| `ODYSSEUS_WEB_STATE_DIR` | Private local state; default `~/.local/state/odysseus-web` |
-| `ODYSSEUS_WEB_TOKEN` | Optional operator-supplied UI token; otherwise generated in private state |
 | `ODYSSEUS_AGAMEMNON_URL` | Supported controller endpoint; HTTPS except for loopback HTTP |
 | `AGAMEMNON_API_KEY` | Backend credential for the controller |
 | `ODYSSEUS_NATS_URL` | Optional TLS observation endpoint |
 | `ODYSSEUS_NATS_CREDS_FILE` | Private NATS credentials file for the observation subscription |
 | `ODYSSEUS_NATS_CA_FILE` | Optional private CA bundle for the TLS connection |
 | `ODYSSEUS_NATS_ALLOW_LOCAL` | `1` permits a plaintext literal-loopback broker for local testing |
-| `ODYSSEUS_ENABLE_RESEARCH_INTAKE` | `1` enables the authenticated Nestor intake proxy |
+| `ODYSSEUS_ENABLE_RESEARCH_INTAKE` | `1` enables the Nestor intake proxy using backend credentials |
 | `ODYSSEUS_NESTOR_URL` | Nestor HTTP endpoint; HTTPS except for loopback HTTP |
 | `NESTOR_AUTH_TOKEN` | Backend-only bearer credential for Nestor |
 | `ODYSSEUS_ENABLE_RESEARCH_IMPORT` | `1` enables confirmed-intake import and known-task reads using the configured Agamemnon endpoint and credential |
@@ -39,11 +36,22 @@ and experiment execution remain implementation work.
 | `ODYSSEUS_INPUT_SPOOLS` | JSON mapping of worker IDs to private absolute spool directories |
 | `ODYSSEUS_WORKER_STATE_DIRS` | JSON mapping of worker IDs to private same-host directories containing `worker.sock`, for approvals/questions |
 
-Keep secrets in private backend configuration; never commit them or embed them
-in a URL. HTTP cookies are HttpOnly and SameSite Strict, with a 30-minute session
-limit. The server rejects foreign origins and Host headers. Remote browser access
-requires a separately reviewed TLS/authentication deployment; do not expose this
-loopback service through an unauthenticated proxy.
+Local-machine access is the UI trust boundary. The server requires loopback
+access, allows only its local Host values, and rejects foreign origins and
+cross-site requests. Writes require a matching `Origin` header. There is no UI
+token, session cookie, login endpoint, or session expiry. `ODYSSEUS_WEB_TOKEN`
+and `ODYSSEUS_WEB_STATE_DIR` are unused; existing access-token files are left
+untouched and are no longer read.
+
+Keep component and provider credentials in private backend/runtime configuration;
+never commit them or embed them in a URL. Keyless local access does not enable
+commands, bypass Agamemnon admission, or provide a private worker attachment.
+Remote browser access requires a separately reviewed TLS/authentication deployment;
+do not expose this loopback service through an unauthenticated proxy.
+
+The dashboard stays visible while connecting or reconnecting. Missing and stale
+observations remain explicit, and stale ownership disables commands. Recovery
+resumes read-only observations; it never automatically replays a write.
 
 ## Ownership and flow
 
@@ -96,7 +104,7 @@ Use either or both observation inputs:
    several writers interleave partial JSON on one FIFO. The dashboard never
    consumes or acknowledges task delivery for visualization.
 
-The browser receives authenticated SSE snapshots once per second. Cursor epochs,
+The browser receives local SSE snapshots once per second. Cursor epochs,
 bounded history, rejected/truncated frames, source sequence gaps, and disconnects
 remain visible. Historical traffic is bounded to 250 observations by default;
 older data is not retained across backend restart. Loss counters describe observed
@@ -139,7 +147,7 @@ new identity. Storage failure prevents submission.
 With the separate import flag enabled, **Import research task** submits only the
 confirmed intake ID and digest to Agamemnon. The browser persists that reference
 and expected issue before POST, under the same lock as intake retry and replacement.
-Unknown outcomes block a new selection; reload and sign-in never automatically
+Unknown outcomes block a new selection; reload and reconnect never automatically
 POST. Explicit retries preserve the reference and later replay state.
 
 Task refresh uses only the known canonical task ID. The backend validates intrinsic
@@ -213,7 +221,7 @@ must be user-owned with no group or other access. A local path cannot reach a
 remote cluster worker; an authenticated private attachment service is required
 before remote requests can be enabled.
 
-The authenticated `/api/requests` read accepts one session, worker and generation.
+The local `/api/requests` read accepts one session, worker and generation.
 It fetches the current controller record and checks private worker inventory
 before and after reading the pending provider requests. Missing ownership,
 changed turns, disconnects or unavailable evidence disable fresh decisions.
@@ -228,7 +236,7 @@ reference and request ID through Agamemnon's session `respond` operation. A
 decision for changed evidence is rejected. The raw response, command, diff and
 questions are excluded from Fleet snapshots and telemetry.
 
-Drafts and uncertain submissions remain in page memory through sign-in renewal;
+Drafts and uncertain submissions remain in page memory through a disconnect;
 they are not written to browser storage. An explicit retry reuses the command ID
 and exact response. If the provider request has disappeared, only matching
 durable command intent and the retained private file can confirm prior controller
@@ -250,7 +258,7 @@ they do not dispatch real issue work. Tests must build current assets first.
 The private-request tests use actual local Unix sockets with synthetic worker
 inventory. They cover owner/turn changes, evidence-bound file decisions, typed
 request IDs and exact question answers. Browser tests cover private request
-presentation, missing evidence, explicit retry and sign-in renewal. These tests
+presentation, missing evidence, explicit retry and reconnect. These tests
 do not establish remote attachment or authenticated provider acceptance.
 
 The independent local integration canary has exercised actual Keystone gateway

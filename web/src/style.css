@@ -767,45 +767,6 @@ tbody tr:hover {
   color: #78927d;
   margin-top: 20px;
 }
-.login-page {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background:
-    radial-gradient(ellipse at 65% 30%, #294c3022, transparent 65%), #101b15;
-  padding: 25px;
-}
-.login-card {
-  width: 100%;
-  max-width: 450px;
-  background: #17271b;
-  border: 1px solid #3b5841;
-  border-radius: 18px;
-  padding: 44px;
-}
-.login-card .brand-mark {
-  margin-bottom: 28px;
-}
-.login-card h1 {
-  font-size: 29px;
-  margin-bottom: 13px;
-}
-.login-card > p {
-  font-size: 12px;
-}
-.login-card form {
-  margin-top: 27px;
-}
-.login-card label {
-  font-size: 11px;
-  color: #b2c6ae;
-  display: block;
-  margin-bottom: 9px;
-}
-.login-card input {
-  width: 100%;
-  background: #122017;
-}
 .primary {
   background: #c0dca7;
   color: #203019;
@@ -970,9 +931,6 @@ tbody tr:hover {
   .page-footer {
     gap: 15px;
     line-height: 1.7;
-  }
-  .login-card {
-    padding: 30px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

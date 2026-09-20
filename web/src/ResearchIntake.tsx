@@ -156,9 +156,7 @@ export function ResearchIntake(view: ResearchViewProps) {
       })
       .catch(() => {
         if (!abort.signal.aborted)
-          setCapability(
-            "Intake availability is unknown. Sign in again or reload to retry.",
-          );
+          setCapability("Intake availability is unknown. Reload to retry.");
       });
     return () => abort.abort();
   }, []);
@@ -191,7 +189,7 @@ export function ResearchIntake(view: ResearchViewProps) {
           response.status === 409
             ? "Conflict. Keep this intake unchanged and reconcile it with the operator."
             : response.status === 401
-              ? "Outcome unknown. Sign in again, then check this retained intake."
+              ? "Outcome unknown. Check this retained intake before retrying."
               : response.status === 404
                 ? "Outcome unknown. Nestor has no confirmed record yet; retry the same intake."
                 : "Outcome unknown. Check status or retry the same intake.",

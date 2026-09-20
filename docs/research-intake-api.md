@@ -2,9 +2,10 @@
 
 The Research intake view submits publishable requirements to Nestor's explicit
 Fleet intake API. Nestor owns the GitHub-backed intake record and work issue.
-Odysseus authenticates the local user and proxies the supported HTTP operations;
-it does not create issues itself, keep an intake queue, or dispatch research
-agents. A confirmed issue is the intake endpoint's result, not completed research.
+Odysseus accepts local browser requests and uses backend credentials to proxy the
+supported HTTP operations. It does not create issues itself, keep an intake queue,
+or dispatch research agents. A confirmed issue is the intake endpoint's result,
+not completed research.
 An independently configured import action submits that confirmed reference to
 Agamemnon, which owns its durable task identity and execution admission.
 The separate planned-issue action imports an existing GitHub issue directly
@@ -20,10 +21,10 @@ through Agamemnon. It does not require Nestor or create a work issue.
 2. Set `ODYSSEUS_ENABLE_RESEARCH_INTAKE=1` and `ODYSSEUS_NESTOR_URL` in private
    backend configuration. HTTPS is required except for loopback HTTP.
 3. Supply `NESTOR_AUTH_TOKEN` privately to the Odysseus backend. Do not embed it
-   in a URL or provide it to the browser. The browser uses the existing local
-   Odysseus sign-in session.
+   in a URL or provide it to the browser. Local dashboard access requires no
+   UI token or session cookie.
 4. Run `just web-install`, `just web-build`, then `just web-start`. Open the
-   loopback interface, sign in, and choose **Research intake**. The capability
+   loopback interface and choose **Research intake**. The capability
    indicator confirms configuration only; a request establishes actual Nestor
    availability.
 5. Enter a work repository, title and publishable requirements. These fields
@@ -35,9 +36,13 @@ checks for this feature. Fleet research admission and dispatch remain gated.
 
 ## HTTP contract
 
-All web API operations require the existing local session cookie. Writes also
-require a matching `Origin` header. The backend allows at most four in-flight
-intake operations, uses a five-second upstream deadline, prohibits redirects,
+All web API operations require loopback access and pass the local Host, Origin,
+and cross-site request checks. Writes require a matching `Origin` header. No UI
+token, login, or session cookie is required; backend service authentication and
+explicit enable flags remain in effect. Remote access requires a separately
+reviewed TLS/authentication deployment; see the [web guide](../web/README.md).
+The backend allows at most four in-flight intake operations, uses a five-second
+upstream deadline, prohibits redirects,
 and bounds request and response bodies. Raw upstream errors are not returned or
 logged. The backend does not automatically retry a failed operation.
 
@@ -101,8 +106,8 @@ not provider credentials or a private interview. Browser storage must be
 available. Web Locks serialize access between tabs; another tab adopts an
 existing retained request instead of submitting a different identity.
 
-Once retained, the form fields are locked. Reload, tab changes and renewed
-sign-in do not automatically resend it. **Check intake status** performs a
+Once retained, the form fields are locked. Reload, tab changes and reconnect
+do not automatically resend it. **Check intake status** performs a
 read-only lookup. **Retry same intake** explicitly resends the original identity
 and content after verifying the retained digest. A changed or malformed retained
 request blocks submission rather than being replaced.
@@ -129,9 +134,9 @@ This flag is separate from the Nestor intake and session-command flags.
 | `POST /api/research/imports` | `POST /v1/fleet/research-intakes` |
 | `GET /api/research/tasks/{taskId}` | `GET /v1/tasks/{taskId}/state`, then the exact claimed Fleet target when present |
 
-Both routes require local sign-in and return `Cache-Control: no-store`. The POST
-also requires a matching Origin. It accepts exactly three fields, at most 4096
-UTF-8 bytes:
+Both routes use the local access checks and return `Cache-Control: no-store`.
+The POST also requires a matching Origin. It accepts exactly three fields, at
+most 4096 UTF-8 bytes:
 
 ```json
 {
@@ -188,7 +193,7 @@ selection prevents the POST. A successful response retains its namespace, task I
 and provenance for subsequent comparison. Browser metadata is a recovery record,
 not task authority.
 
-Reload, renewed sign-in, duplicate clicks and competing tabs never automatically
+Reload, reconnect, duplicate clicks and competing tabs never automatically
 import. An explicit retry sends the same reference. An unresolved import blocks
 **New research intake** inside the same lock. The existing **Check intake status**
 action can recover in-memory Nestor confirmation after reload; import does not
@@ -204,7 +209,7 @@ configuration fails startup. The capability projection adds
 assert controller availability. GitHub credentials remain in Agamemnon.
 
 Agamemnon owns a finite registry of work repositories. The browser offers only
-its authenticated projection of registered keys, canonical repository names,
+the backend's projection of registered keys, canonical repository names,
 and repository native IDs. Registry selection is not a new repository authority.
 The controller validates the registered choice before its GitHub lookup and
 revalidates the issue identity and selected plan content during every POST.
@@ -216,8 +221,8 @@ revalidates the issue identity and selected plan content during every POST.
 | `POST /api/issue-intakes` | `POST /v1/fleet/issue-intakes` |
 | `GET /api/tasks/{taskId}` | `GET /v1/tasks/{taskId}/state`, then the exact claimed target when present |
 
-These routes require local sign-in, return `Cache-Control: no-store`, and share
-four adapter slots. POST requires the matching Origin. Inspection and import
+These routes use the local access checks, return `Cache-Control: no-store`, and
+share four adapter slots. POST requires the matching Origin. Inspection and import
 have forty-second backend deadlines and forty-five-second browser deadlines;
 registry and task reads retain five seconds in the backend. The response reader
 is explicitly cancelled at deadline and released on success or failure.
@@ -265,7 +270,7 @@ original provenance and report the current canonical state.
 Before POST, origin-scoped storage under `odysseus.issue-import.v1` must retain
 and read back the exact selected reference. Web Locks serialize competing tabs.
 Storage failure or changed selection prevents sending. An uncertain response,
-sign-in renewal or reload retains that reference and never triggers an automatic
+reconnect or reload retains that reference and never triggers an automatic
 POST. **Retry same import** resends it explicitly. A `409` remains a conflict,
 including work already imported through the research entrypoint; it is not
 converted into a receipt of another provenance kind. Missing or timed-out
@@ -340,8 +345,9 @@ Agamemnon-to-Nestor traffic, Keystone delivery/ACK, activity or completion.
 ## Verification
 
 Run `just web-test`, `just web-build`, and `just web-browser-test`. Backend
-fixtures exercise authentication, exact payloads, Unicode/digest compatibility,
-invalid input, uncertain outcomes, bounded concurrency and rejected receipts.
+fixtures exercise local access checks, backend authentication, exact payloads,
+Unicode/digest compatibility, invalid input, uncertain outcomes, bounded
+concurrency and rejected receipts.
 Browser fixtures exercise unchanged retries across reload, status-only lookup,
 storage failure, altered retained bytes and competing tabs through the actual
 backend proxy with a controlled Nestor HTTP transport.

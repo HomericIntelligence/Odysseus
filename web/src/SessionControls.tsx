@@ -71,7 +71,7 @@ function knownEligibility(item: SessionControlItem, operation: Operation) {
   );
 }
 
-/** Call above App's authentication gate: private command state survives sign-in renewal. */
+/** Keep mounted so private command state survives observation disconnects. */
 export function useSessionControls({
   item,
   live,
