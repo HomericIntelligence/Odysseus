@@ -9740,12 +9740,18 @@ class RuntimeStore:
                 connection,
                 "SELECT claim_owner, claim_expires_at, claim_token, "
                 "claim_generation, requires_consumer_checkpoint, "
-                "consumer_checkpointed_at, sent_at, rearm_at FROM outbox "
+                "consumer_checkpointed_at, sent_at, rearm_at, "
+                "payload_json, payload_digest FROM outbox "
                 "WHERE namespace = ? ORDER BY outbox_id",
                 (self.namespace,),
                 page_size=_MAX_QUERY_ROWS,
             ):
                 for state in outbox_states:
+                    _decode_json(
+                        state["payload_json"],
+                        "outbox payload",
+                        expected_digest=state["payload_digest"],
+                    )
                     _validate_outbox_claim_state(
                         state["claim_owner"],
                         state["claim_expires_at"],

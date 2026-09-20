@@ -5164,21 +5164,15 @@ class RuntimeStoreTest(unittest.TestCase):
             claims = store.claim_outbox(
                 owner="publisher", lease_seconds=60, limit=2
             )
-            self.assertEqual(len(claims), 2)
+            self.assertEqual(
+                [claim["purpose"] for claim in claims], ["terminal:failed:0"]
+            )
             for claim in claims:
                 store.mark_outbox_sent(
                     claim["id"],
                     owner="publisher",
                     claim_token=claim["claim_token"],
                 )
-            with store._transaction() as connection:
-                connection.execute(
-                    "UPDATE outbox SET consumer_checkpointed_at = ? "
-                    "WHERE namespace = ? AND task_id = ? "
-                    "AND requires_consumer_checkpoint = 1",
-                    (1.0, store.namespace, task_id),
-                )
-
             self.assertIsNone(store.load_task(task_id))
             self.assertEqual(store.pending_outbox(), [])
 
@@ -5276,19 +5270,14 @@ class RuntimeStoreTest(unittest.TestCase):
                 lease_seconds=1,
                 limit=2,
             )
-            self.assertEqual(len(claims), 2)
+            self.assertEqual(
+                [claim["purpose"] for claim in claims], ["terminal:failed:0"]
+            )
             for claim in claims:
                 store.mark_outbox_sent(
                     claim["id"],
                     owner="publisher",
                     claim_token=claim["claim_token"],
-                )
-            with store._transaction() as connection:
-                connection.execute(
-                    "UPDATE outbox SET consumer_checkpointed_at = ? "
-                    "WHERE namespace = ? AND task_id = ? "
-                    "AND requires_consumer_checkpoint = 1",
-                    (now[0], store.namespace, task_id),
                 )
             self.assertIsNone(store.load_task(task_id))
 
