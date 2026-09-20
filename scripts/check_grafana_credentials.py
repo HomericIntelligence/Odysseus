@@ -317,6 +317,56 @@ def _environment_uses_yaml_indirection(line: str) -> bool:
     )
 
 
+def _grafana_service_keys(lines: list[str]) -> set[str]:
+    """Recognize Grafana images independently of a Compose service's name.
+
+    Inspect the complete service before resolving env_file, since image may
+    appear after it. Retain the conventional name for image-less overlays.
+    """
+    names = {"grafana"}
+    services_indent: int | None = None
+    service_indent: int | None = None
+    service: str | None = None
+    field_indent: int | None = None
+    for physical in lines:
+        text = _strip_yaml_comment(physical)
+        if not text.strip():
+            continue
+        indent = len(text) - len(text.lstrip(" "))
+        mapping = _split_mapping(text.strip())
+        key = _decode_yaml_scalar(mapping[0]) if mapping else None
+        if services_indent is not None and indent <= services_indent:
+            services_indent = service_indent = field_indent = None
+            service = None
+        if services_indent is None:
+            if key == "services" and mapping is not None and not mapping[1]:
+                services_indent = indent
+            continue
+        if service_indent is None:
+            service_indent = indent
+        if indent == service_indent:
+            service = key
+            field_indent = None
+            continue
+        if service is None or mapping is None:
+            continue
+        if field_indent is None:
+            field_indent = indent
+        if indent != field_indent or key != "image":
+            continue
+        value = _decode_yaml_scalar(mapping[1])
+        if (value is None or not value or "$" in value
+                or value[0] in "!&*|>[{"
+                or _environment_uses_yaml_indirection(physical)):
+            # A dynamic image cannot prove that the service is unrelated.
+            names.add(service.casefold())
+            continue
+        image_name = value.split("@", 1)[0].rsplit("/", 1)[-1].split(":", 1)[0]
+        if image_name in {"grafana", "grafana-oss", "grafana-enterprise"}:
+            names.add(service.casefold())
+    return names
+
+
 def _grafana_env_file_targets(lines: list[str]) -> list[tuple[int, str | None]]:
     """Return literal short-syntax env_file entries for the Grafana service.
 
@@ -325,6 +375,7 @@ def _grafana_env_file_targets(lines: list[str]) -> list[tuple[int, str | None]]:
     long mapping syntax rather than attempting a partial Compose parser.
     """
     targets: list[tuple[int, str | None]] = []
+    grafana_keys = _grafana_service_keys(lines)
     services_indent: int | None = None
     service_indent: int | None = None
     grafana_service = False
@@ -386,7 +437,7 @@ def _grafana_env_file_targets(lines: list[str]) -> list[tuple[int, str | None]]:
             is_grafana = bool(
                 mapping is not None
                 and key is not None
-                and key.casefold() == "grafana"
+                and key.casefold() in grafana_keys
             )
             if is_grafana and mapping is not None and mapping[1]:
                 targets.append((index, None))
@@ -1097,6 +1148,42 @@ def _self_test() -> int:
         },
         1,
     )
+    for image in ("grafana/grafana:11", "grafana/grafana-enterprise:11",
+                  "registry.example/grafana/grafana@sha256:example"):
+        for image_first in (True, False):
+            properties = [f"    image: {image}\n", "    env_file: dashboard.env\n"]
+            if not image_first:
+                properties.reverse()
+            case(
+                f"renamed_grafana_service_{image}_{image_first}",
+                {
+                    "production.yml": "services:\n  dashboards:\n" + "".join(properties),
+                    "dashboard.env": "GF_AUTH_ANONYMOUS_ENABLED=true\n",
+                },
+                1,
+            )
+    case(
+        "renamed_grafana_literal_false_passes",
+        {
+            "production.yml": "services:\n  dashboards:\n    env_file: dashboard.env\n    image: grafana/grafana:11\n",
+            "dashboard.env": "GF_AUTH_ANONYMOUS_ENABLED=false\n",
+        },
+        0,
+    )
+    for image_value in ("*dashboard_image", "!custom grafana/grafana", "|", ">"):
+        case(
+            f"renamed_grafana_indirect_image_{image_value}",
+            {
+                "production.yml": (
+                    "x-image: &dashboard_image grafana/grafana:11\n"
+                    "services:\n  dashboards:\n"
+                    f"    image: {image_value}\n"
+                    "    env_file: dashboard.env\n"
+                ),
+                "dashboard.env": "GF_AUTH_ANONYMOUS_ENABLED=true\n",
+            },
+            1,
+        )
     case(
         "dotted_grafana_service_alias_with_env_file_fails",
         {

@@ -943,7 +943,7 @@ that capability by:
 
 #### Protect snapshot artifacts
 
-Raw source and target archives, complete source and target JetStream stores,
+Raw source and target archives, retired source and target JetStream stores,
 bridge-record archives, transfer chunks, decoded objects, scratch files,
 complete RP0/RP1 manifests, immutable pre-upgrade backups, filesystem/storage
 snapshots, copy-on-write descendants, and any backup containing them are
@@ -956,6 +956,17 @@ reserve, each recovery point's retention deadline, and the deletion mechanism.
 No ordinary application role, CI runner, repository, log or chat channel,
 generic shared temporary directory, or unapproved backup or object store may
 receive an artifact.
+
+The target generation selected for production has a separate storage and key
+lifecycle. Before restore, the manifest binds its dedicated encrypted volume,
+production key identifier, service owner, access controls, and approved backup
+policy. Its key is not the expiring migration-artifact key. Before cutover, the
+operator records and verifies a production-custody receipt for that exact
+generation and key. Admission requires this receipt. A failed, unadmitted
+target can enter the retired-store inventory only through the approved rollback
+procedure. An admitted production generation, its key, and its production
+backups never enter the migration-expiry deletion set. They remain confidential
+and subject to normal production retention and retirement approval.
 
 The helper uses a private `0700` workspace and exclusively created regular
 `0600` files, or platform-equivalent controls. It opens every path component
@@ -971,11 +982,15 @@ Failed or incomplete-operation artifacts are removed during immediate failure
 cleanup. Raw RP0 material survives only through the approved pre-point-of-no-
 return rollback deadline; raw RP1 material survives only through its approved
 forward-recovery deadline. A separately approved extension names the location,
-readers, owner, and expiry. At expiry the operator stops readers, proves the
-source and target servers plus every decoder, bridge, helper, canary, backup,
-and snapshot process absent, and enumerates every store, archive, chunk,
-decoded, temporary, copy-on-write, and backup copy in the manifest,
-deletes those copies, destroys the unique encryption key—the required erasure
+readers, owner, and expiry. At expiry the operator reconciles the artifact
+inventory with the production-custody receipt and rejects any deletion set
+that contains the admitted generation or its keys or backups. The operator
+stops readers and proves that no server, decoder, bridge, helper, canary,
+backup, or snapshot process can access the retired stores and recovery copies
+selected for deletion. The active production server need not stop. The operator
+enumerates every retired store, archive, chunk, decoded, temporary,
+copy-on-write, and backup copy in that deletion set, deletes those copies, and
+destroys only their dedicated encryption keys—the required erasure
 boundary for copy-on-write or SSD storage—verifies paths and key are
 unavailable, and records an inventory/hash/location/key-ID/time/actor deletion
 receipt. Storage whose backup or lifecycle cannot meet and attest that deadline
@@ -1169,9 +1184,16 @@ The cutover then follows this order:
    canary callback and pull waiter, require `PushBound=false` for every temporary
    push consumer, revoke and disconnect every canary identity, and prove no
    canary process, writable handle, or effect remains before final capture.
-6. Quiesce and stop the target server, helper, and decoder writers; prove zero
-   writable target-store handles or mappings. Take the final target snapshot,
-   run both archive and stopped-store decoders, restart only the same prebound
+6. Keep ordinary publication and consumption denied. While the target server
+   and target-only helper still run, take and finish the final target API
+   snapshot, with consumer state included. Record its capture boundary and
+   complete transfer before closing the helper. Stop the target server and
+   all store writers, then prove zero writable target-store handles or mappings.
+   Run the archive and stopped-store decoders. Require their complete persisted
+   state to agree; an intervening timer change or any other mismatch requires
+   a fresh capture within the approved budget, not an ignored field. Record
+   permitted RP0-to-capture timer and canary deltas in the ledger. Restart only
+   the same prebound
    target generation under ordinary-publication deny, and corroborate the
    exposed fields through authenticated INFO. Disconnect and revoke the target
    migration identity and complete all negative tests. Record recovery point
@@ -1184,9 +1206,12 @@ The cutover then follows this order:
    its readback, ordinary publication remains denied while the exact ordinary
    consumer binaries and credentials bind named durables, validate effect sinks
    and floors, and report ready. The operator admits producers only after the
-   complete consumer-ready set is durable. When each recovery window closes,
+   complete consumer-ready set and production-custody receipt are durable.
+   When each recovery window closes,
    the operator performs and receipts verified artifact, retired source/target-
    generation, credential-copy, store, backup, snapshot, and key deletion.
+   The admitted production generation, its keys, and production backups are
+   excluded as specified in section 6.
 
 `cutover_committed` lives in an independent root-owned durable ledger outside
 both NATS stores and every migration-artifact/key root; the helper-operation
@@ -1466,6 +1491,16 @@ with one hub and at least two spokes. It must prove all of the following:
   cleanup, deadline enforcement, key destruction, path absence, and the exact
   deletion receipt. A backup or copy-on-write fixture that cannot prove key-
   based erasure fails closed.
+- A synthetic cutover admits a production generation and appends post-cutover
+  messages. Expiring RP0 and RP1 removes only recovery artifacts and retired
+  generations. The admitted store, its production key, and its backups remain
+  available; restarting that generation preserves those messages. A deletion
+  manifest that includes any admitted object or production key fails closed.
+- Final capture completes through the running target's authenticated snapshot
+  API before server shutdown. Both decoders then agree on the complete stopped
+  state. A timer change between capture and shutdown forces recapture or abort;
+  it cannot produce RP1 by omitting the changed field. No step requests a live
+  API operation from a stopped server.
 - Restart, reconnect, credential rotation, RP0 rollback rehearsal, and all
   failure paths terminate cleanly without credentials in output. The independent
   two-copy ledger rejects foreign writers, stale fencing tokens, corruption,
