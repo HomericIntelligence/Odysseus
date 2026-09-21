@@ -6236,6 +6236,8 @@ def aggregate_budget_behavior(subject, base, git):
                 "repos: []\n"
             ).format(tag, index, hook_types).encode("utf-8")
             write_file(os.path.join(repo, ".pre-commit-config.yaml"), config)
+            # Empty Git templates deliberately omit the hooks directory.
+            os.mkdir(os.path.join(repo, ".git", "hooks"), 0o700)
             write_file(
                 os.path.join(repo, ".git", "hooks", "budget-marker"),
                 bytes([65 + index]) * marker_size,
