@@ -9,10 +9,12 @@ cd "$ROOT" || exit 1
 
 SCHEMA="configs/schemas/dispatch-envelope.hi-v1.schema.json"
 
-# The hi/v1 contract is frozen at origin/main commit
-# ccc6c15ce1d791a88ee72eb67b6d3bfef419a4e5. This byte oracle protects the
-# versioned wire artifact independently of the optional jsonschema package.
-EXPECTED_SCHEMA_SHA256="06dddaf5eeb8ef07e08db13598b0f60af3757fa0f8f5117b77a45fe59a4dc89b"
+# The hi/v1 artifact includes the description-only governance corrections from
+# merged PR #514, commit 5cc09e7d6611d2edbfa664f17097d345aba50aa6.
+# Its validation rules are unchanged from the original frozen contract.
+# This byte oracle protects the reviewed versioned wire artifact independently
+# of the optional jsonschema package.
+EXPECTED_SCHEMA_SHA256="09d3d7693ce04933a2245e1bb8754d347a200fd02b8c69b66df257943084c912"
 
 info "frozen hi/v1 schema bytes"
 actual_schema_sha256="$(python3 - "$SCHEMA" <<'PY'
