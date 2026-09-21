@@ -1532,6 +1532,17 @@ def write_file(path, data, mode=0o644):
     os.chmod(path, mode)
 
 
+def write_provider_shell_fixture(path, body, base):
+    """Run a shell scenario through the fixture's declared Python provider."""
+    interpreter = os.path.join(base, "install-bin", "provider", "bin", "python3")
+    program = (
+        "#!{}\n"
+        "import subprocess, sys\n"
+        "raise SystemExit(subprocess.call(['/bin/sh', '-c', {!r}, sys.argv[0]]))\n"
+    ).format(interpreter, body)
+    write_file(path, program.encode("utf-8"), 0o755)
+
+
 def route_snapshot(path):
     entries = {}
     for name in sorted(os.listdir(path)):
@@ -3385,7 +3396,7 @@ def execution_copy_write_behavior(subject, base, git, target):
         ).format(attempted_marker, replacement_marker, original_marker)
     else:
         raise AssertionError(target)
-    write_file(tool, tool_body.encode("utf-8"), 0o755)
+    write_provider_shell_fixture(tool, tool_body, base)
 
     emitted = []
     captured = []
@@ -3620,7 +3631,7 @@ def runtime_dependency_write_behavior(subject, base):
     original = b"#!/bin/sh\nexit 0\n"
     write_file(dependency, original, 0o755)
     pre_commit = os.path.join(root, "pre-commit")
-    write_file(
+    write_provider_shell_fixture(
         pre_commit,
         (
             "#!/bin/sh\n"
@@ -3628,8 +3639,8 @@ def runtime_dependency_write_behavior(subject, base):
             "  printf corrupted > {!r}\n"
             "fi\n"
             "printf 'pre-commit 3.8.0\\n'\n"
-        ).format(dependency, dependency).encode("utf-8"),
-        0o755,
+        ).format(dependency, dependency),
+        base,
     )
     emitted = []
     original_emit = subject.emit
