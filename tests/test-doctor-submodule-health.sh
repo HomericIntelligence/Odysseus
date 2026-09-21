@@ -337,6 +337,8 @@ PY
             ;;
         slow-tree)
             if [ "$TEST_PLATFORM" = Linux ]; then
+                PROCESS_CHILD_PID="$PROCESS_CHILD_PID" \
+                PROCESS_HEARTBEAT_MARKER="$PROCESS_HEARTBEAT_MARKER" \
                 bash -c 'trap "" TERM; printf "%s\n" "$$" > "${PROCESS_CHILD_PID:?}"; while :; do printf x >> "${PROCESS_HEARTBEAT_MARKER:?}"; sleep 0.05; done' \
                     >/dev/null 2>&1 &
             else
@@ -882,6 +884,8 @@ PY
         fi
         if [ "$TAILSCALE_STATUS_MODE" = slow-tree ]; then
             if [ "$TEST_PLATFORM" = Linux ]; then
+                PROCESS_CHILD_PID="$PROCESS_CHILD_PID" \
+                PROCESS_HEARTBEAT_MARKER="$PROCESS_HEARTBEAT_MARKER" \
                 bash -c 'trap "" TERM; printf "%s\n" "$$" > "${PROCESS_CHILD_PID:?}"; while :; do printf x >> "${PROCESS_HEARTBEAT_MARKER:?}"; sleep 0.05; done' \
                     >/dev/null 2>&1 &
             else
@@ -1553,7 +1557,7 @@ if [ "$(uname -s)" = Linux ]; then
             && kill -0 "$version_descendant" 2>/dev/null; then
             kill -KILL "$version_descendant" 2>/dev/null
         fi
-        fail "successful version probe left an escaped descendant alive"
+        fail "successful version probe did not prove descendant cleanup (status=$DOCTOR_STATUS pid=${version_descendant:-absent} gone=$version_descendant_gone)"
     fi
     unset BROKEN_VERSION_TOOL BROKEN_VERSION_MODE version_descendant_gone
 else
