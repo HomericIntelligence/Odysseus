@@ -4849,7 +4849,6 @@ def sealed_provider_mutation_behavior(subject, base):
         boundary_digest = hashlib.sha256(stream.read()).hexdigest()
     config = b"repos: []\n"
     policy = b"raise SystemExit(0)\n"
-    manifest = b"/trusted/yaml.py=" + b"c" * 64
     git_provider = os.path.realpath(shutil.which("git") or "/usr/bin/git")
     with open(git_provider, "rb") as stream:
         git_digest = hashlib.sha256(stream.read()).hexdigest()
@@ -4860,8 +4859,14 @@ def sealed_provider_mutation_behavior(subject, base):
     closure_original = b"VALUE = 'ORIGINAL'\n"
     closure_replacement = b"VALUE = 'REPLACED'\n"
     write_file(closure_file, closure_original)
+    yaml_file = os.path.join(os.path.dirname(closure_file), "yaml.py")
+    yaml_data = b"# YAML dependency fixture; this provider does not parse YAML.\n"
+    write_file(yaml_file, yaml_data)
+    yaml_digest = hashlib.sha256(yaml_data).hexdigest()
+    manifest = (yaml_file + "=" + yaml_digest + "\n").encode("utf-8")
     closure_manifest = subject.zlib.compress(
-        (closure_file + "\t" + hashlib.sha256(closure_original).hexdigest() + "\n").encode("utf-8")
+        (closure_file + "\t" + hashlib.sha256(closure_original).hexdigest() + "\n"
+         + yaml_file + "\t" + yaml_digest + "\n").encode("utf-8")
     ).hex()
     libc = ctypes.CDLL(None, use_errno=True)
     inotify_init1 = getattr(libc, "inotify_init1", None)
@@ -4986,8 +4991,13 @@ def managed_shell_entry_behavior(subject, base):
     )
     os.makedirs(os.path.dirname(closure_file))
     write_file(closure_file, b"VALUE = 'sealed'\n")
+    yaml_file = os.path.join(os.path.dirname(closure_file), "yaml.py")
+    yaml_data = b"# YAML dependency fixture; this provider does not parse YAML.\n"
+    write_file(yaml_file, yaml_data)
+    yaml_digest = hashlib.sha256(yaml_data).hexdigest()
     closure_manifest = subject.zlib.compress(
-        (closure_file + "\t" + hashlib.sha256(b"VALUE = 'sealed'\n").hexdigest() + "\n").encode("utf-8")
+        (closure_file + "\t" + hashlib.sha256(b"VALUE = 'sealed'\n").hexdigest() + "\n"
+         + yaml_file + "\t" + yaml_digest + "\n").encode("utf-8")
     ).hex()
     boundary = "/usr/bin/bwrap"
     boundary_digest = "c" * 64
@@ -5025,7 +5035,7 @@ def managed_shell_entry_behavior(subject, base):
         "config_digest": hashlib.sha256(b"repos: []\n").hexdigest(),
         "policy_hex": b"raise SystemExit(0)\n".hex(),
         "policy_digest": hashlib.sha256(b"raise SystemExit(0)\n").hexdigest(),
-        "pyyaml_manifest_hex": (b"/trusted/yaml.py=" + b"c" * 64).hex(),
+        "pyyaml_manifest_hex": (yaml_file + "=" + yaml_digest + "\n").encode("utf-8").hex(),
         "closure_manifest_hex": closure_manifest,
     }
     candidate = b"\n".join(
