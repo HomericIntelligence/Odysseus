@@ -1249,9 +1249,9 @@ output_state = os.lstat(output)
 triggered = False
 
 
-def injected_read(directory, name):
+def injected_read(directory, name, *, max_bytes=renderer.MAX_NOMAD_CONFIG_BYTES):
     global triggered
-    result = real_read(directory, name)
+    result = real_read(directory, name, max_bytes=max_bytes)
     directory_state = os.fstat(directory)
     is_output = (
         directory_state.st_dev == output_state.st_dev

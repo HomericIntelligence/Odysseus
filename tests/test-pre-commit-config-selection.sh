@@ -27,6 +27,7 @@ case "$PRE_COMMIT_PYTHON" in
         exit 1
         ;;
 esac
+PRE_COMMIT_PROVIDER_PYTHON="$PRE_COMMIT_PYTHON"
 if [ ! -x "$PRE_COMMIT_PYTHON" ] || [ -L "$PRE_COMMIT_PYTHON" ]; then
     if ! PRE_COMMIT_PYTHON=$(
         "$PRE_COMMIT_PYTHON" -I -c \
@@ -47,7 +48,7 @@ if ! PRE_COMMIT_PYTHON_SHA256=$(shasum -a 256 "$PRE_COMMIT_PYTHON"); then
 fi
 PRE_COMMIT_PYTHON_SHA256=${PRE_COMMIT_PYTHON_SHA256%% *}
 if ! PYYAML_MANIFEST=$(
-    "$PRE_COMMIT_PYTHON" -I - <<'PY'
+    "$PRE_COMMIT_PROVIDER_PYTHON" -I - <<'PY'
 import hashlib
 import importlib.machinery
 import importlib.util
