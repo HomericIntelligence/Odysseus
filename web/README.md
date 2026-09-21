@@ -3,7 +3,8 @@
 The Fleet web application presents work ownership, the GitHub pipeline projection,
 and observed message flow from Agamemnon and Keystone. It is an initial implementation of the
 [Fleet plan](../docs/homeric-fleet-plan.md). A Research intake view now submits
-publishable requirements through Nestor's supported durable intake API. Conversation history,
+publishable requirements through Nestor's supported durable intake API. A selected session
+can display an explicitly registered, retained command-output bundle. Conversation history,
 terminal attachment, workflow views, retained Argus dashboards,
 and experiment execution remain implementation work.
 
@@ -35,6 +36,7 @@ and experiment execution remain implementation work.
 | `ODYSSEUS_EXECUTION_HOST` | Controller host identity for this machine; defaults to the operating-system hostname |
 | `ODYSSEUS_INPUT_SPOOLS` | JSON mapping of worker IDs to private absolute spool directories |
 | `ODYSSEUS_WORKER_STATE_DIRS` | JSON mapping of worker IDs to private same-host directories containing `worker.sock`, for approvals/questions |
+| `ODYSSEUS_SESSION_OUTPUT_BUNDLES` | JSON array of operator-collected immutable output bundles; each entry supplies `path`, `receiptDigest` and full `identity` |
 
 Local-machine access is the UI trust boundary. The server requires loopback
 access, allows only its local Host values, and rejects foreign origins and
@@ -110,6 +112,56 @@ remain visible. Historical traffic is bounded to 250 observations by default;
 older data is not retained across backend restart. Loss counters describe observed
 coverage limits, not an estimate of all missing network packets. Host and item
 correlation require an unambiguous matching generation and owner.
+
+## Recorded command output
+
+Select a session, then choose **Load command logs**. This read works independently
+of session command enablement. It shows collected command records, provider exit
+codes and combined stdout/stderr as plain text. Logs load only on request and
+remain in the selected panel's memory. Closing the panel removes them. They never
+enter browser storage, dashboard snapshots, SSE or shared message telemetry.
+
+The first profile consumes `hi/fleet/session-output/v1` from Hephaestus. It retains
+only observed completed command items from Codex 0.153.4. It always reports
+`complete: false`: the provider does not prove complete output or distinguish an
+empty aggregate from unavailable output when it returns null. Collector truncation
+and omitted item counts remain visible. Provider completion and exit code are not
+independent test approval, task completion or a successful Fleet run.
+
+To attach output from a completed worker capture:
+
+1. After canonical completion or cancellation, deliver the retained facts,
+   confirm execution disposal, and stop the worker normally. Use Hephaestus's
+   bounded `hephaestus-fleet-worker export-output` operation on its retained
+   private state. It requires the worker's journal writer lock to be free.
+   Preserve the actual export receipt and immutable file. This operation reads
+   evidence; it does not start a provider or issue new work.
+2. For a VM worker, collect those exact bytes through the approved VM connection.
+   Verify the received file's SHA-256 against the export receipt. This web feature
+   does not supply remote collection or streaming.
+3. Place the file in an owner-only directory outside shared scratch, this checkout
+   and all canonical local agent workspaces. The file must be owner-only, regular,
+   canonical, and have one hard link. Keep this private root excluded from future
+   worker workspace mounts.
+4. Add its absolute `path`, exact-byte `receiptDigest`, and full expected `identity`
+   to `ODYSSEUS_SESSION_OUTPUT_BUNDLES`. Identity contains `workerId`, `generation`,
+   `allocationId`, `sessionId`, `executionId`, `taskId`, `agentId` and
+   `providerThreadId`. Use actual receipt values; the browser cannot supply a path.
+   Configure the backend Agamemnon endpoint, credential and local execution host.
+5. Restart the backend normally and load logs from the matching session. A new
+   collected snapshot requires a new explicit registration and restart; loaded
+   bundles are immutable. No directory scanner or automatic attachment exists.
+
+The reader verifies the whole-file digest, scope, closed schema and item digests.
+It accepts at most 64 items, 64 KiB of retained output per item, 1 MiB of encoded
+item records and 2 MiB per bundle. It checks complete workspace inventories before
+private reads, including cached reads. An unresolved typed build disables access.
+It then checks the canonical session owner: changed, released, terminal or deleted
+ownership is labelled historical. Unavailable ownership or invalid evidence is an
+explicit error, never an empty log or a claim that no commands ran.
+
+Live ownership and activity continue through the normal component observations.
+Recorded command output is a separate collected snapshot, not a live terminal.
 
 ## GitHub pipeline
 

@@ -242,7 +242,7 @@ branch or a local test does not establish a deployed service.
 | Orchestration graph, claims, generations and command intent | Agamemnon's GitHub-backed records | Read `/v1/fleet` resources; submit supported management commands |
 | Pipeline board and implementation labels | Derived GitHub Project; Hephaestus owns issue-stage labels | Display each source and its freshness separately |
 | Desired pools and execution policy | Myrmidons Git manifests | Display configured and observed state separately |
-| Conversations, pending requests, answers and execution evidence | Hephaestus private runtime storage | Read scoped private evidence through the backend's checked private attachment |
+| Conversations, pending requests, answers and execution evidence | Hephaestus private runtime storage | Read scoped private attachments or explicitly registered immutable output exports |
 | Recovery command receipts | Private worker/adapter journals | Display outcomes; never authorize replacement work from a journal |
 | Live message observations | Keystone observations; retained metrics/logs belong to Argus | Render bounded metadata and expose gaps; never consume work for visualization |
 
@@ -321,6 +321,33 @@ commands, diffs, questions and answers never enter the dashboard observation
 stream or GitHub orchestration metadata. An uncertain response retains its
 original identity for explicit retry; controller acceptance does not prove that
 the provider accepted or completed the operation.
+
+### Retained command output
+
+Hephaestus owns retained Codex command records. Its bounded export operation
+produces an immutable `hi/fleet/session-output/v1` bundle and an exact-byte digest.
+An operator can collect that bundle from an admitted VM worker and register its
+private laptop path, digest and complete worker/session/generation identity.
+Collection uses the separately approved host transport; Odysseus does not create
+a remote worker socket, input spool, log server or new admission authority.
+
+The web backend's `/api/session-output` reads only registered files. It verifies
+private placement against complete canonical local workspace inventories, with
+the backend checkout also protected. A complete inventory with no local workers
+does not imply a missing inventory. Typed builds with unresolved placement still
+disable private access. The reader validates the bounded closed schema, receipt,
+item digests and exact scope before exposing plain text on explicit selection.
+It fresh-reads the canonical session and distinguishes current from historical
+ownership. Unavailable state stays explicit. Output is independent of command
+enablement and excluded from shared snapshots, SSE, NATS and browser persistence.
+
+This first profile includes observed completed command items only. Codex 0.153.4
+supplies combined stdout/stderr with unknown provider truncation. Null output
+does not prove an empty stream. Bundles report `complete: false`, collector
+truncation and omission counts. They are execution evidence, not independent
+review or task completion. Live progress remains the existing metadata flow;
+live terminal output and full conversation history remain separate work.
+See the [output collection runbook](../web/README.md#recorded-command-output).
 
 ### Durable research bootstrap
 

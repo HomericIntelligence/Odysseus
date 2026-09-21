@@ -8,6 +8,7 @@ import {
   sourceIsFresh,
 } from "./selectors";
 import { useSessionControls } from "./SessionControls";
+import { SessionOutput } from "./SessionOutput";
 import { ProjectsPanel } from "./ProjectsPanel";
 import { ResearchIntake } from "./ResearchIntake";
 import type { ProjectsProjection } from "./pipeline";
@@ -847,6 +848,23 @@ function App() {
           </p>
         )}
         {sessionControls}
+        {selected?.kind === "session" &&
+          selected.workerId &&
+          Number.isSafeInteger(selected.generation) &&
+          selected.generation! > 0 && (
+            <SessionOutput
+              key={JSON.stringify([
+                selected.id,
+                selected.workerId,
+                selected.generation,
+              ])}
+              scope={{
+                sessionId: selected.id,
+                workerId: selected.workerId,
+                generation: selected.generation!,
+              }}
+            />
+          )}
         {selected && (
           <>
             <h3>Work ownership</h3>
