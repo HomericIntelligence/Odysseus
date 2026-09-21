@@ -5,6 +5,7 @@ import { createDashboardServer } from "./http.mjs";
 import { createCommandService } from "./commands.mjs";
 import { createSessionOutputService } from "./session-output.mjs";
 import { pollProjects } from "./projects.mjs";
+import { openObservationHistory } from "./observation-history.mjs";
 import {
   attachObservationInput,
   connectObservations,
@@ -62,9 +63,33 @@ const server = createDashboardServer({
 const port = Number(process.env.ODYSSEUS_WEB_PORT ?? 8765);
 if (!Number.isInteger(port) || port < 1 || port > 65535)
   throw new Error("Invalid web port");
-server.listen(port, "127.0.0.1", () =>
-  console.log(`Odysseus Fleet: http://127.0.0.1:${port}`),
-);
+// Own the port before touching its cache. HTTP intake waits for complete restore.
+let ready = false;
+const requestHandler = server.listeners("request")[0];
+server.removeListener("request", requestHandler);
+server.on("request", (request, response) => {
+  if (!ready) {
+    response.writeHead(503, {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    });
+    response.end(JSON.stringify({ error: "initializing" }));
+    return;
+  }
+  requestHandler(request, response);
+});
+await new Promise((resolve, reject) => {
+  server.once("error", reject);
+  server.listen(port, "127.0.0.1", resolve);
+});
+const history = await openObservationHistory({
+  view,
+  directory: process.env.ODYSSEUS_OBSERVATION_HISTORY_DIR,
+  port,
+  sourceRoot: resolve(dirname(fileURLToPath(import.meta.url)), "../.."),
+});
+ready = true;
+console.log(`Odysseus Fleet: http://127.0.0.1:${port}`);
 let closing = false;
 const poll = async () => {
   await pollFleet({
@@ -94,10 +119,18 @@ const nats = await connectObservations({
   allowLocal: process.env.ODYSSEUS_NATS_ALLOW_LOCAL === "1",
 });
 const shutdown = async () => {
+  if (closing) return;
   closing = true;
-  await nats?.close();
+  ready = false;
+  process.stdin.pause();
+  process.stdin.removeAllListeners("data");
+  const closeNats = nats?.close();
   server.closeAllConnections();
   server.close();
+  const flushed = await history.close(5000);
+  if (!flushed)
+    console.error("Observation history shutdown flush was not confirmed");
+  await closeNats;
 };
 process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);

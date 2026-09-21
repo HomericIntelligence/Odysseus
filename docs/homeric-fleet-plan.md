@@ -121,6 +121,32 @@ for visualization. Keep high-volume flow observations out of GitHub orchestratio
 records; Argus owns retained observability. Validate a target of under two seconds
 from backend observation to browser rendering under the measured acceptance load.
 
+An optional Odysseus restart cache now preserves the bounded sanitized observation
+view in a private directory. The Observation history page shows original times,
+ordering, and restored origin. Restored rows never create current traffic,
+activity, resources, or command authority. This is a disposable presentation
+copy; Argus keeps long-term observability ownership. The cache cannot recover
+already lost records or invent preparation history.
+
+`ODYSSEUS_OBSERVATION_HISTORY_DIR` enables one port-specific committed file and
+one temporary member, each capped at 4 MiB. The closed versioned format retains
+250 observations and at most 1,000 deduplication and source-sequence entries each.
+The backend owns its loopback port before restoration or writes and starts inputs
+only after restoration. Writes are serial, with one replaceable pending snapshot,
+at most one second of coalescing, file sync, atomic replacement, and directory
+sync. Only complete success advances the persisted prefix. A final flush has a
+five-second deadline, and a late filesystem result cannot create confirmation.
+Corrupt/unsafe bytes and uncertain temporary members are preserved for operator
+recovery. A failed directory sync after replacement remains explicitly uncertain.
+Each restart changes the SSE epoch and reports the coverage gap. Disabling the
+setting restores memory-only behavior and leaves the retained files untouched.
+
+Restart, duplicate delivery, source gaps, bounded queues, unsafe files, injected
+write failures, interrupted replacement, and browser history are local behavioral
+checks. They do not establish any real worker execution or upstream delivery
+guarantee. See the [web runbook](../web/README.md#observation-history-across-restart)
+for the configuration and recovery sequence.
+
 The browser uses the Odysseus backend, which calls supported component interfaces
 and subscribes through Keystone. Bind the initial web service to laptop loopback;
 open the dashboard directly without a UI token, login, session cookie, or session

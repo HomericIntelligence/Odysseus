@@ -559,3 +559,124 @@ test("source identity extension does not loosen other identifier bounds", () => 
   assert.equal(observation.sourceId, undefined);
   assert.equal(observation.taskId, undefined);
 });
+
+test("history restore rejects more than 250 records without altering the view", () => {
+  const source = new FleetView({ historyLimit: 300, now: () => baseTime });
+  for (let index = 0; index < 251; index++)
+    source.observe(packet(`large-${index}`));
+  const history = source.exportHistory();
+  history.observations = source
+    .snapshot()
+    .observations.map(({ origin, ...row }) => row);
+  const target = new FleetView();
+  assert.throws(
+    () => target.restoreHistory(history),
+    /Invalid observation history/,
+  );
+  assert.deepEqual(target.snapshot().observations, []);
+});
+
+test("history restore preserves sanitized identity windows without restoring resource authority", () => {
+  const source = new FleetView({ now: () => baseTime });
+  const privateWorkerSentinel = "private-worker-token";
+  const input = packet("derived-identity", {
+    workerId: { token: privateWorkerSentinel },
+    payload: "private-payload",
+    command: "private-command",
+    sourceSequence: 1,
+    sourceId: "gateway-history",
+    prompt: "private-prompt",
+  });
+  source.observe(input);
+  source.setResources("workers", [{ id: "current-worker", status: "running" }]);
+  const history = source.exportHistory();
+  assert.equal(JSON.stringify(history).includes("private-"), false);
+  const target = new FleetView({ now: () => baseTime + 10000 });
+  target.restoreHistory(history);
+  assert.deepEqual(target.snapshot().resources.workers, []);
+  assert.deepEqual(target.snapshot().sources, {});
+  assert.equal(
+    target.observe({ ...input, workerId: ["another-private-key"] }),
+    false,
+  );
+  assert.equal(
+    target.observe(
+      packet("next", { sourceId: "gateway-history", sourceSequence: 3 }),
+    ),
+    true,
+  );
+  assert.equal(target.snapshot().sourceGaps, 1);
+  assert.equal(
+    target.snapshot().observations[0].receivedAt,
+    new Date(baseTime).toISOString(),
+  );
+  assert.equal(target.snapshot().observations[0].origin, "restored");
+  assert.equal(target.snapshot().observations[1].origin, "live");
+});
+
+test("history validation rejects altered metadata and leaves the original view intact", () => {
+  const source = new FleetView({ now: () => baseTime });
+  source.observe(packet("closed-history"));
+  for (const change of [
+    (value) => {
+      value.observations[0].prompt = "private";
+    },
+    (value) => {
+      value.observations[0].origin = "live";
+    },
+    (value) => {
+      value.observations[0].sequence = 0;
+    },
+    (value) => {
+      value.observations[0].sequence = 2;
+    },
+    (value) => {
+      value.observations[0].receivedAt = "invalid";
+    },
+    (value) => {
+      value.seen = [];
+    },
+    (value) => {
+      value.seen.push(value.seen[0]);
+    },
+    (value) => {
+      value.sourceSequences = [{ sourceId: "source", sequence: -1 }];
+    },
+    (value) => {
+      value.coverageLosses = Number.MAX_SAFE_INTEGER + 1;
+    },
+    (value) => {
+      value.resources = { workers: [{ id: "fake" }] };
+    },
+  ]) {
+    const candidate = source.exportHistory();
+    change(candidate);
+    const target = new FleetView();
+    assert.throws(
+      () => target.restoreHistory(candidate),
+      /Invalid observation history/,
+    );
+    assert.deepEqual(target.snapshot().observations, []);
+  }
+});
+
+test("history sequence exhaustion preserves the last valid order and saturates counters", () => {
+  const source = new FleetView();
+  const history = source.exportHistory();
+  for (const field of [
+    "sequence",
+    "invalid",
+    "coverageLosses",
+    "sourceGaps",
+    "dropped",
+  ])
+    history[field] = Number.MAX_SAFE_INTEGER;
+  source.restoreHistory(history);
+  assert.equal(source.observe(packet("exhausted")), false);
+  source.recordCoverageLoss("attachment", "invalid_frame");
+  const persisted = source.exportHistory();
+  assert.equal(persisted.sequence, Number.MAX_SAFE_INTEGER);
+  assert.equal(persisted.invalid, Number.MAX_SAFE_INTEGER);
+  assert.equal(persisted.coverageLosses, Number.MAX_SAFE_INTEGER);
+  assert.equal(source.snapshot().observations.length, 0);
+});

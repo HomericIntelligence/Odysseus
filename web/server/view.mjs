@@ -124,6 +124,147 @@ const date = (value) =>
 const integer = (value) =>
   Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 
+const bump = (value) => Math.min(Number.MAX_SAFE_INTEGER, value + 1);
+const observationKey = (item) =>
+  JSON.stringify([item.source, item.workerId ?? null, item.eventId]);
+
+// Both live intake and history restore use this metadata-only boundary.
+function observation(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const source = text(input.source)?.toLowerCase();
+  const target = text(input.target)?.toLowerCase();
+  if (
+    !COMPONENTS.includes(source) ||
+    !COMPONENTS.includes(target) ||
+    !identifier(input.eventId) ||
+    !operations.has(input.operation) ||
+    !date(input.observedAt)
+  )
+    return null;
+  const output = {
+    source,
+    target,
+    operation: input.operation,
+    observedAt: date(input.observedAt),
+  };
+  for (const key of traceFields) {
+    const validate = key === "sourceId" ? sourceIdentifier : identifier;
+    if (validate(input[key])) output[key] = input[key];
+  }
+  for (const key of ["generation", "bytes", "sourceSequence"])
+    if (integer(input[key]) !== undefined) output[key] = input[key];
+  if (
+    [
+      "nats",
+      "nats-jetstream",
+      "blazingmq",
+      "ssh",
+      "stdio",
+      "http",
+      "app-server",
+    ].includes(input.transport)
+  )
+    output.transport = input.transport;
+  if (output.sourceSequence !== undefined && !output.sourceId)
+    output.continuity = "unknown";
+  return output;
+}
+
+const historyCounters = [
+  "sequence",
+  "dropped",
+  "invalid",
+  "coverageLosses",
+  "sourceGaps",
+];
+const exactKeys = (value, keys) =>
+  value &&
+  typeof value === "object" &&
+  !Array.isArray(value) &&
+  Object.keys(value).length === keys.length &&
+  keys.every((key) => Object.hasOwn(value, key));
+const equalFields = (a, b) =>
+  exactKeys(a, Object.keys(b)) &&
+  Object.keys(b).every((key) => a[key] === b[key]);
+
+export function validateObservationHistory(input, limit = 250) {
+  const fail = () => {
+    throw new Error("Invalid observation history");
+  };
+  if (
+    !exactKeys(input, [
+      ...historyCounters,
+      "observations",
+      "seen",
+      "sourceSequences",
+    ]) ||
+    historyCounters.some((key) => integer(input[key]) === undefined) ||
+    !Array.isArray(input.observations) ||
+    input.observations.length > limit ||
+    !Array.isArray(input.seen) ||
+    input.seen.length > 1000 ||
+    !Array.isArray(input.sourceSequences) ||
+    input.sourceSequences.length > 1000
+  )
+    fail();
+  let previous = 0;
+  const identities = new Set();
+  for (const row of input.observations) {
+    const projected = observation(row);
+    if (
+      !projected ||
+      date(row.receivedAt) !== row.receivedAt ||
+      integer(row.sequence) === undefined ||
+      row.sequence <= previous ||
+      row.sequence > input.sequence ||
+      !equalFields(row, {
+        ...projected,
+        receivedAt: row.receivedAt,
+        sequence: row.sequence,
+      })
+    )
+      fail();
+    const key = observationKey(row);
+    if (identities.has(key)) fail();
+    identities.add(key);
+    previous = row.sequence;
+  }
+  const seen = new Set();
+  for (const key of input.seen) {
+    if (typeof key !== "string" || key.length > 800) fail();
+    let parts;
+    try {
+      parts = JSON.parse(key);
+    } catch {
+      fail();
+    }
+    if (
+      !Array.isArray(parts) ||
+      parts.length !== 3 ||
+      !COMPONENTS.includes(parts[0]) ||
+      (parts[1] !== null && identifier(parts[1]) !== parts[1]) ||
+      identifier(parts[2]) !== parts[2] ||
+      JSON.stringify(parts) !== key ||
+      seen.has(key)
+    )
+      fail();
+    seen.add(key);
+  }
+  if ([...identities].some((key) => !seen.has(key))) fail();
+  const sources = new Set();
+  for (const item of input.sourceSequences) {
+    if (
+      !exactKeys(item, ["sourceId", "sequence"]) ||
+      sourceIdentifier(item.sourceId) !== item.sourceId ||
+      integer(item.sequence) === undefined ||
+      sources.has(item.sourceId)
+    )
+      fail();
+    sources.add(item.sourceId);
+  }
+  return structuredClone(input);
+}
+
 export function validResourceCollection(items) {
   if (!Array.isArray(items)) return false;
   const ids = new Set();
@@ -299,6 +440,8 @@ export class FleetView {
     this.truncatedResources = false;
     this.sourceSequences = new Map();
     this.sourceGaps = 0;
+    this.history = { status: "memory_only", restartGap: false, pending: false };
+    this.onHistoryChange = undefined;
   }
 
   setResources(kind, items) {
@@ -327,57 +470,27 @@ export class FleetView {
   }
 
   recordCoverageLoss(source, status) {
-    this.coverageLosses++;
+    this.coverageLosses = bump(this.coverageLosses);
     this.setSource(source, status);
+    this.onHistoryChange?.();
   }
 
   observe(input) {
-    if (!input || typeof input !== "object") {
-      this.invalid++;
-      this.coverageLosses++;
+    const projected = observation(input);
+    if (!projected || this.sequence === Number.MAX_SAFE_INTEGER) {
+      this.invalid = bump(this.invalid);
+      this.coverageLosses = bump(this.coverageLosses);
+      this.onHistoryChange?.();
       return false;
     }
-    const source = text(input.source)?.toLowerCase();
-    const target = text(input.target)?.toLowerCase();
-    if (
-      !COMPONENTS.includes(source) ||
-      !COMPONENTS.includes(target) ||
-      !identifier(input.eventId) ||
-      !operations.has(input.operation) ||
-      !date(input.observedAt)
-    ) {
-      this.invalid++;
-      this.coverageLosses++;
-      return false;
-    }
-    const key = `${source}:${input.workerId ?? ""}:${input.eventId}`;
+    const key = observationKey(projected);
     if (this.seen.has(key)) return false;
     const output = {
-      source,
-      target,
-      operation: input.operation,
-      observedAt: date(input.observedAt),
+      ...projected,
       receivedAt: new Date(this.now()).toISOString(),
       sequence: ++this.sequence,
+      origin: "live",
     };
-    for (const key of traceFields) {
-      const validate = key === "sourceId" ? sourceIdentifier : identifier;
-      if (validate(input[key])) output[key] = input[key];
-    }
-    for (const key of ["generation", "bytes", "sourceSequence"])
-      if (integer(input[key]) !== undefined) output[key] = input[key];
-    if (
-      [
-        "nats",
-        "nats-jetstream",
-        "blazingmq",
-        "ssh",
-        "stdio",
-        "http",
-        "app-server",
-      ].includes(input.transport)
-    )
-      output.transport = input.transport;
     if (output.sourceSequence !== undefined) {
       const sourceKey = output.sourceId;
       const previous = this.sourceSequences.get(sourceKey);
@@ -386,21 +499,56 @@ export class FleetView {
         previous !== undefined &&
         output.sourceSequence !== previous + 1
       )
-        this.sourceGaps++;
+        this.sourceGaps = bump(this.sourceGaps);
       if (sourceKey) this.sourceSequences.set(sourceKey, output.sourceSequence);
       else output.continuity = "unknown";
-      if (this.sourceSequences.size > this.historyLimit * 4)
+      if (this.sourceSequences.size > Math.min(1000, this.historyLimit * 4))
         this.sourceSequences.delete(this.sourceSequences.keys().next().value);
     }
     this.seen.add(key);
-    if (this.seen.size > this.historyLimit * 4)
+    if (this.seen.size > Math.min(1000, this.historyLimit * 4))
       this.seen.delete(this.seen.values().next().value);
     this.observations.push(output);
     if (this.observations.length > this.historyLimit) {
       this.observations.shift();
-      this.dropped++;
+      this.dropped = bump(this.dropped);
     }
+    this.onHistoryChange?.();
     return true;
+  }
+
+  exportHistory() {
+    const retained = this.observations.slice(-250);
+    return validateObservationHistory({
+      ...Object.fromEntries(historyCounters.map((key) => [key, this[key]])),
+      dropped: Math.min(
+        Number.MAX_SAFE_INTEGER,
+        this.dropped + this.observations.length - retained.length,
+      ),
+      observations: retained.map(({ origin, ...item }) => item),
+      seen: [...this.seen],
+      sourceSequences: [...this.sourceSequences].map(
+        ([sourceId, sequence]) => ({ sourceId, sequence }),
+      ),
+    });
+  }
+
+  restoreHistory(input) {
+    if (this.sequence !== 0 || this.observations.length !== 0)
+      throw new Error("History restore must precede observation intake");
+    const history = validateObservationHistory(
+      input,
+      Math.min(250, this.historyLimit),
+    );
+    for (const key of historyCounters) this[key] = history[key];
+    this.observations = history.observations.map((item) => ({
+      ...item,
+      origin: "restored",
+    }));
+    this.seen = new Set(history.seen);
+    this.sourceSequences = new Map(
+      history.sourceSequences.map((item) => [item.sourceId, item.sequence]),
+    );
   }
 
   snapshot(after) {
@@ -503,6 +651,7 @@ export class FleetView {
       invalid: this.invalid,
       coverageLosses: this.coverageLosses,
       sourceGaps: this.sourceGaps,
+      history: { ...this.history },
       truncatedResources: this.truncatedResources,
       sources: this.sources,
       projects: this.projects

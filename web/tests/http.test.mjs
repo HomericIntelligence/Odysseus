@@ -1,6 +1,13 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -10,6 +17,7 @@ import assert from "node:assert/strict";
 import { createServer, get, request as httpRequest } from "node:http";
 import { createDashboardServer } from "../server/http.mjs";
 import { FleetView } from "../server/view.mjs";
+import { openObservationHistory } from "../server/observation-history.mjs";
 
 const fixtureCredential = randomBytes(24).toString("base64url");
 
@@ -1709,4 +1717,71 @@ test("actual import observations reach bounded local SSE history without leaking
     "synthetic-private-delivery",
   ])
     assert.equal(chunk.includes(secret), false);
+});
+
+test("HTTP adapter observations persist through the shared sanitized history boundary", async (t) => {
+  const parent = join(
+    await realpath(homedir()),
+    ".cache",
+    "odysseus-history-tests",
+  );
+  await mkdir(parent, { recursive: true, mode: 0o700 });
+  const directory = await mkdtemp(join(parent, "http-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const view = new FleetView({ historyLimit: 250 });
+  const { url, input, apiKey } = await researchImportFixture(t, { view });
+  const settings = {
+    view,
+    directory,
+    port: Number(new URL(url).port),
+    sourceRoot: fileURLToPath(new URL("../../", import.meta.url)),
+  };
+  const history = await openObservationHistory(settings);
+  t.after(() => history.close());
+  const response = await fetch(`${url}/api/research/imports`, {
+    method: "POST",
+    headers: { origin: url, "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  assert.equal(response.status, 201);
+  assert.equal(await history.close(), true);
+  const bytes = await readFile(
+    join(directory, `observations-${settings.port}.json`),
+    "utf8",
+  );
+  for (const forbidden of [
+    apiKey,
+    input.requestDigest,
+    "synthetic-private-description",
+    "synthetic-private-delivery",
+  ])
+    assert.equal(bytes.includes(forbidden), false);
+  const restored = new FleetView();
+  const restoredHistory = await openObservationHistory({
+    ...settings,
+    view: restored,
+  });
+  t.after(() => restoredHistory.close());
+  assert.deepEqual(
+    restored.snapshot().observations.map((item) => item.operation),
+    ["request", "response"],
+  );
+  assert.ok(
+    restored
+      .snapshot()
+      .observations.every(
+        (item) => item.origin === "restored" && item.transport === "http",
+      ),
+  );
+  assert.deepEqual(restored.snapshot().resources.sessions, []);
+  assert.deepEqual(restored.snapshot().sources, {});
+  const restoredServer = await fixture(t, { view: restored });
+  const snapshot = await (
+    await fetch(`${restoredServer.url}/api/snapshot`)
+  ).json();
+  assert.equal(snapshot.history.status, "restored");
+  const capabilities = await (
+    await fetch(`${restoredServer.url}/api/capabilities`)
+  ).json();
+  assert.equal(capabilities.sessionCommands.enabled, false);
 });
