@@ -1321,9 +1321,8 @@ run_doctor() {
 }
 
 process_is_gone() {
-    local process_id=$1 heartbeat_marker=${2:-$PROCESS_HEARTBEAT_MARKER}
+    local process_id=$1
     local attempt=0
-    local before_size after_size
     while [ "$attempt" -lt 40 ]; do
         attempt=$((attempt + 1))
         if ! kill -0 "$process_id" 2>/dev/null; then
@@ -1331,12 +1330,8 @@ process_is_gone() {
         fi
         sleep 0.05
     done
-    if [ -e "$heartbeat_marker" ]; then
-        before_size=$(wc -c < "$heartbeat_marker")
-        sleep 0.2
-        after_size=$(wc -c < "$heartbeat_marker")
-        [ "$before_size" -eq "$after_size" ] && return 0
-    fi
+    # A stalled heartbeat does not prove that this child has exited. Remain
+    # conservative for unreaped processes rather than accepting absent progress.
     return 1
 }
 
