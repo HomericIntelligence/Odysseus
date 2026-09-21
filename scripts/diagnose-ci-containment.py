@@ -7,12 +7,59 @@ This is diagnostic output, not a substitute for the behavioral test gates.
 import json
 import ctypes
 import fcntl
+import importlib.util
 import os
 from pathlib import Path
 import signal
 import stat
 import subprocess
 import sys
+
+
+def hook_runtime_probe() -> dict:
+    """Inspect the real sealed-interpreter route without executing hooks."""
+    helper = Path(__file__).resolve().parent / "install/dev/precommit_hooks.py"
+    specification = importlib.util.spec_from_file_location("ci_hook_probe", helper)
+    if specification is None or specification.loader is None:
+        return {"error": "helper loader unavailable"}
+    subject = importlib.util.module_from_spec(specification)
+    sys.modules[specification.name] = subject
+    bound_tools = []
+    report = {}
+    try:
+        specification.loader.exec_module(subject)
+        boundary = subject.ReadOnlyExecutionBoundary(
+            bound_tools, subject.OperationDeadline(15)
+        )
+        boundary.require()
+        source = subject._trusted_python_tool(bound_tools)
+        snapshot, _ = subject.execution_tool(
+            source, boundary.tree, "diagnostic-interpreter", bound_tools, boundary
+        )
+        report["source"] = source.path
+        for name, target in (
+            ("snapshot_stat", ["/usr/bin/stat", "--format=%F %a %s", snapshot.path]),
+            ("snapshot_version", [snapshot.path, "--version"]),
+        ):
+            command, executable = boundary.wrap(target, sealed_files=(snapshot,))
+            result = subprocess.run(
+                command, executable=executable,
+                pass_fds=(boundary.guard.descriptor, snapshot.descriptor),
+                stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                timeout=5, check=False,
+                env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
+            )
+            report[name] = {
+                "returncode": result.returncode,
+                "stdout": result.stdout[:1024], "stderr": result.stderr[:1024],
+            }
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        report["error"] = type(error).__name__
+    finally:
+        for tool in reversed(bound_tools):
+            tool.close()
+        sys.modules.pop(specification.name, None)
+    return report
 
 
 def main() -> None:
@@ -108,6 +155,7 @@ def main() -> None:
             report[name] = Path(name).read_text()[:8192].strip()
         except OSError as error:
             report[name] = {"errno": error.errno}
+    report["hook_runtime_probe"] = hook_runtime_probe()
     print(json.dumps(report, sort_keys=True))
 
 
