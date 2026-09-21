@@ -714,15 +714,16 @@ chmod +x "$INSTALL_ROOT/scripts/run-bounded.sh"
 info "C++ build stages use one private snapshot of every tracked input"
 cat > "$FAKE_BIN/pixi" <<'SH'
 #!/usr/bin/env bash
+fixture_workdir=$(pwd -P) || exit 1
 printf '%s\n' "$PWD :: $*" >> "${PIXI_LOG:?}"
-if [[ "$PWD" == */control/Agamemnon ]] \
+if [[ "$fixture_workdir" == */control/Agamemnon ]] \
     && [[ "$*" == 'run -- conan install '* ]] \
     && [ ! -e "${CPP_INPUT_REPLACED_MARKER:?}" ]; then
     : > "$CPP_INPUT_REPLACED_MARKER"
     mv "${CPP_SWAP_INPUT:?}" "$CPP_SWAP_INPUT.approved"
     printf '%s\n' 'hostile replacement' > "$CPP_SWAP_INPUT"
 fi
-if [[ "$PWD" == */control/Agamemnon ]] \
+if [[ "$fixture_workdir" == */control/Agamemnon ]] \
     && [[ "$*" == 'run -- cmake --preset release'* ]]; then
     case "${CPP_SWAP_EXPECTED_TYPE:?}" in
         regular)
@@ -818,7 +819,7 @@ CD_ENV="$TMP/cd-env.sh"
 cat > "$CD_ENV" <<'SH'
 if [ "${CPP_FAIL_STAGE:-}" = cd ]; then
     cd() {
-        case "$1" in
+        case "$(builtin cd "$1" && builtin pwd -P)" in
             */odysseus-cpp-build.*/sources/control/Agamemnon|\
             */odysseus-cpp-build.*/sources/control/Nestor|\
             */odysseus-cpp-build.*/sources/provisioning/Keystone|\
