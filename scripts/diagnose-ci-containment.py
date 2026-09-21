@@ -61,6 +61,29 @@ def main() -> None:
         }
     except (OSError, subprocess.TimeoutExpired) as error:
         report["namespace_probe"] = {"error": type(error).__name__}
+    # Compare the distribution's supported sandbox launcher with raw unshare.
+    # This executes only true, with a read-only filesystem and no host network.
+    try:
+        result = subprocess.run(
+            ["/usr/bin/bwrap", "--unshare-all", "--die-with-parent",
+             "--ro-bind", "/", "/", "--", "/usr/bin/true"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+            env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
+        )
+        report["bubblewrap_probe"] = {
+            "returncode": result.returncode,
+            "stderr": result.stderr[:1024],
+        }
+    except (OSError, subprocess.TimeoutExpired) as error:
+        report["bubblewrap_probe"] = {"error": type(error).__name__}
+    for name in ("/proc/self/attr/current", "/etc/apparmor.d/bwrap"):
+        try:
+            report[name] = Path(name).read_text()[:8192].strip()
+        except OSError as error:
+            report[name] = {"errno": error.errno}
     print(json.dumps(report, sort_keys=True))
 
 
