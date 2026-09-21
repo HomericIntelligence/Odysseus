@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fail-closed gate (#179): documented Grafana default creds must carry an
 adjacent rotation WARNING, and anonymous dashboard read must be explicitly
-marked e2e-only. Scope is `git ls-files` — THIS repo's tracked files only,
+marked e2e-only. Scope is the retained Git index — THIS repo's staged blobs only,
 never submodule content this repo cannot edit. `--self-test` runs unit checks.
 """
 
@@ -3447,9 +3447,8 @@ def _compatibility_self_test() -> int:
             )
         )
 
-    # A tracked deletion remains visible to plain `git ls-files` until it is
-    # staged. The worktree gate must scan the current filesystem instead of
-    # crashing while a legitimate rename or deletion is under review.
+    # An unstaged deletion must not hide unsafe bytes still in the index.
+    # Once the deletion is staged, the retained index no longer selects them.
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
         _self_test_git(d, "init", "-q", "--object-format=sha1")
@@ -3461,7 +3460,10 @@ def _compatibility_self_test() -> int:
             got = _run(root)
         except FileNotFoundError:
             got = 99
-        cases.append(("tracked_worktree_deletion_is_ignored", got == 0, got, 0))
+        cases.append(("unstaged_deletion_keeps_staged_policy_check", got == 1, got, 1))
+        _self_test_git(d, "add", "-u", "--", "deleted.md")
+        got = _run(root)
+        cases.append(("staged_deletion_removes_policy_input", got == 0, got, 0))
 
     # A tracked file replaced by a symlink is not a deletion. The gate must
     # reject the worktree type change instead of following or silently skipping
