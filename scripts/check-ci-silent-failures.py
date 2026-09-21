@@ -52,7 +52,7 @@ def main() -> None:
         "GIT_NO_REPLACE_OBJECTS": "1",
         "GIT_NO_LAZY_FETCH": "1",
         "ODYSSEUS_MANAGED_PRE_COMMIT": "1",
-        "ODYSSEUS_PRE_COMMIT_POLICY_HEX": payload.hex(),
+        "ODYSSEUS_PRE_COMMIT_POLICY_PATH": str(policy),
         "ODYSSEUS_PRE_COMMIT_POLICY_SHA256": hashlib.sha256(payload).hexdigest(),
         "ODYSSEUS_PYYAML_MANIFEST": "\n".join(manifest),
     }

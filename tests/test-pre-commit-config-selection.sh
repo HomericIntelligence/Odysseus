@@ -76,14 +76,7 @@ PY
     printf 'ERROR: could not attest the PyYAML dependency closure\n' >&2
     exit 1
 fi
-if ! TRUSTED_POLICY_HEX=$(
-    "$PRE_COMMIT_PYTHON" -I -c \
-        'import pathlib,sys; print(pathlib.Path(sys.argv[1]).read_bytes().hex())' \
-        "$ROOT/scripts/check_silent_failures.py"
-); then
-    printf 'ERROR: could not encode the trusted silent-failure policy\n' >&2
-    exit 1
-fi
+TRUSTED_POLICY_PATH="$ROOT/scripts/check_silent_failures.py"
 if ! TRUSTED_POLICY_SHA256=$(shasum -a 256 \
     "$ROOT/scripts/check_silent_failures.py"); then
     printf 'ERROR: could not hash the trusted silent-failure policy\n' >&2
@@ -376,7 +369,7 @@ run_silent_failure_hook_with_environment() {
         ODYSSEUS_PRE_COMMIT_PROVIDER_SHA256="$PRE_COMMIT_PROVIDER_SHA256"
         ODYSSEUS_PRE_COMMIT_GIT="$REAL_GIT"
         ODYSSEUS_PRE_COMMIT_GIT_SHA256="$REAL_GIT_SHA256"
-        ODYSSEUS_PRE_COMMIT_POLICY_HEX="$TRUSTED_POLICY_HEX"
+        ODYSSEUS_PRE_COMMIT_POLICY_PATH="$TRUSTED_POLICY_PATH"
         ODYSSEUS_PRE_COMMIT_POLICY_SHA256="$TRUSTED_POLICY_SHA256"
         ODYSSEUS_PYYAML_MANIFEST="$PYYAML_MANIFEST"
         PRE_COMMIT_HOME="$TMP_ROOT/pre-commit-home"
@@ -445,7 +438,7 @@ run_root_exact_index_policy() {
             ODYSSEUS_PRE_COMMIT_PROVIDER_SHA256="$PRE_COMMIT_PROVIDER_SHA256" \
             ODYSSEUS_PRE_COMMIT_GIT="$REAL_GIT" \
             ODYSSEUS_PRE_COMMIT_GIT_SHA256="$REAL_GIT_SHA256" \
-            ODYSSEUS_PRE_COMMIT_POLICY_HEX="$TRUSTED_POLICY_HEX" \
+            ODYSSEUS_PRE_COMMIT_POLICY_PATH="$TRUSTED_POLICY_PATH" \
             ODYSSEUS_PRE_COMMIT_POLICY_SHA256="$TRUSTED_POLICY_SHA256" \
             ODYSSEUS_PYYAML_MANIFEST="$PYYAML_MANIFEST" \
             TMPDIR="$TMP_ROOT/tmp" \
@@ -583,7 +576,7 @@ if (
         ODYSSEUS_PRE_COMMIT_PROVIDER_SHA256="$PRE_COMMIT_PROVIDER_SHA256" \
         ODYSSEUS_PRE_COMMIT_GIT="$REAL_GIT" \
         ODYSSEUS_PRE_COMMIT_GIT_SHA256="$REAL_GIT_SHA256" \
-        ODYSSEUS_PRE_COMMIT_POLICY_HEX="$TRUSTED_POLICY_HEX" \
+        ODYSSEUS_PRE_COMMIT_POLICY_PATH="$TRUSTED_POLICY_PATH" \
         ODYSSEUS_PRE_COMMIT_POLICY_SHA256="$TRUSTED_POLICY_SHA256" \
         ODYSSEUS_PYYAML_MANIFEST="$PYYAML_MANIFEST" \
         TMPDIR="$TMP_ROOT/tmp" \

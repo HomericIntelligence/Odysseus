@@ -731,12 +731,23 @@ def _verify_managed_runtime() -> list[BoundFile]:
     git_path = _required_environment("ODYSSEUS_PRE_COMMIT_GIT")
     git_digest = _expected_digest("ODYSSEUS_PRE_COMMIT_GIT_SHA256")
     policy_digest = _expected_digest("ODYSSEUS_PRE_COMMIT_POLICY_SHA256")
-    policy_hex = _required_environment("ODYSSEUS_PRE_COMMIT_POLICY_HEX")
-    try:
-        policy_bytes = bytes.fromhex(policy_hex)
-    except ValueError as error:
-        raise PolicyError("managed policy payload is not hexadecimal") from error
-    if hashlib.sha256(policy_bytes).hexdigest() != policy_digest:
+    policy_path = os.environ.get("ODYSSEUS_PRE_COMMIT_POLICY_PATH")
+    if policy_path:
+        if os.environ.get("ODYSSEUS_PRE_COMMIT_POLICY_HEX") or not os.path.isabs(policy_path):
+            raise PolicyError("managed policy transport is ambiguous or relative")
+        policy_file = BoundFile.open(policy_path)
+        try:
+            actual_policy_digest = policy_file.digest()
+        finally:
+            policy_file.close()
+    else:
+        policy_hex = _required_environment("ODYSSEUS_PRE_COMMIT_POLICY_HEX")
+        try:
+            policy_bytes = bytes.fromhex(policy_hex)
+        except ValueError as error:
+            raise PolicyError("managed policy payload is not hexadecimal") from error
+        actual_policy_digest = hashlib.sha256(policy_bytes).hexdigest()
+    if actual_policy_digest != policy_digest:
         raise PolicyError("managed policy payload provenance changed")
     if not all(
         os.path.isabs(path) for path in (provider_path, interpreter_path, git_path)

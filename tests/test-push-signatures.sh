@@ -4682,12 +4682,11 @@ def generated_install_python_behavior(subject):
         print("metacharacter path was not encoded safely: {}".format(error))
         return False
     lines = result.decode("utf-8").splitlines()
-    if len(lines) != 26:
-        print("canonical generated hook has the wrong line count")
-        return False
     exact = subject._assignment(lines[6], "PRE_COMMIT_SOURCE") == selected
     candidate_absent = b"/untrusted" not in result and b"touch${IFS}" not in result
-    stable = subject.generated(result, "pre-push", runtime)
+    stable = subject.generated(result, "pre-push", runtime) and not subject.generated(
+        result + b"printf untrusted-trailer\\n\n", "pre-push", runtime
+    )
     if not exact or not candidate_absent or not stable:
         print(
             "generated runtime was not replaced exactly: "

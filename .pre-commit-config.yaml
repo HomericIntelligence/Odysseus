@@ -22,7 +22,7 @@ repos:
           /bin/sh -c 'case "${ODYSSEUS_TRUSTED_POLICY_ROOT-}" in
           "") test "${ODYSSEUS_MANAGED_PRE_COMMIT-}" = 1 || exit 78;
           exec "${ODYSSEUS_PRE_COMMIT_INTERPRETER:?}" -I -S -c
-          '"'"'import hashlib,os; source=bytes.fromhex(os.environ["ODYSSEUS_PRE_COMMIT_POLICY_HEX"]); expected=os.environ["ODYSSEUS_PRE_COMMIT_POLICY_SHA256"]; hashlib.sha256(source).hexdigest()==expected or (_ for _ in ()).throw(SystemExit(78)); exec(compile(source,"<odysseus-trusted-policy>","exec"),{"__name__":"__main__","__file__":"<odysseus-trusted-policy>"})'"'"'
+          '"'"'import hashlib,os,stat; path=os.environ["ODYSSEUS_PRE_COMMIT_POLICY_PATH"]; os.path.isabs(path) and not os.environ.get("ODYSSEUS_PRE_COMMIT_POLICY_HEX") or (_ for _ in ()).throw(SystemExit(78)); fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK); stat.S_ISREG(os.fstat(fd).st_mode) or (_ for _ in ()).throw(SystemExit(78)); stream=os.fdopen(fd,"rb"); source=stream.read(64*1024*1024+1); stream.close(); len(source)<=64*1024*1024 or (_ for _ in ()).throw(SystemExit(78)); expected=os.environ["ODYSSEUS_PRE_COMMIT_POLICY_SHA256"]; hashlib.sha256(source).hexdigest()==expected or (_ for _ in ()).throw(SystemExit(78)); exec(compile(source,"<odysseus-trusted-policy>","exec"),{"__name__":"__main__","__file__":"<odysseus-trusted-policy>"})'"'"'
           "$@" ;;
           /run/trusted-policy) exec /usr/local/bin/python3 -I -S
           /run/trusted-policy/scripts/check_silent_failures.py "$@" ;;

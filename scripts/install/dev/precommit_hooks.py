@@ -510,6 +510,16 @@ boundary_fd, _boundary_data = bind(
     boundary_path, boundary_digest, system=True
 )
 config_data = payload(config_hex, config_digest, "configuration")
+if policy_hex == "-":
+    # Keep the existing runtime payload bound without putting the payload in
+    # one execve argument (Linux limits each argument independently).
+    policy_stream = sys.stdin.buffer.read(2 * 64 * 1024 * 1024 + 1)
+    if len(policy_stream) > 2 * 64 * 1024 * 1024:
+        abort("policy transport exceeds the runtime payload bound")
+    try:
+        policy_hex = policy_stream.decode("ascii").strip()
+    except UnicodeError:
+        abort("policy transport is not ASCII")
 policy_data = payload(policy_hex, policy_digest, "policy")
 try:
     original_pyyaml_manifest = bytes.fromhex(pyyaml_manifest_hex).decode(
@@ -526,6 +536,7 @@ except (ValueError, UnicodeError, zlib.error):
 source_fd = seal(source_data, True, "provider")
 git_fd = seal(git_data, True, "Git provider")
 config_fd = seal(config_data, False, "configuration")
+policy_fd = seal(policy_data, False, "policy")
 close_owned(source_origin_fd)
 close_owned(git_origin_fd)
 closure_fds = []
@@ -625,15 +636,18 @@ try:
     os.set_inheritable(source_fd, True)
     os.set_inheritable(git_fd, True)
     os.set_inheritable(config_fd, True)
+    os.set_inheritable(policy_fd, True)
     os.set_inheritable(interpreter_fd, True)
     os.lseek(source_fd, 0, os.SEEK_SET)
     os.lseek(git_fd, 0, os.SEEK_SET)
     os.lseek(config_fd, 0, os.SEEK_SET)
+    os.lseek(policy_fd, 0, os.SEEK_SET)
     os.lseek(interpreter_fd, 0, os.SEEK_SET)
     trusted_interpreter = "/odysseus/runtime/python"
     trusted_provider = "/odysseus/runtime/pre-commit"
     trusted_git = "/odysseus/runtime/git"
     trusted_config = "/odysseus/runtime/config.yaml"
+    trusted_policy = "/odysseus/runtime/policy.py"
     environment = {
             "GIT_CONFIG_GLOBAL": "/dev/null",
             "GIT_CONFIG_NOSYSTEM": "1",
@@ -649,7 +663,7 @@ try:
             "ODYSSEUS_PRE_COMMIT_PROVIDER_SHA256": source_digest,
             "ODYSSEUS_PRE_COMMIT_GIT": trusted_git,
             "ODYSSEUS_PRE_COMMIT_GIT_SHA256": git_digest,
-            "ODYSSEUS_PRE_COMMIT_POLICY_HEX": policy_hex,
+            "ODYSSEUS_PRE_COMMIT_POLICY_PATH": trusted_policy,
             "ODYSSEUS_PRE_COMMIT_POLICY_SHA256": policy_digest,
             "ODYSSEUS_PYYAML_MANIFEST": pyyaml_manifest,
             "ODYSSEUS_EXECUTABLE_ORIGIN": trusted_provider,
@@ -791,6 +805,11 @@ try:
         "--ro-bind-data",
         str(config_fd),
         trusted_config,
+        "--perms",
+        "0444",
+        "--ro-bind-data",
+        str(policy_fd),
+        trusted_policy,
     ] + system_aliases + mount_arguments + [
         "--chdir",
         repository,
@@ -801,6 +820,7 @@ except BaseException:
     close_owned(source_fd)
     close_owned(git_fd)
     close_owned(config_fd)
+    close_owned(policy_fd)
     close_owned(interpreter_fd)
     close_owned(boundary_fd)
     for descriptor in route_descriptors:
@@ -823,8 +843,9 @@ MANAGED_RUNTIME_EXEC = (
     + ' "$HOOK_TYPE" "$0" "$TRUSTED_REPOSITORY"'
     + ' "$TRUSTED_GIT_DIRECTORY" "$TRUSTED_GIT_COMMON" "$TRUSTED_HOME"'
     + ' "$TRUSTED_CONFIG_HEX" "$TRUSTED_CONFIG_SHA256"'
-    + ' "$TRUSTED_POLICY_HEX" "$TRUSTED_POLICY_SHA256"'
+    + ' - "$TRUSTED_POLICY_SHA256"'
     + ' "$TRUSTED_PYYAML_MANIFEST_HEX" "$TRUSTED_CLOSURE_MANIFEST_HEX" "$@"'
+    + ' <<ODYSSEUS_POLICY_PAYLOAD\n$TRUSTED_POLICY_HEX\nODYSSEUS_POLICY_PAYLOAD'
 )
 READ_FLAGS = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
 DIR_FLAGS = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_DIRECTORY
@@ -3118,10 +3139,10 @@ def generated(data, hook_type, runtime=None):
     except UnicodeDecodeError:
         return False
     if (
-        len(lines) != 26
+        len(lines) != 25 + len(MANAGED_RUNTIME_EXEC.splitlines())
         or lines[:5] != MANAGED_HEADER
         or lines[5] != MANAGED_RUNTIME_MARKER
-        or lines[25] != MANAGED_RUNTIME_EXEC
+        or lines[25:] != tuple(MANAGED_RUNTIME_EXEC.splitlines())
     ):
         return False
     actual = {
