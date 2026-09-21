@@ -225,7 +225,16 @@ jobs:
       - name: Diagnose system interpreter containment capabilities
         run: python3 -I scripts/diagnose-ci-containment.py
 
+      - name: Verify candidate permission boundary with privileged fixture setup
+        run: |
+          set -euo pipefail
+          cd e2e/tests/unit
+          sudo -n env -i PATH=/usr/bin:/bin DRY_RUN=1 NO_GITHUB=1 ISSUE_NUMBER=0 \
+            /usr/bin/python3 -m unittest \
+            test_legacy_runtime.RuntimeStoreTest.test_candidate_uid_boundary_is_durable_and_denies_state_access -v
+
       - name: Run claude-myrmidon-multi harness unit tests
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           # Salvaged from #369 and ported pytest -> stdlib unittest (the runner
@@ -233,8 +242,34 @@ jobs:
           # via importlib relative to its own __file__, so cwd only affects
           # module discovery. Run from the test dir like the tools suite above.
           # DRY_RUN/NO_GITHUB keep the module import side-effect-free.
-          cd e2e/tests/unit && DRY_RUN=1 NO_GITHUB=1 ISSUE_NUMBER=0 \
-            python3 -m unittest test_claude_myrmidon_multi -v
+          cd e2e/tests/unit
+          DRY_RUN=1 NO_GITHUB=1 ISSUE_NUMBER=0 python3 - <<'PY'
+          import unittest
+
+          privileged = (
+              "test_legacy_runtime.RuntimeStoreTest."
+              "test_candidate_uid_boundary_is_durable_and_denies_state_access"
+          )
+
+          def leaves(suite):
+              for test in suite:
+                  if isinstance(test, unittest.TestSuite):
+                      yield from leaves(test)
+                  else:
+                      yield test
+
+          tests = list(leaves(unittest.defaultTestLoader.loadTestsFromName(
+              "test_claude_myrmidon_multi"
+          )))
+          if sum(test.id() == privileged for test in tests) != 1:
+              raise SystemExit("privileged fixture test must occur exactly once")
+          ordinary = [test for test in tests if test.id() != privileged]
+          if not ordinary:
+              raise SystemExit("unprivileged test inventory is empty")
+          print(f"Running {len(ordinary)} unprivileged tests; 1 test belongs to the privileged step")
+          result = unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(ordinary))
+          raise SystemExit(not result.wasSuccessful())
+          PY
 
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
