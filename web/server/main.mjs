@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { FleetView } from "./view.mjs";
 import { createDashboardServer } from "./http.mjs";
 import { createCommandService } from "./commands.mjs";
+import { createSessionOutputService } from "./session-output.mjs";
 import { pollProjects } from "./projects.mjs";
 import {
   attachObservationInput,
@@ -27,6 +28,12 @@ const commands = createCommandService(
 const server = createDashboardServer({
   view,
   commands,
+  sessionOutput: createSessionOutputService({
+    url: process.env.ODYSSEUS_AGAMEMNON_URL,
+    apiKey: process.env.AGAMEMNON_API_KEY,
+    executionHost: process.env.ODYSSEUS_EXECUTION_HOST,
+    bundles: JSON.parse(process.env.ODYSSEUS_SESSION_OUTPUT_BUNDLES ?? "[]"),
+  }),
   research:
     process.env.ODYSSEUS_ENABLE_RESEARCH_INTAKE === "1"
       ? {

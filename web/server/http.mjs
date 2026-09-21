@@ -39,6 +39,7 @@ export function createDashboardServer({
   research,
   researchImport,
   issueImport,
+  sessionOutput,
 } = {}) {
   if (!view) throw new Error("View is required");
   const intakes = research ? createIntakeService(research) : null;
@@ -283,6 +284,37 @@ export function createDashboardServer({
             workerId: url.searchParams.get("workerId"),
             generation: Number(url.searchParams.get("generation")),
           });
+          return json(response, result.code, result.body);
+        } catch {
+          return json(response, 503, { error: "unavailable" });
+        } finally {
+          pendingReads--;
+        }
+      }
+      if (request.method === "GET" && url.pathname === "/api/session-output") {
+        const fields = ["sessionId", "workerId", "generation"];
+        const input = {
+          sessionId: url.searchParams.get("sessionId"),
+          workerId: url.searchParams.get("workerId"),
+          generation: Number(url.searchParams.get("generation")),
+        };
+        if (
+          [...url.searchParams.keys()].length !== fields.length ||
+          fields.some((key) => url.searchParams.getAll(key).length !== 1) ||
+          !/^[A-Za-z0-9_-]{1,128}$/.test(input.sessionId ?? "") ||
+          !/^[A-Za-z0-9_-]{1,128}$/.test(input.workerId ?? "") ||
+          !/^[1-9][0-9]*$/.test(url.searchParams.get("generation") ?? "") ||
+          !Number.isSafeInteger(input.generation) ||
+          request.headers["transfer-encoding"] ||
+          Number(request.headers["content-length"] ?? 0) !== 0
+        )
+          return json(response, 400, { error: "invalid_request" });
+        if (!sessionOutput)
+          return json(response, 503, { error: "not_configured" });
+        if (pendingReads >= 4) return json(response, 429, { error: "busy" });
+        pendingReads++;
+        try {
+          const result = await sessionOutput.read(input);
           return json(response, result.code, result.body);
         } catch {
           return json(response, 503, { error: "unavailable" });

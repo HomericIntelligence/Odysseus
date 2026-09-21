@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
@@ -12,6 +12,78 @@ import { createDashboardServer } from "../server/http.mjs";
 import { FleetView } from "../server/view.mjs";
 
 const fixtureCredential = randomBytes(24).toString("base64url");
+
+test("session output is read on demand without commands and never enters snapshots", async (t) => {
+  const calls = [];
+  const retained = {
+    sessionId: "session-one",
+    workerId: "worker-one",
+    generation: 2,
+    items: [{ output: "Private synthetic command output" }],
+  };
+  const { url } = await fixture(t, {
+    sessionOutput: {
+      read: async (scope) => {
+        calls.push(scope);
+        return { code: 200, body: retained };
+      },
+    },
+  });
+  const response = await fetch(
+    `${url}/api/session-output?sessionId=session-one&workerId=worker-one&generation=2`,
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), retained);
+  assert.deepEqual(calls, [
+    { sessionId: "session-one", workerId: "worker-one", generation: 2 },
+  ]);
+  const snapshot = await (await fetch(`${url}/api/snapshot`)).text();
+  assert.equal(snapshot.includes("Private synthetic command output"), false);
+});
+
+test("session output rejects invalid selectors and foreign origin before reading", async (t) => {
+  const calls = [];
+  const { url } = await fixture(t, {
+    sessionOutput: {
+      read: async (scope) => {
+        calls.push(scope);
+        return { code: 200, body: {} };
+      },
+    },
+  });
+  const scope = "sessionId=session-one&workerId=worker-one&generation=2";
+  for (const query of [
+    "",
+    scope + "&path=/private/file",
+    scope + "&sessionId=other",
+    scope.replace("generation=2", "generation=2e0"),
+    scope.replace("generation=2", "generation=0"),
+    scope.replace("session-one", "%2Fprivate%2Ffile"),
+  ]) {
+    const response = await fetch(`${url}/api/session-output?${query}`);
+    assert.equal(response.status, 400, query);
+  }
+  for (const headers of [
+    { origin: "https://foreign.example" },
+    { "sec-fetch-site": "cross-site" },
+  ]) {
+    const response = await fetch(`${url}/api/session-output?${scope}`, {
+      headers,
+    });
+    assert.equal(response.status, 403);
+  }
+  assert.deepEqual(calls, []);
+});
+
+test("session output reports disabled configuration instead of empty logs", async (t) => {
+  const { url } = await fixture(t);
+  const response = await fetch(
+    `${url}/api/session-output?sessionId=session-one&workerId=worker-one&generation=2`,
+  );
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: "not_configured" });
+});
 
 test("local dashboard opens without a token or session cookie", async (t) => {
   const { url, view } = await fixture(t);
@@ -1256,6 +1328,92 @@ test("main serves loopback with no key and no writable UI-token state", async (t
   );
   assert.equal(await readFile(join(main.directory, ".local"), "utf8"), marker);
   assert.equal(main.stdout.includes("Local sign-in token"), false);
+});
+
+test("main reads an explicitly registered output bundle with commands disabled", async (t) => {
+  const cache = join(homedir(), ".cache");
+  await mkdir(cache, { recursive: true, mode: 0o700 });
+  const directory = await mkdtemp(join(cache, "odysseus-output-main-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const identity = {
+    workerId: "fixture-worker",
+    generation: 1,
+    allocationId: "fixture-allocation",
+    sessionId: "fixture-session",
+    executionId: "fixture-execution",
+    taskId: "fixture-task",
+    agentId: "fixture-agent",
+    providerThreadId: "fixture-thread",
+  };
+  const bundle = {
+    schema: "hi/fleet/session-output/v1",
+    identity,
+    provider: { name: "codex", version: "0.153.4" },
+    capture: {
+      profile: "completed_command_items",
+      complete: false,
+      observedCompletedItems: 0,
+      retainedItems: 0,
+      omittedItems: 0,
+      retentionLimited: false,
+    },
+    items: [],
+  };
+  const bytes = Buffer.from(JSON.stringify(bundle));
+  const path = join(directory, "fixture.json");
+  await writeFile(path, bytes, { flag: "wx", mode: 0o600 });
+  const receiptDigest = createHash("sha256").update(bytes).digest("hex");
+  const owner = {
+    ...identity,
+    id: identity.sessionId,
+    schema: "hi/fleet/v1",
+    kind: "sessions",
+    host: "fixture-vm",
+    workspace: "/work/fixture",
+    status: "completed",
+    claimStatus: "released",
+  };
+  const controller = createServer((request, response) => {
+    assert.equal(request.method, "GET");
+    assert.equal(request.headers.authorization, `Bearer ${fixtureCredential}`);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify(
+        request.url === `/v1/fleet/sessions/${identity.sessionId}`
+          ? owner
+          : request.url === "/v1/fleet/sessions"
+            ? { items: [owner], total: 1 }
+            : { items: [], total: 0 },
+      ),
+    );
+  });
+  await new Promise((done) => controller.listen(0, "127.0.0.1", done));
+  t.after(async () => {
+    controller.closeAllConnections();
+    await new Promise((done) => controller.close(done));
+  });
+  const main = await mainProcess(t, {
+    ODYSSEUS_AGAMEMNON_URL: `http://127.0.0.1:${controller.address().port}`,
+    AGAMEMNON_API_KEY: fixtureCredential,
+    ODYSSEUS_SESSION_OUTPUT_BUNDLES: JSON.stringify([
+      { path, receiptDigest, identity },
+    ]),
+  });
+  assert.equal(main.outcome.kind, "listening");
+  const response = await fetch(
+    `${main.url}/api/session-output?sessionId=fixture-session&workerId=fixture-worker&generation=1`,
+  );
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.ownership, "historical");
+  assert.equal(result.receiptDigest, receiptDigest);
+  assert.deepEqual(result.bundle, bundle);
+  assert.equal(
+    (await (await fetch(`${main.url}/api/capabilities`)).json()).sessionCommands
+      .enabled,
+    false,
+  );
+  assert.equal(main.stdout.includes(path), false);
 });
 
 test("main ignores legacy UI settings and preserves an existing token file", async (t) => {

@@ -136,6 +136,14 @@ Agamemnon admission, and private worker attachment checks remain required.
 The browser receives no SSH keys, Teleport certificates, OpenBao tokens, or
 direct worker route.
 
+The first retained-output slice uses Hephaestus's bounded completed-command
+export and Odysseus's explicit private bundle registration. Show actual provider
+output, exit codes, collector truncation and omission counts in the selected
+session. Keep this collected snapshot separate from live activity observations.
+Unknown provider completeness must remain visible. A real first-agent run must
+produce and collect its own export receipt; synthetic contract tests are not run
+evidence. This slice does not supply automatic VM collection or live streaming.
+
 Provide xterm.js diagnostic terminal attachment and retained output with reconnect
 cursors through the backend. Codex app-server messages remain authoritative for
 conversation state, approvals, and control. A tmux session, when supported, is a

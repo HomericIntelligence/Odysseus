@@ -984,3 +984,17 @@ tbody tr:hover {
 .research-status a {
   color: #b9df9e;
 }
+/* Retained output is private, plain text with a bounded scroll area. */
+.session-output {
+  margin-block: 1.5rem;
+}
+.session-output details {
+  margin-block: 0.8rem;
+  overflow-wrap: anywhere;
+}
+.command-output pre {
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
