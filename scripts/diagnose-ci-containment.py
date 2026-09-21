@@ -79,7 +79,11 @@ def main() -> None:
         }
     except (OSError, subprocess.TimeoutExpired) as error:
         report["bubblewrap_probe"] = {"error": type(error).__name__}
-    for name in ("/proc/self/attr/current", "/etc/apparmor.d/bwrap"):
+    for name in (
+        "/proc/self/attr/current",
+        "/etc/apparmor.d/bwrap",
+        "/etc/apparmor.d/bwrap-userns-restrict",
+    ):
         try:
             report[name] = Path(name).read_text()[:8192].strip()
         except OSError as error:

@@ -331,7 +331,16 @@ jobs:
       - name: Install hook containment dependency
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends bubblewrap
+          sudo apt-get install --yes --no-install-recommends bubblewrap apparmor-profiles
+          # Use the distribution's purpose-built profile. It permits sandbox
+          # setup and restricts child capabilities; do not disable the global
+          # user-namespace restriction or load an unconfined interpreter profile.
+          sudo install -m 0644 \
+            /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
+            /etc/apparmor.d/bwrap-userns-restrict
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+          /usr/bin/bwrap --unshare-all --die-with-parent --cap-drop ALL \
+            --ro-bind / / -- /usr/bin/true
 
       - name: Diagnose Pixi interpreter containment capabilities
         run: pixi run python -I scripts/diagnose-ci-containment.py
