@@ -1492,8 +1492,12 @@ if (
     BOUND_RUNTIME_TOOLS_READY=1
     export BOUND_PYTHON_EXEC BOUND_CURL_EXEC BOUND_RUNTIME_TOOLS_READY
     export DOCTOR_UNRELATED_SECRET=must-not-cross
-    if ! _run_bound_curl_bounded 2 --version \
+    if _run_bound_curl_bounded 2 --version \
         >"$TMP/bound-curl-startup.out" 2>&1; then
+        :
+    else
+        startup_status=$?
+        printf 'bound curl startup failed with status %s\n' "$startup_status" >&2
         cat "$TMP/bound-curl-startup.out" >&2
         exit 31
     fi
