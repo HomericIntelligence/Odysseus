@@ -2845,17 +2845,27 @@ def _snapshot_provider_import_closure(
 
 
 def _trusted_python_tool(bound_tools):
-    path = os.path.realpath(sys.executable)
-    try:
-        tool = BoundTool.open(path)
-    except SetupError as error:
-        raise SetupError(
-            "the active Python interpreter cannot execute the sealed provider"
-        ) from error
-    if tool.trusted_system_route() and not tool.read_prefix().startswith(b"#!"):
-        bound_tools.append(tool)
-        return tool
-    tool.close()
+    # A user-owned Pixi interpreter can coordinate installation, but cannot be
+    # the trusted engine for a sealed provider. The fixed system route is an
+    # alternative only when it satisfies the identical root-ownership checks.
+    # Provider imports still come from their separately authenticated snapshots.
+    candidates = dict.fromkeys((
+        os.path.realpath(sys.executable),
+        os.path.realpath("/usr/bin/python3"),
+    ))
+    for path in candidates:
+        try:
+            tool = BoundTool.open(path)
+        except SetupError:
+            continue
+        try:
+            if tool.trusted_system_route() and not tool.read_prefix().startswith(b"#!"):
+                bound_tools.append(tool)
+                return tool
+        except BaseException:
+            tool.close()
+            raise
+        tool.close()
     raise SetupError("no trusted Python interpreter can execute the sealed provider")
 
 
