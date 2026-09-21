@@ -3550,6 +3550,15 @@ def configs_under(root, deadline=None):
                 if budget is not None:
                     budget.charge_directory_entry(ident(before), entry.name)
                 try:
+                    if (
+                        entry.name == ".pre-commit-config.yaml"
+                        and not entry.is_file(follow_symlinks=False)
+                    ):
+                        raise SetupError(
+                            "configuration is not a direct regular file: {}".format(
+                                entry.path
+                            )
+                        )
                     if entry.is_symlink():
                         continue
                     if entry.is_dir(follow_symlinks=False):
