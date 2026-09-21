@@ -183,7 +183,7 @@ if child == 0:
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 signal.signal(signal.SIGHUP, signal.SIG_IGN)
 identity_path.write_text(
-    f"{os.getpid()} {identity(os.getpid())} {child} {identity(child)}",
+    f"{os.getpid()} {identity(os.getpid())} {child} {identity(child)}\n",
     encoding="ascii",
 )
 for descriptor in (1, 2):
