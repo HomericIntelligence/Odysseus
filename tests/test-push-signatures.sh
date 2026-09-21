@@ -1203,13 +1203,15 @@ run_helper "$FIFO_REPO" "$PRECOMMIT_FIXTURE" check 2 "$TMP/fifo.out"
 fifo_status=$?
 
 HUNG_PRECOMMIT="$INSTALL_BIN/pre-commit-hung"
-cat > "$HUNG_PRECOMMIT" <<'SH'
-#!/bin/bash
-trap '' TERM
-while :; do
-    sleep 1
-done
-SH
+printf '#!%s\n' "$PRECOMMIT_PROVIDER_PYTHON" > "$HUNG_PRECOMMIT"
+cat >> "$HUNG_PRECOMMIT" <<'PY'
+import signal
+import time
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+while True:
+    time.sleep(1)
+PY
 chmod +x "$HUNG_PRECOMMIT"
 HUNG_REPO="$TMP/hung-child"
 make_repo "$HUNG_REPO"
@@ -1228,7 +1230,7 @@ command = [
     "--pre-commit", pre_commit,
     "--git", git,
     "--mode", "check",
-    "--timeout", "0.2",
+    "--timeout", "2",
 ]
 try:
     result = subprocess.run(
@@ -2276,9 +2278,8 @@ def terminal_cancellation_behavior(helper, base, git, signal_name):
     write_file(root_config, b"repos: []\n")
     os.mkdir(child)
     write_file(child_config, b"repos: []\n")
-    pre_commit = os.path.join(root, "terminal-pre-commit")
+    pre_commit = os.path.join(base, "install-bin", "pre-commit-fixture")
     git_tool = os.path.join(root, "terminal-git")
-    write_file(pre_commit, b"#!/bin/sh\nexit 0\n", 0o755)
     write_file(git_tool, b"#!/bin/sh\nexit 0\n", 0o755)
 
     class FakeRepo:
