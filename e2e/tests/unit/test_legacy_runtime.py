@@ -968,9 +968,17 @@ class RuntimeStoreTest(unittest.TestCase):
         self,
     ) -> None:
         store = self._store()
-        baseline = set(legacy_runtime._descriptor_snapshot())
+
+        def identities() -> dict[int, tuple[int, int, int]]:
+            return {
+                descriptor: (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode))
+                for descriptor, info in legacy_runtime._descriptor_snapshot().items()
+            }
+
+        baseline = identities()
         for exception in (KeyboardInterrupt(), SystemExit(74)):
             with self.subTest(exception=type(exception).__name__):
+                before = identities()
                 observed: BaseException | None = None
                 with patch.object(
                     legacy_runtime,
@@ -982,7 +990,11 @@ class RuntimeStoreTest(unittest.TestCase):
                     except BaseException as error:
                         observed = error
                 self.assertIsInstance(observed, type(exception))
-                self.assertEqual(set(legacy_runtime._descriptor_snapshot()), baseline)
+                after = identities()
+                self.assertEqual(
+                    set(after), set(baseline),
+                    f"descriptor identities: baseline={baseline}, before={before}, after={after}",
+                )
                 self.assertIsNone(store.load_task("not-persisted"))
 
     def test_baseexception_during_store_directory_binding_closes_descriptors(
