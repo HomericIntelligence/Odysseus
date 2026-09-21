@@ -1463,6 +1463,8 @@ else
     fi
     printf 'curl boundary diagnostics: path=%s environment=%s descriptors=%s\n' \
         "$curl_path_valid" "$curl_environment_clean" "$curl_descriptors_clean" >&2
+    printf 'curl fixture descriptor observations: %s\n' \
+        "$(tr '\n' ';' < "$CURL_FD_LOG")" >&2
     fail "curl transport violated binding, -q, environment, or FD policy (status=$DOCTOR_STATUS replacement=$curl_replacement_observed attack=$curl_replacement_executed q=$curl_health_uses_q log=$(tr '\n' ';' < "$CURL_LOG"))"
 fi
 unset CURL_BIND_MODE curl_replacement_observed curl_replacement_executed \
