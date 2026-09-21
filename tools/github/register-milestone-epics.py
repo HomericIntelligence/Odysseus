@@ -1766,14 +1766,50 @@ def _sealed_executable(path: Path, expected: tuple[int, ...], label: str):
         os.close(source)
 
 
+def _pidfd_open(process_id: int, flags: int = 0) -> int:
+    """Use native pidfds even when Python was built against older headers."""
+    native = getattr(os, "pidfd_open", None)
+    if callable(native):
+        return native(process_id, flags)
+    library = ctypes.CDLL(None, use_errno=True)
+    function = getattr(library, "pidfd_open", None)
+    if function is None:
+        raise NotImplementedError("Linux pidfd_open is unavailable")
+    function.argtypes = [ctypes.c_int, ctypes.c_uint]
+    function.restype = ctypes.c_int
+    result = function(process_id, flags)
+    if result < 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number))
+    return result
+
+
+def _pidfd_send_signal(descriptor: int, signal_number: int) -> None:
+    """Signal only the retained pidfd; never fall back to a numeric PID."""
+    native = getattr(signal, "pidfd_send_signal", None)
+    if callable(native):
+        native(descriptor, signal_number, None, 0)
+        return
+    library = ctypes.CDLL(None, use_errno=True)
+    function = getattr(library, "pidfd_send_signal", None)
+    if function is None:
+        raise NotImplementedError("Linux pidfd_send_signal is unavailable")
+    function.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
+    function.restype = ctypes.c_int
+    if function(descriptor, signal_number, None, 0) < 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number))
+
+
 def _enable_linux_subreaper() -> None:
     """Enable and verify the Linux orphan-adoption boundary."""
     if not sys.platform.startswith("linux"):
         raise NotImplementedError("Linux descendant containment is unavailable")
-    if not callable(getattr(os, "pidfd_open", None)) or not callable(
-        getattr(signal, "pidfd_send_signal", None)
-    ):
-        raise NotImplementedError("Linux pidfd containment is unavailable")
+    descriptor = _pidfd_open(os.getpid())
+    try:
+        _pidfd_send_signal(descriptor, 0)
+    finally:
+        os.close(descriptor)
     library = ctypes.CDLL(None, use_errno=True)
     prctl = getattr(library, "prctl", None)
     if prctl is None:
@@ -1872,7 +1908,7 @@ class _LinuxProcessScope:
             return False
         if previous is not None:
             os.close(previous[1])
-        descriptor = os.pidfd_open(process_id, 0)
+        descriptor = _pidfd_open(process_id, 0)
         rebound = _linux_process_identity(process_id)
         if rebound != identity:
             os.close(descriptor)
@@ -1944,7 +1980,7 @@ class _LinuxProcessScope:
     @staticmethod
     def _send(descriptor: int, signal_number: int) -> None:
         try:
-            signal.pidfd_send_signal(descriptor, signal_number, None, 0)
+            _pidfd_send_signal(descriptor, signal_number)
         except ProcessLookupError:
             pass
 

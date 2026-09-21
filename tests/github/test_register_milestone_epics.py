@@ -8,6 +8,7 @@ uses the plain-script entry point so the checks work without pytest.
 from __future__ import annotations
 
 import hashlib
+import errno
 import importlib.util
 import io
 import json
@@ -25,6 +26,7 @@ import unittest
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -118,6 +120,26 @@ def _linux_process_identity_is_active(process_id: int, start_time: int) -> bool:
     closing = content.rfind(b")")
     fields = content[closing + 2 :].split() if closing >= 1 else ()
     return len(fields) > 19 and int(fields[19]) == start_time
+
+
+def test_libc_pidfds_work_without_python_pidfd_bindings() -> None:
+    """The locked Python can retain Linux process identity through libc."""
+    _require_linux()
+    with patch.object(reg.os, "pidfd_open", None, create=True), patch.object(
+        reg.signal, "pidfd_send_signal", None, create=True
+    ):
+        descriptor = reg._pidfd_open(os.getpid())
+        try:
+            assert not os.get_inheritable(descriptor)
+            reg._pidfd_send_signal(descriptor, 0)
+        finally:
+            os.close(descriptor)
+        try:
+            reg._pidfd_send_signal(descriptor, 0)
+        except OSError as error:
+            assert error.errno == errno.EBADF
+        else:
+            raise AssertionError("a closed pidfd must not retain signal authority")
 
 
 def test_process_scope_rescans_after_a_scanned_child_forks_then_exits() -> None:
@@ -4638,6 +4660,7 @@ def test_rendering_requires_known_numbers() -> None:
 
 def main() -> int:
     checks = [
+        test_libc_pidfds_work_without_python_pidfd_bindings,
         test_process_scope_rescans_after_a_scanned_child_forks_then_exits,
         test_tool_symlink_invocation_is_rejected,
         test_executable_entry_rejects_python_startup_and_loader_authority,
