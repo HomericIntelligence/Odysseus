@@ -606,9 +606,21 @@ if (
         if ! builtin wait "$SERVICE_BINDING_PID" 2>/dev/null; then :; fi
     fi
     if [ "$(uname -s)" = Linux ]; then
-        [ "$service_binding_status" -eq 0 ] \
+        if [ "$service_binding_status" -eq 0 ] \
             && [ "$service_binding_result" = original ] \
-            && [ -n "$SERVICE_BINDING_PID" ]
+            && [ -n "$SERVICE_BINDING_PID" ]; then
+            exit 0
+        fi
+        service_binding_observation=unexpected
+        case "$service_binding_result" in
+            original|replacement|ambient-environment|'')
+                service_binding_observation=${service_binding_result:-absent}
+                ;;
+        esac
+        printf 'service binding diagnostics: status=%s result=%s registered=%s\n' \
+            "$service_binding_status" "$service_binding_observation" \
+            "${SERVICE_BINDING_PID:+yes}" >&2
+        exit 1
     else
         [ "$service_binding_result" != replacement ]
     fi
