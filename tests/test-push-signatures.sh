@@ -1501,6 +1501,7 @@ import errno
 import hashlib
 import importlib.util
 import os
+import re
 import resource
 import select
 import shutil
@@ -4598,7 +4599,7 @@ def escaped_session_behavior(subject):
                 "os._exit(0)\n"
             )
             command, executable = boundary.wrap([
-                sys.executable, "-I", "-S", "-c", program,
+                os.path.realpath("/usr/bin/python3"), "-I", "-S", "-c", program,
             ])
             try:
                 result = subprocess.run(

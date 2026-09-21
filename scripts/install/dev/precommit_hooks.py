@@ -512,8 +512,10 @@ boundary_fd, _boundary_data = bind(
 config_data = payload(config_hex, config_digest, "configuration")
 if policy_hex == "-":
     # Keep the existing runtime payload bound without putting the payload in
-    # one execve argument (Linux limits each argument independently).
-    policy_stream = sys.stdin.buffer.read(2 * 64 * 1024 * 1024 + 1)
+    # one execve argument (Linux limits each argument independently). Use a
+    # separate descriptor so Git's pre-push transaction remains on stdin.
+    with os.fdopen(3, "rb") as policy_transport:
+        policy_stream = policy_transport.read(2 * 64 * 1024 * 1024 + 1)
     if len(policy_stream) > 2 * 64 * 1024 * 1024:
         abort("policy transport exceeds the runtime payload bound")
     try:
@@ -845,7 +847,7 @@ MANAGED_RUNTIME_EXEC = (
     + ' "$TRUSTED_CONFIG_HEX" "$TRUSTED_CONFIG_SHA256"'
     + ' - "$TRUSTED_POLICY_SHA256"'
     + ' "$TRUSTED_PYYAML_MANIFEST_HEX" "$TRUSTED_CLOSURE_MANIFEST_HEX" "$@"'
-    + ' <<ODYSSEUS_POLICY_PAYLOAD\n$TRUSTED_POLICY_HEX\nODYSSEUS_POLICY_PAYLOAD'
+    + ' 3<<ODYSSEUS_POLICY_PAYLOAD\n$TRUSTED_POLICY_HEX\nODYSSEUS_POLICY_PAYLOAD'
 )
 READ_FLAGS = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
 DIR_FLAGS = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_DIRECTORY
