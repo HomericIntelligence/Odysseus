@@ -126,6 +126,16 @@ git_path=/usr/bin/git
 bash_path=/bin/bash
 python_path=/usr/bin/python3
 env_path=/usr/bin/env
+# Ubuntu's system Python entry point is a link to a versioned sibling. Accept
+# that distribution-owned layout without accepting arbitrary linked routes or
+# an interpreter selected through the caller's PATH.
+if [[ -L "$python_path" ]]; then
+    python_target=$(/usr/bin/readlink "$python_path") \
+        || die 'cannot resolve the system Python entry point'
+    [[ "$python_target" =~ ^python3\.[0-9]+$ ]] \
+        || die 'system Python must link to a versioned sibling in /usr/bin'
+    python_path="/usr/bin/$python_target"
+fi
 [[ -f "$git_path" && ! -L "$git_path" && -x "$git_path" ]] \
     || die 'Git is unavailable through /usr/bin/git'
 [[ -f "$bash_path" && ! -L "$bash_path" && -x "$bash_path" ]] \
