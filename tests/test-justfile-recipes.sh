@@ -403,14 +403,27 @@ else
 fi
 
 ln -s "$BASH" "$lint_bin/bash"
-for tool in sh awk grep tr touch; do
+for tool in sh awk grep tr touch mktemp rm cat cmp; do
     ln -s "$(command -v "$tool")" "$lint_bin/$tool"
 done
 ln -s "$JUST_BIN" "$lint_bin/just"
-for tool in python python3 shellcheck; do
+for tool in python python3; do
     printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$lint_bin/$tool"
     chmod +x "$lint_bin/$tool"
 done
+# This fixture tests recipe isolation, not the analyzer. Model both outcomes
+# used by test-shellcheck-contract.sh; real analyzer validation runs in lint.
+cat > "$lint_bin/shellcheck" <<'EOF'
+#!/usr/bin/env bash
+case "${@: -1}" in
+    */undefined.sh)
+        printf '%s\n' 'SC2218: function called before its definition'
+        exit 1
+        ;;
+esac
+exit 0
+EOF
+chmod +x "$lint_bin/shellcheck"
 cat > "$lint_bin/pixi" <<'EOF'
 #!/usr/bin/env bash
 set -u

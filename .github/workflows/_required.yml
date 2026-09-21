@@ -428,7 +428,7 @@ jobs:
           set -euo pipefail
           # Read only this ephemeral runner's recent sandbox denials. Do not
           # change AppArmor policy or print unrelated kernel/audit records.
-          sudo journalctl --kernel --since '-10 minutes' --no-pager --output=cat \
+          sudo journalctl --dmesg --since '-10 minutes' --no-pager --output=cat \
             | awk '/apparmor="DENIED"/ && /bwrap|odysseus-precommit/ { print }'
 
   schema-validation:
