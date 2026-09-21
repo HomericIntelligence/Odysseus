@@ -839,8 +839,10 @@ for signal_case in TERM:143 HUP:129; do
     signal_pid_file="$fixture_root/signal-$signal_name-child.pid"
     signal_log="$fixture_root/signal-$signal_name.out"
     mkdir "$signal_bin"
-    cat > "$signal_bin/envsubst" <<'EOF'
-#!/bin/sh
+    {
+        printf '%s\n' '#!/usr/bin/env bash'
+        printf 'export ODYSSEUS_TEST_NOMAD_CHILD_PID=%q\n' "$signal_pid_file"
+        cat <<'EOF'
 sh -c '
 trap "" TERM HUP
 printf "%s\n" "$$" > "${ODYSSEUS_TEST_NOMAD_CHILD_PID:?}"
@@ -848,6 +850,7 @@ while :; do sleep 1; done
 ' &
 wait "$!"
 EOF
+    } > "$signal_bin/envsubst"
     chmod +x "$signal_bin/envsubst"
     cp "$fixture_bin/nomad" "$signal_bin/nomad"
     ln -s "$(command -v bash)" "$signal_bin/bash"
@@ -871,12 +874,16 @@ EOF
         fi
         sleep 0.05
     done
-    kill -"$signal_name" "$renderer_pid"
+    signal_delivered=true
+    if ! kill -"$signal_name" "$renderer_pid"; then
+        signal_delivered=false
+    fi
     set +e
     wait "$renderer_pid"
     signal_status=$?
     set -e
-    if [ "$signal_status" -eq "$expected_status" ] \
+    if [ "$signal_delivered" = true ] \
+        && [ "$signal_status" -eq "$expected_status" ] \
         && [ -n "$signal_descendant" ] \
         && process_is_gone "$signal_descendant" \
         && directory_is_empty "$signal_out"; then
