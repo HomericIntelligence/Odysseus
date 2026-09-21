@@ -218,6 +218,9 @@ jobs:
           # Run from the tools dir since e2e/tools is not an importable package.
           cd e2e/tools && python3 -m unittest test_gen_test_matrix -v
 
+      - name: Diagnose system interpreter containment capabilities
+        run: python3 -I scripts/diagnose-ci-containment.py
+
       - name: Run claude-myrmidon-multi harness unit tests
         run: |
           set -euo pipefail
@@ -348,6 +351,9 @@ jobs:
 
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
+
+      - name: Diagnose Pixi interpreter containment capabilities
+        run: pixi run python -I scripts/diagnose-ci-containment.py
 
       - name: Run validate-configs (canonical build artifact for meta-repo)
         run: just validate-configs
