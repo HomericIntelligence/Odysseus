@@ -2397,6 +2397,7 @@ _exec_service_without_harness_capabilities() {
     local binary="$1" receipt="$2"
     shift 2
     _exec_bound_python - "$binary" "$receipt" "$SERVICE_EXECUTABLE_FD" "$@" <<'PY'
+import fcntl
 import hashlib
 import os
 import re
@@ -2461,12 +2462,22 @@ identity = (
     opened.st_mtime_ns,
     opened.st_ctime_ns,
 )
-if identity != expected \
+# A rename can change ctime without changing the selected object or bytes.
+# Linux executes a sealed copy whose digest must match the binding receipt.
+linux_snapshot = sys.platform.startswith("linux")
+same_identity = identity[:-1] == expected[:-1] if linux_snapshot else identity == expected
+if not same_identity \
         or not stat.S_ISREG(opened.st_mode) \
         or opened.st_nlink != 1 \
         or stat.S_IMODE(opened.st_mode) & 0o111 == 0 \
         or opened.st_size > 512 * 1024 * 1024:
     raise SystemExit(1)
+snapshot = None
+if linux_snapshot:
+    snapshot = os.memfd_create(
+        "odysseus-service", os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING
+    )
+    os.fchmod(snapshot, 0o500)
 digest = hashlib.sha256()
 offset = 0
 while offset < opened.st_size:
@@ -2474,9 +2485,27 @@ while offset < opened.st_size:
     if not chunk:
         raise SystemExit(1)
     digest.update(chunk)
+    if snapshot is not None:
+        pending = memoryview(chunk)
+        while pending:
+            written = os.write(snapshot, pending)
+            if written <= 0:
+                raise SystemExit(1)
+            pending = pending[written:]
     offset += len(chunk)
 if digest.hexdigest() != expected_digest or os.fstat(descriptor) != opened:
     raise SystemExit(1)
+if snapshot is not None:
+    seals = (
+        fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW
+        | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
+    )
+    fcntl.fcntl(snapshot, fcntl.F_ADD_SEALS, seals)
+    if fcntl.fcntl(snapshot, fcntl.F_GET_SEALS) & seals != seals:
+        raise SystemExit(1)
+    os.lseek(snapshot, 0, os.SEEK_SET)
+    os.dup2(snapshot, descriptor, inheritable=True)
+    os.close(snapshot)
 allowed = {
     "AGAMEMNON_API_KEY",
     "MYRMIDON_WORK_DELAY_MS",
@@ -2493,7 +2522,9 @@ for name in names:
 os.set_inheritable(descriptor, True)
 close_nonstdio_descriptors({descriptor})
 arguments = [binary]
-if sys.platform.startswith("linux") and os.path.isdir("/proc/self/fd"):
+if linux_snapshot:
+    if not os.path.isdir("/proc/self/fd"):
+        raise SystemExit(1)
     os.execve(f"/proc/self/fd/{descriptor}", arguments, environment)
 named = os.stat(binary, follow_symlinks=False)
 named_identity = (

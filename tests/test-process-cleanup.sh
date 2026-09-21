@@ -550,6 +550,18 @@ service_binding_replacement="$TMP/service-binding-replacement"
 mkdir -p "${service_binding_original%/*}"
 cat > "$service_binding_original" <<SH
 #!/bin/sh
+/usr/bin/python3 -I -S - <<'PY' || exit 81
+import fcntl
+import sys
+
+if sys.platform.startswith("linux"):
+    required = (
+        fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW
+        | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
+    )
+    if fcntl.fcntl(197, fcntl.F_GET_SEALS) & required != required:
+        raise SystemExit(1)
+PY
 if [ "\${UNRELATED_SERVICE_SECRET+x}" != x ] \
     && [ "\${HOME+x}" != x ] \
     && [ "\${NATS_URL:-}" = nats://127.0.0.1:4222 ] \
