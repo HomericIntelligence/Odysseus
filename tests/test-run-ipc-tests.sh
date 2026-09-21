@@ -19,6 +19,7 @@ import threading
 import time
 
 common_path, nats_path = sys.argv[1:]
+process_path = os.path.join(os.path.dirname(nats_path), "process.sh")
 
 
 def serve(response: bytes | None, *, stall: bool = False):
@@ -56,6 +57,7 @@ def serve(response: bytes | None, *, stall: bool = False):
 def invoke(function: str, port: int, timeout: float = 4.0):
     command = (
         f"source {shlex.quote(common_path)}; "
+        f"source {shlex.quote(process_path)}; "
         f"source {shlex.quote(nats_path)}; "
         f"NATS_MONITOR_PORT={port}; {function}"
     )
