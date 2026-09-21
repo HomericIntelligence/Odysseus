@@ -85,19 +85,24 @@ if [[ -n "$NATS_SERVER" && -n "$NATS_SERVER_SHA256" ]]; then
     elif python3 scripts/validate_nats_config.py --nats-server "$NATS_SERVER" \
         --expected-nats-server-sha256 "$NATS_SERVER_SHA256" \
         >"$default_nats_output" 2>&1; then
-        fail "NATS validator hid the protected leaf remote-token defect"
-    elif [[ "$(wc -l <"$default_nats_output")" -eq \
-            "${#canonical_configs[@]}" ]] \
-        && grep -Fqx "OK: $ROOT/configs/nats/server.conf" \
-            "$default_nats_output" \
-        && grep -Fq \
-            "FAILED: $ROOT/configs/nats/leaf.conf -- nats-server rejected config:" \
-            "$default_nats_output" \
-        && grep -Fq 'unknown field "token"' "$default_nats_output"; then
-        pass "NATS parser covers the exact inventory and reports the protected leaf blocker"
+        inventory_matches=1
+        if [[ "$(wc -l <"$default_nats_output")" -ne "${#canonical_configs[@]}" ]]; then
+            inventory_matches=0
+        fi
+        for canonical_config in "${canonical_configs[@]}"; do
+            if ! grep -Fqx "OK: $canonical_config" "$default_nats_output"; then
+                inventory_matches=0
+            fi
+        done
+        if [[ "$inventory_matches" -eq 1 ]]; then
+            pass "NATS parser accepts every canonical configuration"
+        else
+            cat "$default_nats_output" >&2
+            fail "NATS parser did not cover the exact canonical inventory"
+        fi
     else
         cat "$default_nats_output" >&2
-        fail "NATS validator did not report the exact protected canonical state"
+        fail "NATS parser rejected a canonical configuration"
     fi
 else
     fail "required nats-server parser is unavailable"

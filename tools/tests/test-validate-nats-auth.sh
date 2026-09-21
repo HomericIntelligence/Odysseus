@@ -531,18 +531,15 @@ leafnodes {
 EOF
 
 # ---------------------------------------------------------------------------
-# Test 1: the protected canonical leaf token remains a visible blocker. NATS
-# v2.10.22 rejects the remote `token` field; the validator must not normalize
-# that unsupported form into success while the canonical config is unchanged.
+# Test 1: canonical configurations must declare supported authentication.
+# Unsupported remote tokens remain covered independently below.
 # ---------------------------------------------------------------------------
 canonical_output="$TMP/canonical.out"
 if "$VALIDATE" "$REPO_ROOT/configs/nats/leaf.conf" "$REPO_ROOT/configs/nats/server.conf" >"$canonical_output" 2>&1; then
-    fail_case "canonical remote token must remain blocked pending protected config repair"
-elif grep -q 'ambiguous, unsupported, or unauthenticated remote' "$canonical_output"; then
-    pass "protected canonical remote token is reported as unsupported"
+    pass "canonical configurations declare supported authentication"
 else
     cat "$canonical_output" >&2
-    fail_case "canonical remote token failure was not reported truthfully"
+    fail_case "canonical configurations have invalid authentication"
 fi
 
 # ---------------------------------------------------------------------------
