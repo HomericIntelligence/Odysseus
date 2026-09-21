@@ -243,7 +243,7 @@ jobs:
           # module discovery. Run from the test dir like the tools suite above.
           # DRY_RUN/NO_GITHUB keep the module import side-effect-free.
           cd e2e/tests/unit
-          DRY_RUN=1 NO_GITHUB=1 ISSUE_NUMBER=0 python3 - <<'PY'
+          DRY_RUN=1 NO_GITHUB=1 ISSUE_NUMBER=0 python3 -c '
           import unittest
 
           privileged = (
@@ -269,7 +269,7 @@ jobs:
           print(f"Running {len(ordinary)} unprivileged tests; 1 test belongs to the privileged step")
           result = unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(ordinary))
           raise SystemExit(not result.wasSuccessful())
-          PY
+          '
 
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
