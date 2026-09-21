@@ -158,8 +158,9 @@ else
 fi
 
 version_only_parser="$TMP/version-only-nats-server"
+fixture_shell=$(python3 -c 'from pathlib import Path; print(Path("/bin/sh").resolve(strict=True))')
 if ! printf '%s\n' \
-    '#!/bin/sh' \
+    "#!$fixture_shell" \
     'if [ "${1:-}" = "--version" ]; then' \
     '  printf "%s\\n" "nats-server: v2.10.22"' \
     '  exit 0' \
@@ -183,7 +184,7 @@ fi
 
 rejecting_parser="$TMP/rejecting-nats-server"
 if ! printf '%s\n' \
-    '#!/bin/sh' \
+    "#!$fixture_shell" \
     'if [ "${1:-}" = "--version" ]; then' \
     '  printf "%s\\n" "nats-server: v2.10.22"' \
     '  exit 0' \

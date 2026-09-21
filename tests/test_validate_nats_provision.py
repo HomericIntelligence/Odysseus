@@ -76,6 +76,10 @@ def _release(payload: bytes, *, sha256: str | None = None) -> ParserRelease:
 
 
 def _write_executable(path: Path, content: str) -> None:
+    # Ordinary shell fixtures must reach the behavior under test rather than
+    # fail the independent no-symlink interpreter boundary first.
+    if content.startswith("#!/bin/sh\n"):
+        content = f"#!{Path('/bin/sh').resolve(strict=True)}\n" + content.split("\n", 1)[1]
     path.write_text(content, encoding="utf-8")
     path.chmod(0o700)
 
