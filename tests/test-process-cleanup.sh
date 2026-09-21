@@ -1492,7 +1492,11 @@ if (
     BOUND_RUNTIME_TOOLS_READY=1
     export BOUND_PYTHON_EXEC BOUND_CURL_EXEC BOUND_RUNTIME_TOOLS_READY
     export DOCTOR_UNRELATED_SECRET=must-not-cross
-    _run_bound_curl_bounded 2 --version >/dev/null 2>&1 || exit 31
+    if ! _run_bound_curl_bounded 2 --version \
+        >"$TMP/bound-curl-startup.out" 2>&1; then
+        cat "$TMP/bound-curl-startup.out" >&2
+        exit 31
+    fi
     [ "$(head -n 1 "$bound_curl_argv")" = -q ] || exit 32
     ! grep -Eq '(DOCTOR_UNRELATED_SECRET|HOME|CURL_HOME|http_proxy|HTTP_PROXY|https_proxy|HTTPS_PROXY|ALL_PROXY)=' \
         "$bound_curl_env" || exit 33
