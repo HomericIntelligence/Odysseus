@@ -3951,6 +3951,22 @@ def untrusted_interpreter_behavior(subject, base):
         with open(cfgv_metadata, "rb") as stream:
             compatible_cfgv = stream.read()
 
+        folded_metadata = compatible_pre_commit.replace(
+            b"Requires-Dist: cfgv>=1.0,<2",
+            b"Requires-Dist: cfgv\n >=1.0,<2",
+        )
+        folded_metadata = (
+            b"Description: compatible provider\n continued description\n"
+            + folded_metadata
+        )
+        write_file(pre_commit_metadata, folded_metadata)
+        try:
+            subject._provider_distribution_closure(interpreter)
+        except subject.SetupError as error:
+            print("valid folded provider metadata was rejected: {}".format(error))
+            return False
+        write_file(pre_commit_metadata, compatible_pre_commit)
+
         requirement_cases = (
             (
                 b"Requires-Dist: cfgv>=1.0,<2",

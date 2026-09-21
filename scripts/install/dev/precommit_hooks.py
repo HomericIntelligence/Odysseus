@@ -2687,22 +2687,27 @@ def _provider_site_root(interpreter_path):
 
 
 def _provider_metadata_headers(text):
-    """Parse unfolded core-metadata headers and reject ambiguous continuations."""
+    """Unfold core-metadata headers before validating dependency values."""
 
     normalized = text.replace("\r\n", "\n")
     if "\r" in normalized:
         raise SetupError("provider metadata uses malformed line endings")
     header_block = normalized.split("\n\n", 1)[0]
     headers = {}
+    previous = None
     for line in header_block.split("\n"):
         if not line:
             continue
         if line[:1] in (" ", "\t"):
-            raise SetupError("provider metadata uses a folded header")
+            if previous is None:
+                raise SetupError("provider metadata starts with a continuation")
+            headers[previous][-1] += " " + line.strip()
+            continue
         name, separator, value = line.partition(":")
         if not separator or not re.fullmatch(r"[A-Za-z0-9-]+", name):
             raise SetupError("provider metadata contains a malformed header")
-        headers.setdefault(name.lower(), []).append(value.strip())
+        previous = name.lower()
+        headers.setdefault(previous, []).append(value.strip())
     return headers
 
 
