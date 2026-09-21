@@ -1219,6 +1219,35 @@ def _quarantine_owned_entry(
     *,
     is_directory: bool = False,
 ) -> bool:
+    """Retain a regular file so inode reuse cannot redirect cleanup."""
+    if is_directory:
+        return _quarantine_bound_entry(directory, name, expected, is_directory=True)
+    try:
+        descriptor = os.open(
+            name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+            dir_fd=directory,
+        )
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            return False
+        raise
+    try:
+        if not _same_file_state(expected, os.fstat(descriptor)):
+            return False
+        return _quarantine_bound_entry(directory, name, expected)
+    finally:
+        os.close(descriptor)
+
+
+def _quarantine_bound_entry(
+    directory: int,
+    name: str,
+    expected: os.stat_result,
+    *,
+    is_directory: bool = False,
+) -> bool:
     """Atomically isolate and delete only the exact expected direct entry."""
     quarantine = ".odysseus-cleanup-" + secrets.token_hex(16)
     try:
