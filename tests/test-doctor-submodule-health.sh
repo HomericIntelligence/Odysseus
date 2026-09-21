@@ -1449,6 +1449,20 @@ if [ "$DOCTOR_STATUS" -eq 0 ] \
         "$CURL_FD_LOG"; then
     pass "every curl invocation is sealed, first-option -q, minimal-env, and descriptor-clean"
 else
+    curl_path_valid=false
+    if grep -Eq 'PATH=.*/usr/bin:/bin' "$CURL_ENV_LOG"; then
+        curl_path_valid=true
+    fi
+    curl_environment_clean=true
+    if grep -Eq '(HOME|USER|LOGNAME|TMPDIR|XDG_RUNTIME_DIR|DBUS_SESSION_BUS_ADDRESS|DOCTOR_UNRELATED_SECRET|http_proxy|HTTP_PROXY|https_proxy|HTTPS_PROXY|ALL_PROXY)=' "$CURL_ENV_LOG"; then
+        curl_environment_clean=false
+    fi
+    curl_descriptors_clean=true
+    if grep -Eq '^(9|10|11|12|190|191|192|193|194|195|196|197|205)$' "$CURL_FD_LOG"; then
+        curl_descriptors_clean=false
+    fi
+    printf 'curl boundary diagnostics: path=%s environment=%s descriptors=%s\n' \
+        "$curl_path_valid" "$curl_environment_clean" "$curl_descriptors_clean" >&2
     fail "curl transport violated binding, -q, environment, or FD policy (status=$DOCTOR_STATUS replacement=$curl_replacement_observed attack=$curl_replacement_executed q=$curl_health_uses_q log=$(tr '\n' ';' < "$CURL_LOG"))"
 fi
 unset CURL_BIND_MODE curl_replacement_observed curl_replacement_executed \
