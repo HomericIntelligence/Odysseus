@@ -262,7 +262,14 @@ jobs:
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
 
       - name: Install Compose and hook-selection test dependencies
-        run: pip install --user pyyaml 'pre-commit==3.8.0'
+        run: |
+          set -euo pipefail
+          # Tests intentionally isolate HOME and user-site imports. Keep their
+          # tools in a venv whose imports do not depend on the runner's HOME.
+          python3 -m venv "$RUNNER_TEMP/odysseus-integration"
+          "$RUNNER_TEMP/odysseus-integration/bin/python" -m pip install \
+            'PyYAML==6.0.3' 'pre-commit==3.8.0'
+          echo "$RUNNER_TEMP/odysseus-integration/bin" >> "$GITHUB_PATH"
 
       - name: Validate NATS config structure
         run: python3 scripts/validate_nats_config.py
