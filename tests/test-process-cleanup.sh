@@ -1579,17 +1579,17 @@ fi
 
 info "NATS restart unregisters the old identity before registering replacement"
 fake_nats="$TMP/fake-nats"
-cat > "$fake_nats" <<'SH'
+NATS_EXEC_PID_FILE="$TMP/nats-exec.pid"
+cat > "$fake_nats" <<SH
 #!/usr/bin/env bash
-printf '%s\n' "${BASHPID:-$$}" > "${NATS_EXEC_PID_FILE:?}"
+printf '%s\n' "\${BASHPID:-\$\$}" > "$NATS_EXEC_PID_FILE"
 exec /bin/sleep 30
 SH
 chmod +x "$fake_nats"
-NATS_EXEC_PID_FILE="$TMP/nats-exec.pid"
-export NATS_EXEC_PID_FILE
 _BG_PIDS=(4646)
 _BG_PID_IDENTITIES=(boot-a:old-nats)
 _BG_PID_OWNERS=("${BASHPID:-$$}")
+_BG_PROCESS_CONTAINMENTS=("")
 _process_receipt() {
     [ "$1" != 4646 ] || return 1
     printf 'boot-a:%s|%s\n' "$1" "$TEST_SHELL_PID"
@@ -1619,7 +1619,7 @@ IPC_TOPOLOGY=t1
 NATS_DATA_DIR="$TMP/hi-nats-RST001"
 mkdir -m 700 "$NATS_DATA_DIR"
 _bind_nats_data_dir "$NATS_DATA_DIR"
-if nats_restart; then
+if _persist_process_receipts && nats_restart; then
     restart_status=0
     replacement_pid="$NATS_BG_PID"
 else
