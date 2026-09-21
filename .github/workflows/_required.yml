@@ -100,11 +100,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install locked policy tools
-        uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347  # v0.10.1
+      - name: Install policy tools with Linux snapshot support
+        run: |
+          python3 -m venv "$RUNNER_TEMP/odysseus-policy"
+          "$RUNNER_TEMP/odysseus-policy/bin/python" -m pip install \
+            'pre-commit==3.8.0' 'PyYAML==6.0.3'
 
       - name: Reject executable silent-failure controls
-        run: pixi run python -I scripts/check-ci-silent-failures.py
+        run: '"$RUNNER_TEMP/odysseus-policy/bin/python" -I scripts/check-ci-silent-failures.py'
 
       - name: "Reject continue-on-error workflow opt-out"
         run: |

@@ -5,6 +5,8 @@ This is diagnostic output, not a substitute for the behavioral test gates.
 """
 
 import json
+import ctypes
+import fcntl
 import os
 from pathlib import Path
 import signal
@@ -19,7 +21,18 @@ def main() -> None:
         "uid": os.geteuid(),
         "pidfd_open": callable(getattr(os, "pidfd_open", None)),
         "pidfd_send_signal": callable(getattr(signal, "pidfd_send_signal", None)),
+        "memfd_create": callable(getattr(os, "memfd_create", None)),
+        "MFD_ALLOW_SEALING": getattr(os, "MFD_ALLOW_SEALING", None),
+        "seal_constants": {
+            name: getattr(fcntl, name, None)
+            for name in (
+                "F_ADD_SEALS", "F_GET_SEALS", "F_SEAL_SEAL",
+                "F_SEAL_SHRINK", "F_SEAL_GROW", "F_SEAL_WRITE",
+            )
+        },
     }
+    library = ctypes.CDLL(None)
+    report["libc_memfd_create"] = hasattr(library, "memfd_create")
     for name in (
         "/proc/self/cgroup",
         "/proc/sys/kernel/unprivileged_userns_clone",
