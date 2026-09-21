@@ -1439,7 +1439,7 @@ printf '%s\n' "\$@" > "$bound_curl_argv"
 export -p > "$bound_curl_env"
 if [ -d /proc/\$\$/fd ]; then
     for number in 3 190 191 192 193 194 195 196 197 205; do
-        if eval ": <&\$number" 2>/dev/null; then
+        if (eval ": <&\$number") 2>/dev/null; then
             printf '%s\n' "\$number"
         fi
     done > "$bound_curl_fds"
