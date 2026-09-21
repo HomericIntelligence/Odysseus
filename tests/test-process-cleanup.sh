@@ -1835,8 +1835,11 @@ unset NATS_SYMLINK_EFFECT
 
 info "NATS restart keeps the receipt-bound directory authoritative after exec"
 fake_swap_nats="$TMP/fake-swap-nats"
-cat > "$fake_swap_nats" <<'SH'
-#!/usr/bin/env bash
+swap_store="$TMP/hi-nats-SWP001"
+{
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf 'ORIGINAL_NATS_STORE=%q\n' "$swap_store"
+    cat <<'SH'
 store_dir=""
 while [ "$#" -gt 0 ]; do
     if [ "$1" = --store_dir ]; then
@@ -1851,8 +1854,8 @@ mkdir -m 700 -- "$ORIGINAL_NATS_STORE"
 printf '%s\n' bound-write > "${store_dir:?}/runtime-effect"
 exec /bin/sleep 30
 SH
+} > "$fake_swap_nats"
 chmod +x "$fake_swap_nats"
-swap_store="$TMP/hi-nats-SWP001"
 mkdir -m 700 "$swap_store"
 NATS_DATA_DIR="$swap_store"
 _bind_nats_data_dir "$NATS_DATA_DIR"
