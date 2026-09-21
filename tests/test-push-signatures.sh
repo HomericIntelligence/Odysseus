@@ -3063,7 +3063,7 @@ def tool_swap_behavior(subject, base, git):
                 bound = subject.bind_executable(
                     source,
                     boundary.tree,
-                    swap_target,
+                    "shell-fixture-" + swap_target,
                     bound_tools,
                     boundary,
                 )
@@ -3718,7 +3718,7 @@ def runtime_dependency_swap_behavior(subject, base):
             bound = subject.bind_executable(
                 source,
                 boundary.tree,
-                "pre-commit",
+                "shell-sibling-fixture",
                 bound_tools,
                 boundary,
             )
