@@ -975,7 +975,6 @@ class RuntimeStoreTest(unittest.TestCase):
                 for descriptor, info in legacy_runtime._descriptor_snapshot().items()
             }
 
-        baseline = identities()
         for exception in (KeyboardInterrupt(), SystemExit(74)):
             with self.subTest(exception=type(exception).__name__):
                 before = identities()
@@ -992,8 +991,8 @@ class RuntimeStoreTest(unittest.TestCase):
                 self.assertIsInstance(observed, type(exception))
                 after = identities()
                 self.assertEqual(
-                    set(after), set(baseline),
-                    f"descriptor identities: baseline={baseline}, before={before}, after={after}",
+                    after, before,
+                    f"descriptor identities: before={before}, after={after}",
                 )
                 self.assertIsNone(store.load_task("not-persisted"))
 
