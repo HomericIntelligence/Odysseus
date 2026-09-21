@@ -29,7 +29,7 @@ def hook_runtime_probe() -> dict:
     try:
         specification.loader.exec_module(subject)
         boundary = subject.ReadOnlyExecutionBoundary(
-            bound_tools, subject.OperationDeadline(15)
+            bound_tools, subject.OperationDeadline(30)
         )
         boundary.require()
         source = subject._trusted_python_tool(bound_tools)
@@ -39,6 +39,10 @@ def hook_runtime_probe() -> dict:
         report["source"] = source.path
         for name, target in (
             ("snapshot_stat", ["/usr/bin/stat", "--format=%F %a %s", snapshot.path]),
+            ("snapshot_elf", ["/usr/bin/readelf", "--program-headers", snapshot.path]),
+            ("system_version", [source.path, "--version"]),
+            ("loader_stat", ["/usr/bin/stat", "--dereference", "--format=%F %a %s",
+                             "/lib64/ld-linux-x86-64.so.2"]),
             ("snapshot_version", [snapshot.path, "--version"]),
         ):
             command, executable = boundary.wrap(target, sealed_files=(snapshot,))
@@ -51,7 +55,12 @@ def hook_runtime_probe() -> dict:
             )
             report[name] = {
                 "returncode": result.returncode,
-                "stdout": result.stdout[:1024], "stderr": result.stderr[:1024],
+                "stdout": (
+                    "\n".join(line.strip() for line in result.stdout.splitlines()
+                              if "program interpreter:" in line)[:1024]
+                    if name == "snapshot_elf" else result.stdout[:1024]
+                ),
+                "stderr": result.stderr[:1024],
             }
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
         report["error"] = type(error).__name__
