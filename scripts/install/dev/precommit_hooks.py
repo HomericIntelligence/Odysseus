@@ -701,6 +701,11 @@ try:
         ))
         created.add(original_site_root)
 
+    # Remounting read-only requires a mount point, not just a directory in
+    # Bubblewrap's root. Populate a private filesystem before sealing it below.
+    create_parents(private_site_root)
+    mount_arguments.extend(("--tmpfs", private_site_root))
+    created.add(private_site_root)
     for descriptor, route in zip(closure_fds, closure_routes):
         create_parents(route)
         os.set_inheritable(descriptor, True)
