@@ -3235,7 +3235,7 @@ def interpreter_swap_behavior(subject, base, git):
     root = tempfile.mkdtemp(prefix="interpreter-swap-", dir=base)
     interpreter = os.path.join(root, "python")
     replacement = os.path.join(root, "python-replacement")
-    os.symlink(os.path.realpath(sys.executable), interpreter)
+    os.symlink(os.path.realpath("/usr/bin/python3"), interpreter)
     os.symlink("/bin/sh", replacement)
     tool = os.path.join(root, "pre-commit")
     write_file(
@@ -3275,7 +3275,7 @@ def interpreter_swap_behavior(subject, base, git):
             bound = subject.bind_executable(
                 source,
                 boundary.tree,
-                "pre-commit",
+                "interpreter-swap-fixture",
                 bound_tools,
                 boundary,
             )
@@ -3287,6 +3287,8 @@ def interpreter_swap_behavior(subject, base, git):
                     "mutable interpreter/runtime closure",
                 )
             )
+            if not unavailable:
+                raise
         if not unavailable:
             subject.subprocess.Popen = swap_at_spawn
             result = subject.run(
@@ -4283,7 +4285,7 @@ def external_write_channel_behavior(subject, base):
         )
         command, executable = boundary.wrap(
             [
-                sys.executable,
+                os.path.realpath("/usr/bin/python3"),
                 "-I",
                 "-S",
                 "-c",
