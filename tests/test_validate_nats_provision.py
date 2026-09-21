@@ -27,6 +27,35 @@ import render_nomad_configs
 from validate_nats_config import ParserRelease, provision_nats_server
 
 
+class LeafAccountAuthenticationTests(unittest.TestCase):
+    def test_account_url_declarations_require_the_matching_local_account(self):
+        server = Path(__file__).resolve().parents[1] / "configs/nats/server.conf"
+        for account in ("HERMES", "AGENTS", "KEYSTONE", "TELEMACHY"):
+            for local_account, accepted in ((account, True), ("SYS", False)):
+                with self.subTest(account=account, local_account=local_account):
+                    with tempfile.TemporaryDirectory() as directory:
+                        leaf = Path(directory) / "leaf.conf"
+                        leaf.write_text(
+                            "leafnodes { remotes [{ "
+                            f"url = $NATS_LEAF_{account}_URL; "
+                            f'account = "{local_account}"'
+                            " }] }\n",
+                            encoding="utf-8",
+                        )
+                        errors = validate_nats_config.validate_auth(leaf, server)
+                        self.assertEqual(not errors, accepted, errors)
+
+    def test_endpoint_only_variable_does_not_declare_authentication(self):
+        server = Path(__file__).resolve().parents[1] / "configs/nats/server.conf"
+        with tempfile.TemporaryDirectory() as directory:
+            leaf = Path(directory) / "leaf.conf"
+            leaf.write_text(
+                'leafnodes { remotes [{ url = $NATS_LEAF_URL; account = "HERMES" }] }\n',
+                encoding="utf-8",
+            )
+            self.assertTrue(validate_nats_config.validate_auth(leaf, server))
+
+
 class _Response(io.BytesIO):
     def __init__(self, payload: bytes, final_url: str) -> None:
         super().__init__(payload)

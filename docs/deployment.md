@@ -199,8 +199,9 @@ The canonical NATS server config is at `configs/nats/server.conf`. It configures
 - Authentication (fail-closed): client connections would be authenticated via
   cert-mapped subject-scoped accounts (`verify_and_map`, ADR-010), so no client
   token is required. The primary server's leaf listener reads
-  `$NATS_LEAF_USER` and `$NATS_LEAF_PASSWORD`; any approved deployment must
-  supply both through its secret mechanism.
+  four independent `$NATS_LEAF_<ACCOUNT>_PASSWORD` variables, for HERMES,
+  AGENTS, KEYSTONE, and TELEMACHY. Each `leaf-<lowercase-account>` user is
+  bound to that account. Supply nonempty passwords through deployment secrets.
 - Cluster route authorization (multi-server clusters only): the `cluster {}`
   listener on port 6222 reads `$NATS_CLUSTER_USER` and
   `$NATS_CLUSTER_PASSWORD` in addition to TLS (ADR-009, issue #306). Before
@@ -227,13 +228,20 @@ rather than substituting a permissive broker or treating a canary as complete.
 
 ### 4d. Configure Leaf Nodes (Multi-Host Only)
 
-If deploying across multiple hosts, note that the checked-in primary
-`server.conf` uses user/password authentication for its leaf listener while
-the checked-in `leaf.conf` uses `$NATS_LEAF_TOKEN` for outbound remotes. Those
-credential forms are not interchangeable. Do not launch the multi-host leaf
-path until an operator has selected and configured one matching authentication
-method on both sides. See `docs/runbooks/add-new-host.md` and
-`docs/runbooks/enable-nats-auth.md` for the certificate and credential flow.
+The checked-in server and leaf configurations use matching, account-scoped
+user/password authentication in addition to TLS. Provision each leaf's
+`NATS_LEAF_<ACCOUNT>_URL` as a complete
+`nats+tls://leaf-<lowercase-account>:<encoded-password>@<approved-hub>:7422`
+URL. Its password must match the hub's corresponding password variable;
+percent-encode reserved URL characters. SYS has no remote or leaf credential.
+
+This replaces the unsupported remote token declaration and the shared listener
+credential. Migrate both sides together under operator approval; do not reuse
+the old `NATS_LEAF_TOKEN`, `NATS_LEAF_USER`, or `NATS_LEAF_PASSWORD` interface.
+Static validation uses public test credentials and does not verify deployed
+secrets or prove connectivity. Activation remains blocked by section 4c.
+See `docs/runbooks/add-new-host.md` and `docs/runbooks/enable-nats-auth.md` for
+the certificate and credential flow.
 
 ---
 

@@ -55,6 +55,13 @@ _CERT_ASSIGNMENT = re.compile(
     r"(?P<quote>['\"])(?P<value>.*?)(?P=quote)"
 )
 _ENV_REFERENCE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)\Z")
+_LEAF_ACCOUNTS = ("HERMES", "AGENTS", "KEYSTONE", "TELEMACHY")
+# These deployment variables declare complete credential-bearing URLs, unlike
+# the legacy endpoint-only NATS_LEAF_URL. This is a declaration check, not a
+# verification of operational secrets or connectivity.
+_ACCOUNT_URL_ENVIRONMENTS = {
+    f"NATS_LEAF_{account}_URL": account for account in _LEAF_ACCOUNTS
+}
 
 _AUTH_ENVIRONMENTS = {
     "client": {
@@ -65,7 +72,9 @@ _AUTH_ENVIRONMENTS = {
     },
     "leaf": {
         "user": frozenset({"NATS_LEAF_USER"}),
-        "password": frozenset({"NATS_LEAF_PASSWORD"}),
+        "password": frozenset({"NATS_LEAF_PASSWORD"}) | frozenset(
+            f"NATS_LEAF_{account}_PASSWORD" for account in _LEAF_ACCOUNTS
+        ),
         "nkey": frozenset({"NATS_LEAF_NKEY"}),
     },
     "cluster": {
@@ -79,7 +88,7 @@ _AUTH_ENVIRONMENTS = {
     },
 }
 _REMOTE_ENVIRONMENTS = {
-    "url": frozenset({"NATS_LEAF_URL"}),
+    "url": frozenset({"NATS_LEAF_URL", *_ACCOUNT_URL_ENVIRONMENTS}),
     "credentials": frozenset({"NATS_LEAF_CREDS"}),
     "nkey": frozenset({"NATS_LEAF_NKEY", "NATS_LEAF_SEED"}),
 }
@@ -948,6 +957,14 @@ def _remote_auth_valid(
                 or reference.group(1) in local_names
             ):
                 return False
+            expected_account = _ACCOUNT_URL_ENVIRONMENTS.get(reference.group(1))
+            if expected_account is not None:
+                if (
+                    len(routing_accounts) != 1
+                    or _scalar_value(tokens, routing_accounts[0]) != expected_account
+                ):
+                    return False
+                continue
             embedded_credentials = False
             continue
         if "$" in value:
@@ -2535,6 +2552,17 @@ def _controlled_environment(home: Path) -> dict[str, str]:
         "NATS_LEAF_TOKEN": "validation-leaf-token",
         "NATS_LEAF_URL": "nats+tls://127.0.0.1:7422",
         "NATS_LEAF_USER": "validation-leaf-user",
+        **{
+            f"NATS_LEAF_{account}_PASSWORD": f"validation-{account.lower()}-password"
+            for account in _LEAF_ACCOUNTS
+        },
+        **{
+            f"NATS_LEAF_{account}_URL": (
+                f"nats+tls://leaf-{account.lower()}:"
+                f"validation-{account.lower()}-password@127.0.0.1:7422"
+            )
+            for account in _LEAF_ACCOUNTS
+        },
     }
 
 
