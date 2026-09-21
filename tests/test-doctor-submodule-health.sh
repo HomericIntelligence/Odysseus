@@ -408,11 +408,13 @@ printf '%s\n' "$*" >> "$CURL_LOG"
 export -p >> "$CURL_ENV_LOG"
 printf '%s\n' -- >> "$CURL_ENV_LOG"
 if [ -d /proc/$$/fd ]; then
+    # Probe before redirecting output: Bash keeps backup descriptors open
+    # while a compound command or builtin has temporary redirections.
     for number in 9 10 11 12 190 191 192 193 194 195 196 197 205; do
-        if eval ": <&$number" 2>/dev/null; then
-            printf '%s\n' "$number"
+        if [ -L "/proc/$$/fd/$number" ]; then
+            printf '%s\n' "$number" >> "$CURL_FD_LOG"
         fi
-    done >> "$CURL_FD_LOG"
+    done
     printf '%s\n' -- >> "$CURL_FD_LOG"
 fi
 if [ "$BROKEN_VERSION_TOOL" = "curl" ]; then
