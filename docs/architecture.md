@@ -238,7 +238,6 @@ not the route for every current interaction. The target worker flow uses
 AchaeanFleet images. Knowledge retrieval and preservation are contextual skill
 choices, not mandatory wrappers around every task.
 
-
 Under this proposal, interviews, escalations, and dashboards would flow back up
 the same subjects, so each hop would be bidirectional. Role-addressed work and
 lifecycle messages would flow **through** Keystone. Supported management
