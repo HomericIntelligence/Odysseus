@@ -708,9 +708,13 @@ run_pinned_parser() {
 if [[ -n "$NATS_SERVER" && -n "$NATS_SERVER_SHA256" ]]; then
     parser_swap_sentinel="$TMP/post-handoff-parser-ran"
     parser_swap_output="$TMP/post-handoff-parser.out"
+    # Reach the digest assertion with a valid direct interpreter selection;
+    # /bin/sh is a symlink on the Ubuntu runner and is rejected independently.
+    parser_fixture_shell=$(python3 -c \
+        'from pathlib import Path; print(Path("/bin/sh").resolve(strict=True))')
     mv "$NATS_SERVER" "$NATS_SERVER.selected"
     cat >"$NATS_SERVER" <<EOF
-#!/bin/sh
+#!$parser_fixture_shell
 printf '%s\n' hostile > "$parser_swap_sentinel"
 exit 0
 EOF
