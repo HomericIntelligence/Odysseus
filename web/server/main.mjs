@@ -88,9 +88,29 @@ const history = await openObservationHistory({
   port,
   sourceRoot: resolve(dirname(fileURLToPath(import.meta.url)), "../.."),
 });
+let closing = false;
+let nats;
+const observationAbort = new AbortController();
+const shutdown = async () => {
+  if (closing) return;
+  closing = true;
+  ready = false;
+  observationAbort.abort();
+  process.stdin.pause();
+  process.stdin.removeAllListeners("data");
+  const closeNats = nats?.close();
+  const flushed = await history.close(5000);
+  if (!flushed)
+    console.error("Observation history shutdown flush was not confirmed");
+  // Retain the writer lease until the flush completes or fences late write phases.
+  server.closeAllConnections();
+  server.close();
+  await closeNats;
+};
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);
 ready = true;
 console.log(`Odysseus Fleet: http://127.0.0.1:${port}`);
-let closing = false;
 const poll = async () => {
   await pollFleet({
     view,
@@ -111,26 +131,11 @@ const pollProjectView = async () => {
 void pollProjectView();
 if (process.argv.includes("--flow-stdin"))
   attachObservationInput(view, process.stdin);
-const nats = await connectObservations({
+nats = await connectObservations({
   view,
   url: process.env.ODYSSEUS_NATS_URL,
   credsFile: process.env.ODYSSEUS_NATS_CREDS_FILE,
   caFile: process.env.ODYSSEUS_NATS_CA_FILE,
   allowLocal: process.env.ODYSSEUS_NATS_ALLOW_LOCAL === "1",
+  signal: observationAbort.signal,
 });
-const shutdown = async () => {
-  if (closing) return;
-  closing = true;
-  ready = false;
-  process.stdin.pause();
-  process.stdin.removeAllListeners("data");
-  const closeNats = nats?.close();
-  server.closeAllConnections();
-  server.close();
-  const flushed = await history.close(5000);
-  if (!flushed)
-    console.error("Observation history shutdown flush was not confirmed");
-  await closeNats;
-};
-process.once("SIGINT", shutdown);
-process.once("SIGTERM", shutdown);

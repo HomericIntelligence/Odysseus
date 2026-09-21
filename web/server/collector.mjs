@@ -81,7 +81,9 @@ export async function connectObservations({
   credsFile,
   caFile,
   allowLocal = false,
+  signal,
 }) {
+  if (signal?.aborted) return null;
   if (!url) {
     view.setSource("keystone", "not_configured");
     return null;
@@ -107,9 +109,14 @@ export async function connectObservations({
         ? { tls: caFile ? { caFile } : {} }
         : {}),
     });
+    if (signal?.aborted) {
+      await connection.close();
+      return null;
+    }
     view.setSource("keystone", "connected");
     connection.subscribe("hi.fleet.observations.>", {
       callback: (error, message) => {
+        if (signal?.aborted) return;
         if (error) {
           view.setSource("keystone", "unavailable");
           return;
@@ -129,18 +136,19 @@ export async function connectObservations({
     // This Core subscription observes telemetry only; it never binds a work consumer.
     void (async () => {
       for await (const status of connection.status()) {
+        if (signal?.aborted) return;
         if (status.type === "disconnect" || status.type === "reconnecting")
           view.setSource("keystone", "reconnecting");
         if (status.type === "reconnect")
           view.setSource("keystone", "connected");
       }
     })();
-    void connection
-      .closed()
-      .then(() => view.setSource("keystone", "disconnected"));
+    void connection.closed().then(() => {
+      if (!signal?.aborted) view.setSource("keystone", "disconnected");
+    });
     return connection;
   } catch {
-    view.setSource("keystone", "unavailable");
+    if (!signal?.aborted) view.setSource("keystone", "unavailable");
     return null;
   }
 }

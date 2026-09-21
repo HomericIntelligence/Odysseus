@@ -192,7 +192,11 @@ health are excluded. Argus remains the owner of long-term metrics and logs.
    one replaceable pending snapshot, with at most one second of coalescing.
    Each write syncs an owner-only temporary file, atomically replaces the cache,
    then syncs the directory. Only completion advances the confirmation receipt.
-5. On shutdown, the writer attempts a final flush for at most five seconds.
+5. Graceful shutdown is installed before observation intake, including while
+   NATS setup is pending. On shutdown, intake stops and HTTP returns `503` while
+   the writer attempts a final flush for at most five seconds. The backend holds
+   its exclusive listener until that flush completes or reaches its deadline.
+   A late NATS connection closes without attaching an observation subscription.
    A timeout remains uncertain even if an earlier filesystem operation finishes
    later. No later write phase or confirmation starts after the deadline.
    Every restart reports a discontinuity and creates a new SSE epoch. An old
