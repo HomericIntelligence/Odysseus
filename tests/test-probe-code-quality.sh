@@ -574,10 +574,12 @@ publisher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publisher)
 
 binding = publisher.resolve_executable("gh", "")
-real_popen = publisher.subprocess.Popen
+real_supervise = publisher.supervise_trusted_command
+mutation_applied = False
 
 
-def swapping_popen(*args, **kwargs):
+def swapping_supervise(*args, **kwargs):
+    global mutation_applied
     os.replace(executable_path, original_path)
     descriptor = os.open(
         executable_path,
@@ -598,14 +600,17 @@ def swapping_popen(*args, **kwargs):
         os.fchmod(descriptor, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
     finally:
         os.close(descriptor)
-    return real_popen(*args, **kwargs)
+    mutation_applied = True
+    return real_supervise(*args, **kwargs)
 
 
-publisher.subprocess.Popen = swapping_popen
+publisher.supervise_trusted_command = swapping_supervise
+# This direct command test carries a credential; the fixture's deadline-helper
+# environment audit belongs to the separate shell-to-helper boundary tests.
 try:
     publisher.run_trusted_command(
         "gh",
-        str(publisher.operation_deadline("10")),
+        str(publisher.time.monotonic_ns() + 10_000_000_000),
         "5",
         "4096",
         binding,
@@ -619,10 +624,15 @@ try:
             ".defaultBranchRef.name",
         ],
     )
-except (NotImplementedError, OSError, SystemExit):
+except SystemExit as error:
+    if error.code in (None, 0):
+        raise SystemExit("the changed executable name was reported as success")
+except (NotImplementedError, OSError):
     pass
 else:
     raise SystemExit("the changed executable name was reported as success")
+if sys.platform.startswith("linux") and not mutation_applied:
+    raise SystemExit("the executable replacement was never applied")
 PY
 executable_swap_status=$?
 set -e
@@ -675,11 +685,13 @@ spec = importlib.util.spec_from_file_location(
 publisher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publisher)
 binding = publisher.resolve_executable("gh", "")
-real_popen = publisher.subprocess.Popen
+real_supervise = publisher.supervise_trusted_command
+mutation_applied = False
 
 
-def mutating_popen(*args, **kwargs):
-    launch_path = kwargs.get("executable", "")
+def mutating_supervise(*args, **kwargs):
+    global mutation_applied
+    launch_path = args[1]
     try:
         launch_descriptor = int(os.path.basename(launch_path))
         seals = fcntl.fcntl(launch_descriptor, fcntl.F_GET_SEALS)
@@ -709,23 +721,29 @@ def mutating_popen(*args, **kwargs):
         os.fchmod(descriptor, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
     finally:
         os.close(descriptor)
-    return real_popen(*args, **kwargs)
+    mutation_applied = True
+    return real_supervise(*args, **kwargs)
 
 
-publisher.subprocess.Popen = mutating_popen
+publisher.supervise_trusted_command = mutating_supervise
 try:
     publisher.run_trusted_command(
         "gh",
-        str(publisher.operation_deadline("10")),
+        str(publisher.time.monotonic_ns() + 10_000_000_000),
         "5",
         "4096",
         binding,
         ["repo", "view", "HomericIntelligence/Atlas"],
     )
-except (NotImplementedError, OSError, SystemExit):
+except SystemExit as error:
+    if error.code in (None, 0):
+        raise SystemExit("same-inode executable mutation was reported as success")
+except (NotImplementedError, OSError):
     pass
 else:
     raise SystemExit("same-inode executable mutation was reported as success")
+if not mutation_applied:
+    raise SystemExit("the same-inode mutation was never applied")
 PY
   same_inode_status=$?
   set -e
