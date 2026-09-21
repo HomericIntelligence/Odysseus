@@ -66,6 +66,7 @@ TAIL = (
 )
 MANAGED_RUNTIME_MARKER = "# Odysseus managed pre-commit runtime v1"
 MANAGED_RUNTIME_BOOTSTRAP = r"""import atexit
+import ctypes
 import fcntl
 import hashlib
 import os
@@ -440,18 +441,34 @@ def payload(encoded, expected_digest, label):
 
 
 def seal(data, executable, label):
-    if not sys.platform.startswith("linux") or not hasattr(os, "memfd_create"):
+    if not sys.platform.startswith("linux"):
         abort("immutable {} snapshots are unavailable".format(label))
-    names = (
-        "F_ADD_SEALS", "F_GET_SEALS", "F_SEAL_SEAL",
-        "F_SEAL_SHRINK", "F_SEAL_GROW", "F_SEAL_WRITE",
+    # Linux UAPI values remain usable when Python was built against older libc.
+    add_seals = getattr(fcntl, "F_ADD_SEALS", 1033)
+    get_seals = getattr(fcntl, "F_GET_SEALS", 1034)
+    required = (
+        getattr(fcntl, "F_SEAL_SEAL", 1) | getattr(fcntl, "F_SEAL_SHRINK", 2)
+        | getattr(fcntl, "F_SEAL_GROW", 4) | getattr(fcntl, "F_SEAL_WRITE", 8)
     )
-    if not all(hasattr(fcntl, name) for name in names):
-        abort("immutable {} seals are unavailable".format(label))
     flags = getattr(os, "MFD_CLOEXEC", 0x0001) | getattr(
         os, "MFD_ALLOW_SEALING", 0x0002
     )
-    descriptor = own(os.memfd_create("odysseus-managed-hook", flags))
+    create = getattr(os, "memfd_create", None)
+    if callable(create):
+        descriptor = own(create("odysseus-managed-hook", flags))
+    else:
+        library = ctypes.CDLL(None, use_errno=True)
+        create = getattr(library, "memfd_create", None)
+        if create is None:
+            abort("immutable {} snapshots are unavailable".format(label))
+        create.argtypes = (ctypes.c_char_p, ctypes.c_uint)
+        create.restype = ctypes.c_int
+        descriptor = create(b"odysseus-managed-hook", flags)
+        if descriptor < 0:
+            abort("cannot create immutable {} snapshot: errno {}".format(
+                label, ctypes.get_errno()
+            ))
+        own(descriptor)
     try:
         view = memoryview(data)
         while view:
@@ -460,15 +477,11 @@ def seal(data, executable, label):
                 abort("{} snapshot write made no progress".format(label))
             view = view[written:]
         os.fchmod(descriptor, 0o500 if executable else 0o400)
-        required = (
-            fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_GROW
-            | fcntl.F_SEAL_WRITE | fcntl.F_SEAL_SEAL
-        )
-        fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, required)
+        fcntl.fcntl(descriptor, add_seals, required)
         opened = os.fstat(descriptor)
         if (
             opened.st_size != len(data)
-            or fcntl.fcntl(descriptor, fcntl.F_GET_SEALS) & required != required
+            or fcntl.fcntl(descriptor, get_seals) & required != required
             or hashlib.sha256(os.pread(descriptor, len(data), 0)).digest()
             != hashlib.sha256(data).digest()
         ):
@@ -1169,6 +1182,40 @@ class TrustedPayload:
         return None
 
 
+def linux_seal_constants():
+    """Use Linux UAPI values even when the Python build omitted their bindings."""
+    if not sys.platform.startswith("linux"):
+        raise SetupError("immutable executable seals require Linux")
+    required = (
+        getattr(fcntl, "F_SEAL_SEAL", 1) | getattr(fcntl, "F_SEAL_SHRINK", 2)
+        | getattr(fcntl, "F_SEAL_GROW", 4) | getattr(fcntl, "F_SEAL_WRITE", 8)
+    )
+    return (
+        getattr(fcntl, "F_ADD_SEALS", 1033),
+        getattr(fcntl, "F_GET_SEALS", 1034),
+        required,
+    )
+
+
+def linux_memfd_create(name, flags):
+    if not sys.platform.startswith("linux"):
+        raise SetupError("immutable executable snapshots require Linux")
+    create = getattr(os, "memfd_create", None)
+    if callable(create):
+        return create(name, flags)
+    library = ctypes.CDLL(None, use_errno=True)
+    create = getattr(library, "memfd_create", None)
+    if create is None:
+        raise SetupError("immutable executable snapshots are unavailable")
+    create.argtypes = (ctypes.c_char_p, ctypes.c_uint)
+    create.restype = ctypes.c_int
+    descriptor = create(name.encode("utf-8"), flags)
+    if descriptor < 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    return descriptor
+
+
 @dataclass
 class BoundTool:
     path: str
@@ -1225,14 +1272,9 @@ class BoundTool:
                 self.token[5],
                 self.token[6],
             )
-            required_seals = (
-                fcntl.F_SEAL_SEAL
-                | fcntl.F_SEAL_SHRINK
-                | fcntl.F_SEAL_GROW
-                | fcntl.F_SEAL_WRITE
-            )
+            _add_seals, get_seals, required_seals = linux_seal_constants()
             try:
-                seals = fcntl.fcntl(self.descriptor, fcntl.F_GET_SEALS)
+                seals = fcntl.fcntl(self.descriptor, get_seals)
             except (AttributeError, OSError) as error:
                 raise SetupError(
                     "cannot verify sealed executable {}: {}".format(self.path, error)
@@ -1293,35 +1335,16 @@ class BoundTool:
 
     @classmethod
     def sealed_bytes(cls, path, data, executable=True):
-        if not sys.platform.startswith("linux") or not hasattr(os, "memfd_create"):
-            raise SetupError(
-                "immutable executable snapshots are unavailable on this platform"
-            )
-        required_names = (
-            "F_ADD_SEALS",
-            "F_GET_SEALS",
-            "F_SEAL_SEAL",
-            "F_SEAL_SHRINK",
-            "F_SEAL_GROW",
-            "F_SEAL_WRITE",
-        )
-        if not all(hasattr(fcntl, name) for name in required_names):
-            raise SetupError("immutable executable seals are unavailable")
+        add_seals, get_seals, required_seals = linux_seal_constants()
         flags = getattr(os, "MFD_CLOEXEC", 0x0001) | getattr(
             os, "MFD_ALLOW_SEALING", 0x0002
         )
-        descriptor = os.memfd_create("odysseus-runtime", flags)
+        descriptor = linux_memfd_create("odysseus-runtime", flags)
         try:
             write_all(descriptor, data)
             os.fsync(descriptor)
             os.fchmod(descriptor, 0o500 if executable else 0o400)
-            required_seals = (
-                fcntl.F_SEAL_SHRINK
-                | fcntl.F_SEAL_GROW
-                | fcntl.F_SEAL_WRITE
-                | fcntl.F_SEAL_SEAL
-            )
-            fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, required_seals)
+            fcntl.fcntl(descriptor, add_seals, required_seals)
             opened = os.fstat(descriptor)
             if (
                 not stat.S_ISREG(opened.st_mode)
@@ -1329,6 +1352,7 @@ class BoundTool:
                 or opened.st_nlink != 0
                 or stat.S_IMODE(opened.st_mode) != (0o500 if executable else 0o400)
                 or opened.st_size != len(data)
+                or fcntl.fcntl(descriptor, get_seals) & required_seals != required_seals
             ):
                 raise SetupError("unsafe sealed executable snapshot")
             return cls(
