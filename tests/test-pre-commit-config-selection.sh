@@ -413,7 +413,7 @@ run_root_exact_index_policy() {
     local source_path relative_path
     local exact_root=$TMP_ROOT/root-exact-repository
     local inventory=$TMP_ROOT/root-exact-inventory
-    "$REAL_GIT" -C "$ROOT" ls-files -z --cached --others --exclude-standard > "$inventory" || return 99
+    fixture_git -C "$ROOT" ls-files -z --cached --others --exclude-standard > "$inventory" || return 99
     mkdir "$exact_root" || return 99
     while IFS= read -r -d '' relative_path; do
         source_path=$ROOT/$relative_path
@@ -565,7 +565,12 @@ PY
 fixture_git -C "$REPO_ROOT" add -- scripts/suppressed.sh
 if (
     cd "$REPO_ROOT" || exit 99
+    for git_variable in "${!GIT_@}"; do
+        unset "$git_variable"
+    done
     env \
+        GIT_CONFIG_GLOBAL=/dev/null \
+        GIT_CONFIG_NOSYSTEM=1 \
         HOME="$TEST_HOME" \
         LC_ALL=C \
         PATH="$PATH" \
