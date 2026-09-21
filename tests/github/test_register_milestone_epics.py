@@ -122,6 +122,32 @@ def _linux_process_identity_is_active(process_id: int, start_time: int) -> bool:
     return len(fields) > 19 and int(fields[19]) == start_time
 
 
+def test_libc_memfd_preserves_seals_without_python_bindings() -> None:
+    """The native compatibility path still rejects writes after sealing."""
+    _require_linux()
+    missing = {name: None for name in (
+        "F_ADD_SEALS", "F_GET_SEALS", "F_SEAL_GROW", "F_SEAL_SEAL",
+        "F_SEAL_SHRINK", "F_SEAL_WRITE",
+    )}
+    with patch.object(reg.os, "memfd_create", None, create=True), patch.multiple(
+        reg.fcntl, create=True, **missing
+    ):
+        descriptor = reg._memfd_create("registrar-sealing-test", 2)
+        try:
+            os.write(descriptor, b"bound")
+            add_seals, get_seals, required = reg._required_seals()
+            reg.fcntl.fcntl(descriptor, add_seals, required)
+            assert reg.fcntl.fcntl(descriptor, get_seals) & required == required
+            try:
+                os.write(descriptor, b"changed")
+            except OSError as error:
+                assert error.errno == errno.EPERM
+            else:
+                raise AssertionError("sealed executable bytes remained writable")
+        finally:
+            os.close(descriptor)
+
+
 def test_libc_pidfds_work_without_python_pidfd_bindings() -> None:
     """The locked Python can retain Linux process identity through libc."""
     _require_linux()
@@ -4660,6 +4686,7 @@ def test_rendering_requires_known_numbers() -> None:
 
 def main() -> int:
     checks = [
+        test_libc_memfd_preserves_seals_without_python_bindings,
         test_libc_pidfds_work_without_python_pidfd_bindings,
         test_process_scope_rescans_after_a_scanned_child_forks_then_exits,
         test_tool_symlink_invocation_is_rejected,

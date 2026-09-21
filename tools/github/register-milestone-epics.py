@@ -1648,15 +1648,19 @@ def _resolve_executable(
 
 def _required_seals() -> tuple[int, int, int]:
     """Return the Linux operations and mask for one immutable memfd."""
-    names = (
-        "F_ADD_SEALS",
-        "F_GET_SEALS",
-        "F_SEAL_GROW",
-        "F_SEAL_SEAL",
-        "F_SEAL_SHRINK",
-        "F_SEAL_WRITE",
-    )
-    values = {name: getattr(fcntl, name, None) for name in names}
+    if not sys.platform.startswith("linux"):
+        raise NotImplementedError("sealed executable support is unavailable")
+    # Linux UAPI: include/uapi/linux/fcntl.h and asm-generic/fcntl.h.
+    # Older Python build headers can omit these stable kernel ABI constants.
+    defaults = {
+        "F_ADD_SEALS": 1033, "F_GET_SEALS": 1034,
+        "F_SEAL_GROW": 4, "F_SEAL_SEAL": 1,
+        "F_SEAL_SHRINK": 2, "F_SEAL_WRITE": 8,
+    }
+    values = {
+        name: default if getattr(fcntl, name, None) is None else getattr(fcntl, name)
+        for name, default in defaults.items()
+    }
     if any(not isinstance(value, int) for value in values.values()):
         raise NotImplementedError("sealed executable support is unavailable")
     seals = (
@@ -1666,6 +1670,26 @@ def _required_seals() -> tuple[int, int, int]:
         | values["F_SEAL_WRITE"]
     )
     return values["F_ADD_SEALS"], values["F_GET_SEALS"], seals
+
+
+def _memfd_create(name: str, flags: int) -> int:
+    """Create a native Linux memfd without depending on Python build headers."""
+    if not sys.platform.startswith("linux"):
+        raise NotImplementedError("sealed executable support is unavailable")
+    creator = getattr(os, "memfd_create", None)
+    if callable(creator):
+        return creator(name, flags)
+    library = ctypes.CDLL(None, use_errno=True)
+    creator = getattr(library, "memfd_create", None)
+    if creator is None:
+        raise NotImplementedError("native memfd_create is unavailable")
+    creator.argtypes = [ctypes.c_char_p, ctypes.c_uint]
+    creator.restype = ctypes.c_int
+    descriptor = creator(os.fsencode(name), flags)
+    if descriptor < 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number))
+    return descriptor
 
 
 def _descriptor_digest(descriptor: int) -> tuple[int, bytes]:
@@ -1711,13 +1735,15 @@ def _sealed_executable(path: Path, expected: tuple[int, ...], label: str):
     """Yield a Linux executable path backed by one sealed descriptor snapshot."""
     if not sys.platform.startswith("linux"):
         raise NotImplementedError("sealed executable support is unavailable")
-    creator = getattr(os, "memfd_create", None)
+    creator = _memfd_create
+    # Linux UAPI include/uapi/linux/memfd.h: MFD_ALLOW_SEALING = 0x0002.
     allow_sealing = getattr(os, "MFD_ALLOW_SEALING", None)
+    if allow_sealing is None:
+        allow_sealing = 2
     no_follow = getattr(os, "O_NOFOLLOW", None)
     close_on_exec = getattr(os, "O_CLOEXEC", None)
     if (
-        creator is None
-        or not isinstance(allow_sealing, int)
+        not isinstance(allow_sealing, int)
         or not isinstance(no_follow, int)
         or not isinstance(close_on_exec, int)
     ):
