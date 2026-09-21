@@ -10,6 +10,7 @@ import fcntl
 import os
 from pathlib import Path
 import signal
+import stat
 import subprocess
 import sys
 
@@ -45,6 +46,25 @@ def main() -> None:
         except OSError as error:
             report[name] = {"errno": error.errno}
     report["cgroup_root_writable"] = os.access("/sys/fs/cgroup", os.W_OK)
+    # execve reports ENOENT for a missing ELF loader as well as a missing
+    # executable. Record only fixed runtime routes, not environment contents.
+    report["runtime_routes"] = {}
+    for name in (
+        "/usr/bin/python3", "/lib", "/lib64", "/usr/lib64",
+        "/lib64/ld-linux-x86-64.so.2",
+        "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+        "/lib/ld-linux-aarch64.so.1",
+    ):
+        try:
+            info = os.stat(name)
+            report["runtime_routes"][name] = {
+                "resolved": os.path.realpath(name, strict=True),
+                "uid": info.st_uid,
+                "mode": oct(stat.S_IMODE(info.st_mode)),
+                "symlink": os.path.islink(name),
+            }
+        except OSError as error:
+            report["runtime_routes"][name] = {"errno": error.errno}
     try:
         result = subprocess.run(
             ["/usr/bin/unshare", "--user", "--map-root-user", "--mount",
