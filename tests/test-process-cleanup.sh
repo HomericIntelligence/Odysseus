@@ -1522,7 +1522,13 @@ if (
         [ "$((SECONDS - started))" -le 2 ] || exit 38
         [ -s "$bound_curl_descendant" ] || exit 39
         escaped_pid=$(cat "$bound_curl_descendant")
-        process_is_gone "$escaped_pid" "$bound_curl_heartbeat" || exit 40
+        eval "$PRODUCTION_PROCESS_RECEIPT"
+        if _process_receipt "$escaped_pid" >/dev/null; then
+            exit 40
+        else
+            extinction_status=$?
+            [ "$extinction_status" -eq 1 ] || exit 40
+        fi
     fi
 ); then
     pass "curl transport is sealed, minimal, bounded, and descendant-extinguishing"
