@@ -686,6 +686,9 @@ def bind_executable(name: str, unavailable_message: str) -> BoundExecutable:
                 if len(shebang) != 2 or shebang[1] not in {"sh", "bash", "python3"}:
                     fail(f"selected {name} has an unbound env shebang")
                 interpreter_path = shutil.which(shebang[1], path=os.defpath)
+                if interpreter_path is not None:
+                    # Bind the canonical target of the fixed system alias.
+                    interpreter_path = os.path.realpath(interpreter_path, strict=True)
             elif len(shebang) == 1 and os.path.isabs(shebang[0]):
                 interpreter_path = shebang[0]
             else:

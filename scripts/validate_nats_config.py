@@ -1784,6 +1784,9 @@ def _bind_executable(
                     raise RuntimeError(
                         f"selected {name} shebang interpreter is unavailable"
                     )
+                # Resolve only aliases selected from the fixed system search
+                # path; the canonical file is still snapshotted and verified.
+                interpreter_path = os.path.realpath(interpreter_path, strict=True)
             elif len(shebang) == 1 and os.path.isabs(shebang[0]):
                 interpreter_path = shebang[0]
             else:
@@ -2951,8 +2954,13 @@ def provision_nats_server(
             ):
                 raise RuntimeError("materialized parser identity is unsafe")
         finally:
-            os.close(descriptor)
-            descriptor = -1
+            try:
+                # Partial writes change metadata. Retain the final state of
+                # the owned descriptor, never refresh it through the pathname.
+                created_state = os.fstat(descriptor)
+            finally:
+                os.close(descriptor)
+                descriptor = -1
         direct = os.stat(
             parser_name,
             dir_fd=destination_descriptor,
