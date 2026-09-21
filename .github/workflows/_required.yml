@@ -411,13 +411,20 @@ jobs:
       - name: Install hook containment dependency
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends bubblewrap apparmor-profiles
+          sudo apt-get install --yes --no-install-recommends bubblewrap apparmor-profiles patch
           # Use the distribution's purpose-built profile. It permits sandbox
           # setup and restricts child capabilities; do not disable the global
           # user-namespace restriction or load an unconfined interpreter profile.
           sudo install -m 0644 \
             /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
             /etc/apparmor.d/bwrap-userns-restrict
+          # Upstream compatibility fix for anonymous bind-mounted snapshots:
+          # https://gitlab.com/apparmor/apparmor/-/merge_requests/1272
+          # Mediate deleted files under the existing rules; keep every rule,
+          # profile transition, and child capability denial unchanged.
+          sudo patch --batch --forward --fuzz=0 \
+            /etc/apparmor.d/bwrap-userns-restrict \
+            < configs/ci/bwrap-mediate-deleted.patch
           sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
           /usr/bin/bwrap --unshare-all --die-with-parent --cap-drop ALL \
             --ro-bind / / -- /usr/bin/true
