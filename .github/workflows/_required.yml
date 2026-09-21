@@ -261,8 +261,8 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
 
-      - name: Install PyYAML (for compose validator)
-        run: pip install --user pyyaml
+      - name: Install Compose and hook-selection test dependencies
+        run: pip install --user pyyaml 'pre-commit==3.8.0'
 
       - name: Validate NATS config structure
         run: python3 scripts/validate_nats_config.py
@@ -420,6 +420,16 @@ jobs:
 
       - name: Run validate-configs (canonical build artifact for meta-repo)
         run: just validate-configs
+
+      - name: Report sandbox-specific kernel denials after a build failure
+        if: ${{ failure() }}
+        timeout-minutes: 1
+        run: |
+          set -euo pipefail
+          # Read only this ephemeral runner's recent sandbox denials. Do not
+          # change AppArmor policy or print unrelated kernel/audit records.
+          sudo journalctl --kernel --since '-10 minutes' --no-pager --output=cat \
+            | awk '/apparmor="DENIED"/ && /bwrap|odysseus-precommit/ { print }'
 
   schema-validation:
     name: schema-validation
