@@ -852,6 +852,8 @@ pre_commit_origin=$2
 git=$3
 git_origin=$4
 mode=$5
+shift 5
+pre_commit_command=("$@" "$pre_commit")
 repo=/tmp/odysseus-precommit/repo
 hooks=$repo/.git/hooks
 
@@ -859,9 +861,9 @@ ODYSSEUS_EXECUTABLE_ORIGIN="$git_origin" \
     "$git" -c init.templateDir= init -q "$repo" >&2
 cd "$repo"
 ODYSSEUS_EXECUTABLE_ORIGIN="$pre_commit_origin" \
-    "$pre_commit" validate-config .pre-commit-config.yaml >&2
+    "${pre_commit_command[@]}" validate-config .pre-commit-config.yaml >&2
 ODYSSEUS_EXECUTABLE_ORIGIN="$pre_commit_origin" \
-    "$pre_commit" install >&2
+    "${pre_commit_command[@]}" install >&2
 
 inventory=()
 for hook in commit-msg post-checkout post-commit post-merge post-rewrite \
@@ -901,7 +903,7 @@ if [[ "$mode" == install ]]; then
         install_args+=(--hook-type "$hook")
     done
     ODYSSEUS_EXECUTABLE_ORIGIN="$pre_commit_origin" \
-        "$pre_commit" "${install_args[@]}" >&2
+        "${pre_commit_command[@]}" "${install_args[@]}" >&2
 fi
 
 for hook in "${inventory[@]}"; do
@@ -1619,6 +1621,29 @@ class BoundExecutable(str):
         return value
 
 
+def _bound_command(bound):
+    """Select the sealed script and interpreter without following its shebang."""
+
+    if bound.interpreter_source is None:
+        return [bound.execution.path]
+    if not bound.python_paths:
+        return [bound.interpreter_execution.path, bound.execution.path]
+    loader = (
+        "import sys; count=int(sys.argv[1]); "
+        "roots=sys.argv[2:2+count]; script=sys.argv[2+count]; "
+        "sys.path[:0]=roots; sys.argv=sys.argv[2+count:]; "
+        "exec(compile(open(script,'rb').read(),script,'exec'),"
+        "{'__name__':'__main__','__file__':script})"
+    )
+    return [
+        bound.interpreter_execution.path,
+        "-I", "-S", "-c", loader,
+        str(len(bound.python_paths)),
+        *bound.python_paths,
+        bound.execution.path,
+    ]
+
+
 @dataclass
 class BoundDir:
     path: str
@@ -2052,33 +2077,10 @@ def run(argv, cwd, env, timeout, readonly_paths=(), input_files=()):
                 add_sealed(execution_dependency)
             executable = bound.execution
             execution_argv0 = bound.source.path
-            target_command = [bound.execution.path] + list(argv[1:])
+            target_command = _bound_command(bound) + list(argv[1:])
             if bound.interpreter_source is not None:
                 bound.interpreter_source.verify()
                 add_sealed(bound.interpreter_execution)
-                if bound.python_paths:
-                    loader = (
-                        "import sys; count=int(sys.argv[1]); "
-                        "roots=sys.argv[2:2+count]; script=sys.argv[2+count]; "
-                        "sys.path[:0]=roots; sys.argv=sys.argv[2+count:]; "
-                        "exec(compile(open(script,'rb').read(),script,'exec'),"
-                        "{'__name__':'__main__','__file__':script})"
-                    )
-                    target_command = [
-                        bound.interpreter_execution.path,
-                        "-I",
-                        "-S",
-                        "-c",
-                        loader,
-                        str(len(bound.python_paths)),
-                        *bound.python_paths,
-                        bound.execution.path,
-                    ] + list(argv[1:])
-                else:
-                    target_command = [
-                        bound.interpreter_execution.path,
-                        bound.execution.path,
-                    ] + list(argv[1:])
                 executable = bound.interpreter_execution
                 execution_argv0 = bound.interpreter_source.path
             for item in input_files:
@@ -3918,6 +3920,7 @@ def generate(
                 git.execution.path,
                 git.execution.path,
                 "install" if install else "check",
+                *_bound_command(pre_commit)[:-1],
             ],
             "/",
             env,
