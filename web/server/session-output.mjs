@@ -137,6 +137,7 @@ function validateBundle(bundle, expected) {
       capture.retainedItems,
       capture.omittedItems,
     ].every(nonnegative) ||
+    capture.observedCompletedItems > 4096 ||
     capture.retainedItems !== bundle.items.length ||
     capture.observedCompletedItems !==
       capture.retainedItems + capture.omittedItems ||

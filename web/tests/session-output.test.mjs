@@ -472,6 +472,18 @@ test("retention limits and available provider metadata preserve their qualified 
   assert.deepEqual((await service.read(scope)).body.bundle, data);
 });
 
+for (const observed of [4096, 4097])
+  test(`observed command count ${observed} obeys the producer ledger limit`, async (t) => {
+    const data = bundle();
+    data.capture.observedCompletedItems = observed;
+    data.capture.omittedItems = observed - data.capture.retainedItems;
+    data.capture.retentionLimited = true;
+    const { service } = await fixture(t, { bundle: data });
+    const result = await service.read(scope);
+    assert.equal(result.code, observed === 4096 ? 200 : 503);
+    if (observed === 4096) assert.deepEqual(result.body.bundle, data);
+  });
+
 test("whole-file, item-count and aggregate-record limits bound retained data", async (t) => {
   for (const data of [
     bundle(
