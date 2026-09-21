@@ -405,6 +405,7 @@ load_state curl-env-leak.path CURL_ENV_LEAK_MARKER
 load_state test-platform.name TEST_PLATFORM
 unset HOME
 printf '%s\n' "$*" >> "$CURL_LOG"
+printf '%s\n' "${1-}" >> "$CURL_LOG.first-options"
 export -p >> "$CURL_ENV_LOG"
 printf '%s\n' -- >> "$CURL_ENV_LOG"
 if [ -d /proc/$$/fd ]; then
@@ -1199,6 +1200,7 @@ run_doctor() {
     : > "$SYSTEMCTL_LOG"
     : > "$PING_LOG"
     : > "$CURL_LOG"
+    : > "$CURL_LOG.first-options"
     : > "$CURL_ENV_LOG"
     : > "$CURL_FD_LOG"
     : > "$APT_LOG"
@@ -1425,9 +1427,9 @@ curl_replacement_executed=false
 [ -e "$CURL_ATTACK_SENTINEL" ] && curl_replacement_executed=true
 curl_health_uses_q=false
 if awk '
-    { seen = 1; if ($1 != "-q") exit 1 }
-    END { exit seen ? 0 : 1 }
-' "$CURL_LOG"; then
+    { seen = 1; if ($0 != "-q") invalid = 1 }
+    END { exit (!seen || invalid) ? 1 : 0 }
+' "$CURL_LOG.first-options"; then
     curl_health_uses_q=true
 fi
 if [ -e "$FAKE_BIN/curl.bound" ]; then
