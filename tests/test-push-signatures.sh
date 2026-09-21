@@ -5498,11 +5498,7 @@ import signal
 
 if os.fork() == 0:
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    with open('/proc/self/status', 'r', encoding='ascii') as stream:
-        nspid = next(
-            line for line in stream if line.startswith('NSpid:')
-        ).split()[1]
-    os.write(1, ('descendant=' + nspid + '\\n').encode('ascii'))
+    os.write(1, b'descendant-ready\\n')
     while True:
         signal.pause()
 while True:
@@ -5520,20 +5516,10 @@ while True:
         selected[6] = hanging_digest
         return selected
 
-    def descendant_extinct(output):
-        match = re.search(rb"^descendant=(\d+)$", output, re.MULTILINE)
-        if match is None:
-            return False
-        pid = int(match.group(1))
-        deadline = time.monotonic() + 1
-        while time.monotonic() < deadline:
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                return True
-            time.sleep(0.01)
-        return False
-
+    # The fixture descendant never closes its inherited stdout. Receiving its
+    # readiness line and EOF through bounded communicate proves this child no
+    # longer holds the pipe. A surviving paused child makes communicate time out.
+    # Do not interpret a PID from the sandbox's private /proc as a host PID.
     try:
         deadline_result = subprocess.run(
             hanging_command(1),
@@ -5551,7 +5537,7 @@ while True:
     if (
         deadline_result.returncode != 124
         or b"wall-clock deadline exceeded" not in deadline_result.stderr
-        or not descendant_extinct(deadline_result.stdout)
+        or deadline_result.stdout != b"descendant-ready\n"
     ):
         print(
             "managed runtime deadline did not extinguish descendants: "
@@ -5616,7 +5602,7 @@ while True:
                 process.returncode != 128 + cancel_signal
                 or signal.Signals(cancel_signal).name.encode("ascii")
                 not in cancel_error
-                or not descendant_extinct(cancel_out)
+                or cancel_out != b"descendant-ready\n"
             ):
                 print(
                     "managed runtime cancellation did not extinguish descendants: "
