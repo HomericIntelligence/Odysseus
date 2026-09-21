@@ -1194,7 +1194,7 @@ def _literal_enabled(value: object, source=None) -> bool:
     raise YamlPolicyError("invalid anonymous-auth literal", source)
 
 
-def _environment_mark(environment: object, node):
+def _environment_mark(environment: object, node, *, strict: bool = True):
     """Return the source line for one effective enabled setting."""
     source_node = None
     if isinstance(environment, dict):
@@ -1212,9 +1212,11 @@ def _environment_mark(environment: object, node):
         enabled_index = None
         for index, item in enumerate(environment):
             if not isinstance(item, str):
-                raise YamlPolicyError("nonliteral environment key", node)
+                if strict:
+                    raise YamlPolicyError("nonliteral environment key", node)
+                continue
             name, separator, value = item.partition("=")
-            if "$" in name:
+            if strict and "$" in name:
                 raise YamlPolicyError("nonliteral environment key", node)
             if name.strip() != ANON_SETTING:
                 continue
@@ -1274,6 +1276,12 @@ def _anonymous_entries(document: object, node):
                 if found is not None:
                     pending.append((child, found[1]))
         elif isinstance(value, list) and isinstance(value_node, yaml.SequenceNode):
+            # Standalone YAML fragments can carry environment assignments too.
+            # Other list members need not be environment entries; explicit
+            # environment blocks retain the strict validation above.
+            mark = _environment_mark(value, value_node, strict=False)
+            if mark is not None:
+                results.add(mark)
             pending.extend(zip(value, value_node.value))
     return sorted(results)
 
