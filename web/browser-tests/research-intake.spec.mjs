@@ -747,7 +747,19 @@ test("phone intake keeps every navigation action within the viewport", async ({
   const buttons = page
     .getByRole("navigation", { name: "Main navigation" })
     .getByRole("button");
-  await expect(buttons).toHaveCount(5);
+  const labels = [
+    "System flow",
+    "Work items",
+    "Workers",
+    "Pipeline",
+    "Research intake",
+    "Observation history",
+  ];
+  await expect(buttons).toHaveCount(labels.length);
+  for (const name of labels)
+    await expect(
+      buttons.and(page.getByRole("button", { name, exact: true })),
+    ).toBeVisible();
   for (const button of await buttons.all()) {
     const box = await button.boundingBox();
     expect(box).not.toBeNull();

@@ -60,9 +60,27 @@ type Packet = {
   result?: string;
   sourceId?: string;
   sequence: number;
+  origin?: "live" | "restored";
   [key: string]: unknown;
 };
+type ObservationHistory = {
+  status:
+    | "initializing"
+    | "memory_only"
+    | "new_archive"
+    | "restored"
+    | "persisted"
+    | "unavailable";
+  restartGap: boolean;
+  pending: boolean;
+  persistedSequence?: number;
+  persistedAt?: string;
+  retained?: number;
+  omitted?: number;
+  reason?: string;
+};
 type Snapshot = {
+  history?: ObservationHistory;
   projects?: ProjectsProjection;
   cursor: string;
   generatedAt: string;
@@ -286,6 +304,7 @@ function App() {
   const [host, setHost] = useState("");
   const [selection, setSelected] = useState<Item | null>(null);
   const [packet, setPacket] = useState<Packet | null>(null);
+  const [historySelection, setHistorySelection] = useState(false);
   const detailPanel = useRef<HTMLElement>(null);
   const selectionTrigger = useRef<HTMLElement | null>(null);
   useEffect(() => {
@@ -373,18 +392,46 @@ function App() {
       (!host || packetHost(items, p) === host) &&
       (!component || p.source === component || p.target === component),
   );
+  const livePackets = packets.filter((p) => p.origin === "live");
+  const historyDetails = Boolean(packet && historySelection);
+  const history = snapshot?.history;
+  const historyStatus = !history
+    ? "Waiting for archive status"
+    : history.status === "memory_only"
+      ? "Memory only"
+      : history.status === "new_archive"
+        ? "New archive"
+        : history.status === "unavailable"
+          ? "History unavailable"
+          : history.status === "initializing"
+            ? "Opening archive"
+            : history.retained === 0
+              ? "Empty committed archive"
+              : history.status === "restored"
+                ? "Restored history"
+                : "Persisted history";
   const hosts = useMemo(
     () => [
       ...new Set(
-        [...items, ...workers].map((i) => i.host).filter(Boolean) as string[],
+        [...items, ...workers, ...(snapshot?.observations ?? [])]
+          .map((i) => i.host)
+          .filter(Boolean) as string[],
       ),
     ],
-    [items, workers],
+    [items, workers, snapshot?.observations],
   );
   const working = live ? activeAgentCount(items, now) : 0;
   const showPacket = (p: Packet) => {
     setPacket(p);
-    setSelected(matchPacket(items, p) ?? null);
+    setHistorySelection(p.origin === "restored");
+    setSelected(
+      p.origin === "restored" ? null : (matchPacket(items, p) ?? null),
+    );
+  };
+  const showHistory = (p: Packet) => {
+    setPacket(p);
+    setHistorySelection(true);
+    setSelected(null);
   };
   return (
     <div className="app-shell">
@@ -403,6 +450,7 @@ function App() {
             "Workers",
             "Pipeline",
             "Research intake",
+            "Observation history",
           ].map((name, i) => (
             <button
               key={name}
@@ -410,7 +458,7 @@ function App() {
               onClick={() => setTab(name)}
             >
               <span className="nav-icon" aria-hidden="true">
-                {["⌘", "▤", "▦", "⇢"][i]}
+                {["⌘", "▤", "▦", "⇢", "◇", "◷"][i]}
               </span>
               {name}
             </button>
@@ -430,7 +478,7 @@ function App() {
                 }}
               >
                 <span
-                  className={`tiny-dot ${live && packets.some((p) => (p.source === c || p.target === c) && now - Date.parse(p.receivedAt) < 30000) ? "lit" : ""}`}
+                  className={`tiny-dot ${live && livePackets.some((p) => (p.source === c || p.target === c) && now - Date.parse(p.receivedAt) < 30000) ? "lit" : ""}`}
                 />
                 {c === "achaeanfleet" ? "AchaeanFleet" : title(c)}
               </button>
@@ -494,8 +542,9 @@ function App() {
             <span>Traffic observations</span>
             <strong>
               {
-                packets.filter((p) => now - Date.parse(p.receivedAt) < 30000)
-                  .length
+                livePackets.filter(
+                  (p) => now - Date.parse(p.receivedAt) < 30000,
+                ).length
               }
               <small>last 30s</small>
             </strong>
@@ -581,7 +630,7 @@ function App() {
               </div>
             </div>
             <Flow
-              packets={packets}
+              packets={livePackets}
               items={items}
               now={now}
               live={live}
@@ -592,14 +641,151 @@ function App() {
             <div className="flow-caption">
               <span>APPLICATION MESSAGE OBSERVATIONS</span>
               <span>
-                {packets.length
+                {livePackets.length
                   ? "Publish, delivery, and acknowledgment remain distinct observations."
                   : "No traffic observed yet. Connections illuminate when real telemetry arrives."}
               </span>
             </div>
           </section>
         )}
-        {tab === "Research intake" ? (
+        {tab === "Observation history" ? (
+          <section className="panel">
+            <div className="panel-heading">
+              <div>
+                <h2>Retained observations</h2>
+                <p>
+                  Recorded message metadata. Current ownership is reported
+                  separately.
+                </p>
+              </div>
+              <span>{packets.length} shown</span>
+            </div>
+            <section className="notice" aria-label="Observation archive status">
+              <strong>{historyStatus}</strong>
+              <p>
+                {history?.status === "memory_only"
+                  ? "History is kept in memory and will be lost on backend restart."
+                  : history?.status === "new_archive"
+                    ? "No committed archive exists yet. Received observations will be retained after persistence succeeds."
+                    : history?.status === "unavailable"
+                      ? `Archive persistence is unavailable: ${display(history.reason)}. Current observations can still appear; earlier records may be unavailable.`
+                      : history?.retained === 0
+                        ? "The committed archive contains no observations."
+                        : "This bounded archive contains observations the dashboard received. It does not prove complete upstream delivery."}
+              </p>
+              {history?.persistedSequence !== undefined && (
+                <p>
+                  Confirmed sequence {history.persistedSequence}
+                  {history.persistedAt && (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <time dateTime={history.persistedAt}>
+                        {history.persistedAt}
+                      </time>
+                    </>
+                  )}
+                  {history.retained !== undefined && (
+                    <> · {history.retained} retained in archive</>
+                  )}
+                </p>
+              )}
+              {history?.pending && (
+                <p>
+                  Pending persistence: displayed observations can be newer than
+                  the confirmed archive.
+                </p>
+              )}
+              {Boolean(history?.omitted) && (
+                <p>
+                  Partial retention: {history?.omitted} omitted from the last
+                  archive write to fit its limits.
+                </p>
+              )}
+              {history?.restartGap && (
+                <p>
+                  Restart gap: no observation coverage is established while the
+                  backend was stopped. Restored records are historical.
+                </p>
+              )}
+            </section>
+            <div className="table-scroll">
+              <table aria-label="Retained observations">
+                <thead>
+                  <tr>
+                    <th>SEQUENCE</th>
+                    <th>OBSERVATION</th>
+                    <th>ORIGINAL TIMES</th>
+                    <th>ORIGIN / HOST</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {packets
+                    .slice()
+                    .reverse()
+                    .map((p) => (
+                      <tr key={p.sequence}>
+                        <td className="mono">{p.sequence}</td>
+                        <td>
+                          <button
+                            className="item-link"
+                            onClick={() => showHistory(p)}
+                          >
+                            {p.eventId}
+                          </button>
+                          <small>
+                            {title(p.source)} → {title(p.target)} ·{" "}
+                            {p.operation}
+                          </small>
+                          <small>
+                            {p.taskId ??
+                              p.messageId ??
+                              "No task identity reported"}
+                          </small>
+                        </td>
+                        <td className="mono">
+                          <small>
+                            Observed{" "}
+                            <time dateTime={p.observedAt}>{p.observedAt}</time>
+                          </small>
+                          <small>
+                            Received{" "}
+                            <time dateTime={p.receivedAt}>{p.receivedAt}</time>
+                          </small>
+                        </td>
+                        <td>
+                          <span className="status-badge">
+                            {p.origin === "restored"
+                              ? "Restored"
+                              : p.origin === "live"
+                                ? "Live"
+                                : "Not reported"}
+                          </span>
+                          <small>{display(p.host)}</small>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+            {!packets.length && (
+              <div className="empty">
+                <h3>
+                  {snapshot?.observations.length
+                    ? "No observations match these filters"
+                    : history?.status === "unavailable"
+                      ? "Earlier history is unavailable"
+                      : "No retained observations"}
+                </h3>
+                <p>
+                  {snapshot?.observations.length
+                    ? "Clear a filter to see retained observations."
+                    : "Only observed messages appear here. This view does not represent the work backlog or worker activity."}
+                </p>
+              </div>
+            )}
+          </section>
+        ) : tab === "Research intake" ? (
           <ResearchIntake
             items={items}
             sessions={snapshot?.resources.sessions ?? []}
@@ -759,7 +945,7 @@ function App() {
                   <span className="mono">LIVE</span>
                 </div>
                 <div className="trace-list">
-                  {packets
+                  {livePackets
                     .slice(-30)
                     .reverse()
                     .map((p) => (
@@ -783,7 +969,7 @@ function App() {
                         <time>{age(p.receivedAt, now)}</time>
                       </button>
                     ))}
-                  {!packets.length && (
+                  {!livePackets.length && (
                     <div className="empty">
                       <span>↝</span>
                       <h3>No observed messages</h3>
@@ -827,11 +1013,13 @@ function App() {
           ×
         </button>
         <p className="eyebrow">
-          {selected?.historical
-            ? "HISTORICAL SELECTION"
-            : selected?.sourceStale
-              ? "LAST REPORTED OWNERSHIP"
-              : "CORRELATED EVIDENCE"}
+          {historyDetails
+            ? "OBSERVATION METADATA"
+            : selected?.historical
+              ? "HISTORICAL SELECTION"
+              : selected?.sourceStale
+                ? "LAST REPORTED OWNERSHIP"
+                : "CORRELATED EVIDENCE"}
         </p>
         <h2>
           {selected?.subject ?? selected?.taskId ?? "Message observation"}
@@ -847,8 +1035,9 @@ function App() {
             reported Fleet records.
           </p>
         )}
-        {sessionControls}
-        {selected?.kind === "session" &&
+        {!historyDetails && sessionControls}
+        {!historyDetails &&
+          selected?.kind === "session" &&
           selected.workerId &&
           Number.isSafeInteger(selected.generation) &&
           selected.generation! > 0 && (
@@ -941,7 +1130,9 @@ function App() {
             </dl>
             {!selected && (
               <p className="fine-print">
-                No matching item is present in the current service snapshot.
+                {historyDetails
+                  ? "Recorded identities do not establish current ownership. Select a current work item to use its controls."
+                  : "No matching item is present in the current service snapshot."}
               </p>
             )}
           </>

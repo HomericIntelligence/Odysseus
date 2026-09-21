@@ -245,6 +245,7 @@ branch or a local test does not establish a deployed service.
 | Conversations, pending requests, answers and execution evidence | Hephaestus private runtime storage | Read scoped private attachments or explicitly registered immutable output exports |
 | Recovery command receipts | Private worker/adapter journals | Display outcomes; never authorize replacement work from a journal |
 | Live message observations | Keystone observations; retained metrics/logs belong to Argus | Render bounded metadata and expose gaps; never consume work for visualization |
+| Observation restart cache | Disposable Odysseus presentation copy in an optional private local directory | Restore sanitized historical rows only; no resources, source health, claims, or command authority |
 
 Agamemnon's `fleetd` is an execution adapter. It carries durable controller
 commands to workers and journals acknowledgments without becoming another
@@ -252,6 +253,41 @@ scheduler. Sessions sharing one provider process retain independent logical
 agent identities, claims, workspaces and generations. Application-message
 observations connect an item to its reported component, agent, host and stage;
 assignment alone does not establish active execution.
+
+### Bounded observation restart history
+
+`FleetView` applies one metadata projection to live intake and validated history.
+Its dedicated restore path preserves observation/receive times, ordering, bounded
+deduplication identities, source-sequence state, and coverage counters. Restore
+does not pass through live intake or populate controller resource collections.
+The Observation history page reuses snapshot/SSE data and marks restored origin;
+restored rows never count as live traffic or enable work controls.
+
+`web/server/observation-history.mjs` owns the optional local file lifecycle.
+The composition root acquires the exclusive loopback port, validates/restores the
+cache, then enables HTTP-generated and attached observations. The writer holds
+one active and one replaceable pending snapshot. It uses owner-only files,
+file sync, atomic replacement, and directory sync before advancing the reported
+persisted prefix. A five-second final-flush deadline cannot produce a later
+success receipt. File identity is checked again before replacement.
+
+The closed `hi/odysseus/observation-history/v1` format holds at most 250 rows,
+1,000 derived identities, and 1,000 source-sequence entries in a 4 MiB file.
+One capped temporary member bounds transient storage. The optional
+`ODYSSEUS_OBSERVATION_HISTORY_DIR` is canonical, owner-only, outside source and
+shared scratch, and local to one host. Port-specific filenames keep separate
+loopback services independent. No database, new component service, or work
+consumer is introduced. Argus retains long-term observability ownership.
+
+Missing, unavailable, restored, pending, and partially retained history remain
+distinct from live component health. Corrupt or unsafe cache files are preserved.
+A leftover temporary member causes read-only recovery, not automatic takeover.
+Before replacement, write failures preserve committed bytes; after replacement,
+directory-sync failure preserves the readable file but reports uncertain
+durability without advancing confirmation. Every start creates a new SSE epoch
+and reports an observation gap. The cache cannot recover unobserved or already
+lost traffic. See [the web runbook](../web/README.md#observation-history-across-restart)
+for configuration, recovery, and rollback.
 
 ### Subordinate build ownership
 

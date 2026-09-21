@@ -22,6 +22,7 @@ and experiment execution remain implementation work.
 | Variable | Purpose |
 |---|---|
 | `ODYSSEUS_WEB_PORT` | Loopback port; default `8765` |
+| `ODYSSEUS_OBSERVATION_HISTORY_DIR` | Optional canonical owner-only directory outside source and shared scratch for the bounded observation restart cache |
 | `ODYSSEUS_AGAMEMNON_URL` | Supported controller endpoint; HTTPS except for loopback HTTP |
 | `AGAMEMNON_API_KEY` | Backend credential for the controller |
 | `ODYSSEUS_NATS_URL` | Optional TLS observation endpoint |
@@ -108,8 +109,8 @@ Use either or both observation inputs:
 
 The browser receives local SSE snapshots once per second. Cursor epochs,
 bounded history, rejected/truncated frames, source sequence gaps, and disconnects
-remain visible. Historical traffic is bounded to 250 observations by default;
-older data is not retained across backend restart. Loss counters describe observed
+remain visible. Historical traffic is bounded to 250 observations by default.
+Without the optional restart cache, history is memory-only. Loss counters describe observed
 coverage limits, not an estimate of all missing network packets. Host and item
 correlation require an unambiguous matching generation and owner.
 
@@ -162,6 +163,68 @@ explicit error, never an empty log or a claim that no commands ran.
 
 Live ownership and activity continue through the normal component observations.
 Recorded command output is a separate collected snapshot, not a live terminal.
+
+## Observation history across restart
+
+The **Observation history** view shows original observation and receive times,
+sequence numbers, identities, and live or restored origin. Restored observations
+do not create active workers, work controls, moving packets, component activity
+lights, or current traffic counts. The cache contains sanitized metadata only;
+private output, prompts, credentials, raw frames, resource inventories, and source
+health are excluded. Argus remains the owner of long-term metrics and logs.
+
+1. Create a dedicated directory owned by the dashboard user, with mode `0700`,
+   outside all source checkouts and shared scratch. Use its canonical absolute
+   path. Do not share the directory between hosts or containers.
+2. Set `ODYSSEUS_OBSERVATION_HISTORY_DIR` to that path and restart the backend.
+   The exclusive loopback listener must succeed before cache writes or input
+   attachment. Each port uses `observations-<port>.json` and one temporary
+   sibling, `observations-<port>.json.tmp`. A second backend on the same port
+   cannot write the cache.
+3. Check Observation history and `/api/snapshot`'s `history` metadata. A missing
+   file is a new archive; a restored file preserves original times and sequence
+   order. The view distinguishes memory-only, new or empty archive, restored
+   history, partial retention, pending persistence, and unavailable history.
+   A confirmed `persistedSequence`/`persistedAt` covers the saved prefix only.
+   Displayed pending observations are not yet confirmed durable.
+4. Check the status after actual source events arrive. Do not inject example
+   traffic into an operator dashboard. Persistence is serial: one write and
+   one replaceable pending snapshot, with at most one second of coalescing.
+   Each write syncs an owner-only temporary file, atomically replaces the cache,
+   then syncs the directory. Only completion advances the confirmation receipt.
+5. Graceful shutdown is installed before observation intake, including while
+   NATS setup is pending. On shutdown, intake stops and HTTP returns `503` while
+   the writer attempts a final flush for at most five seconds. The backend holds
+   its exclusive listener until that flush completes or reaches its deadline.
+   A late NATS connection closes without attaching an observation subscription.
+   A timeout remains uncertain even if an earlier filesystem operation finishes
+   later. No later write phase or confirmation starts after the deadline.
+   Every restart reports a discontinuity and creates a new SSE epoch. An old
+   browser cursor reports a gap; no cache proves what happened during downtime.
+6. If persistence is unavailable, preserve the files and inspect the reported
+   reason. Invalid, oversized, unsupported, linked, non-regular, wrong-permission,
+   or unreadable files are not overwritten. A leftover temporary member requires
+   operator recovery; a valid committed cache is restored read-only. The backend
+   does not adopt/delete the temporary member or probe its former writer's PID.
+   Stop the backend before operator recovery. Preserve the affected directory
+   for inspection and configure a new empty private directory if recovery cannot
+   establish a safe committed file.
+7. To return to memory-only operation, remove the optional setting and restart.
+   Existing cache and temporary files remain untouched.
+
+Schema `hi/odysseus/observation-history/v1` has a closed object shape and validates
+both reads and writes. It retains at most 250 observations, 1,000 derived
+deduplication identities, and 1,000 source-sequence entries. Each file is capped
+at 4 MiB; reads stop at that cap plus one byte. There are at most two capped
+members. Byte/count retention loss remains explicit. Arbitrary JSON bytes are
+never truncated, and unrelated directory entries are never scanned or pruned.
+
+A failure before replacement preserves the prior committed bytes. If replacement
+succeeds but directory sync fails, complete new bytes can be visible with uncertain
+durability. The backend preserves them and keeps the prior confirmation receipt.
+It does not claim rollback of a completed rename. Live in-memory observations
+remain visible after a storage failure. This local cache cannot recover already
+lost events, record preparation as execution, or make Core NATS delivery complete.
 
 ## GitHub pipeline
 
