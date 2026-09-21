@@ -100,38 +100,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: "Reject silent-failure workaround in shell/YAML/Dockerfile/justfile/HCL"
-        run: |
-          # Scans top-level Odysseus sources only — submodules carry their
-          # own copy of this guard. Matches the forbidden idiom at end of
-          # line or before a trailing comment. See
-          # docs/runbooks/no-silent-failures.md.
-          set -euo pipefail
-          mapfile -t files < <(git ls-files \
-            -- \
-            '*.sh' '*.bash' '*.yml' '*.yaml' '*.hcl' \
-            'Dockerfile*' '**/Dockerfile*' \
-            'justfile' '**/justfile' 'Justfile' '**/Justfile')
-          # Skip the runbook (documents the rule and quotes the forbidden idiom)
-          # and this workflow file itself (heredoc would otherwise self-match).
-          declare -a scan_files=()
-          for f in "${files[@]}"; do
-            case "$f" in
-              docs/runbooks/no-silent-failures.md) continue ;;
-              .github/workflows/_required.yml) continue ;;
-            esac
-            scan_files+=("$f")
-          done
-          if [ "${#scan_files[@]}" -eq 0 ]; then
-            echo "No files to scan"
-            exit 0
-          fi
-          if grep -nP '^(?!\s*#).*\|\|\s*true(\s*$|\s*[#);&|])' "${scan_files[@]}"; then
-            echo ""
-            echo '::error::Found silent-failure workarounds above. Refactor per docs/runbooks/no-silent-failures.md.'
-            exit 1
-          fi
-          echo 'OK: no silent-failure workarounds found'
+      - name: Install locked policy tools
+        uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347  # v0.10.1
+
+      - name: Reject executable silent-failure controls
+        run: pixi run python -I scripts/check-ci-silent-failures.py
 
       - name: "Reject continue-on-error workflow opt-out"
         run: |
