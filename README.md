@@ -12,6 +12,11 @@ HomericIntelligence distributed agent mesh. It contains documentation,
 Architecture Decision Records (ADRs), shared configurations, runbooks, and 15
 component gitlinks—for 16 canonical repositories including Odysseus.
 
+The [Fleet web application](web/README.md) adds work ownership, live message flow,
+and session controls. Run `just web-install`, `just web-build`, then `just web-start`
+for the local interface. The [implementation plan](docs/homeric-fleet-plan.md)
+tracks the remaining integrations and the 108-agent acceptance gates.
+
 <!-- ECOSYSTEM-CI-TABLE:START -->
 ## Ecosystem CI Status
 

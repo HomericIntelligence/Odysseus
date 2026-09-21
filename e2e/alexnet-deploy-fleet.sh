@@ -958,7 +958,8 @@ if [[ "$SKIP_BUILD" == 0 ]]; then
     if [[ "$IMAGE_NAME" == odyssey:dev ]]; then
         if ! (
             cd "$workspace"
-            podman compose build odyssey-dev 2>"$compose_log"
+            USER_ID="$user_id" GROUP_ID="$group_id" USER_NAME="$user_name" \
+                podman compose build odyssey-dev 2>"$compose_log"
         ); then
             echo "podman compose build failed; using the direct Containerfile path." >&2
             tail -20 "$compose_log" >&2

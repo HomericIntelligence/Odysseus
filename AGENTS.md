@@ -3,8 +3,10 @@
 Odysseus is the coordination and integration repository for the 15 canonical
 HomericIntelligence component repositories. It owns system governance,
 cross-repository documentation, canonical shared configuration, integration
-tooling, and the component gitlinks. Application changes belong in the owning
-component repository.
+tooling, and the component gitlinks. It also owns the Fleet application in
+`web/`, whose backend projects component interfaces and transport observations
+without becoming another orchestration authority. Other application changes
+belong in the owning component repository.
 
 ## Instruction precedence
 
@@ -32,8 +34,8 @@ proposal.
 ## Scope
 
 Work in this repository when the requested outcome concerns its documentation,
-proposed ADRs, shared configuration, scripts, tools, E2E integration surfaces,
-or repository-level metadata. Make changes only within the user's stated scope
+proposed ADRs, shared configuration, scripts, tools, Fleet application and
+adapter code in `web/`, E2E integration surfaces, or repository-level metadata. Make changes only within the user's stated scope
 and preserve unrelated work in a dirty tree.
 
 Treat every submodule working tree as read-only from Odysseus. Implement a
@@ -105,12 +107,14 @@ For a pull request, the exact current head must pass `$athena:pr-review` with a
 terminal `GO` and every live repository-required CI/CD check before merge. If
 infrastructure prevents a required check from running, report the exact failure
 and leave the work non-terminal. Include any residual risk, unverified
-condition, or operator action still required.
+condition, or operator action still required. When merge is authorized and
+these gates pass, use the repository-supported squash merge method.
 
 ## Contextual document routes
 
 Load only the material needed for the current task:
 
+- [`web/README.md`](web/README.md) routes Fleet application interfaces and checks.
 - [`docs/README.md`](docs/README.md) routes architecture, decision, and
   operational documentation.
 - [`docs/adr/README.md`](docs/adr/README.md) is the ADR status index;

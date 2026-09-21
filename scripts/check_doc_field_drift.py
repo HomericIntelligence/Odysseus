@@ -1,8 +1,12 @@
-"""Retain the trusted Git/index boundary used by staged-blob validators."""
+"""Validate staged documentation and retain the shared trusted Git boundary."""
 
+import argparse
+import errno
+import json
 import hashlib
 import os
 from pathlib import Path
+import re
 import resource
 import selectors
 import signal
@@ -13,6 +17,22 @@ import time
 
 
 GIT = "/usr/bin/git"
+MAX_INVENTORY_BYTES = 1_048_576
+MAX_DOCUMENT_BYTES = 1_048_576
+MAX_TOTAL_DOCUMENT_BYTES = 16 * 1024 * 1024
+MAX_DOCUMENTS = 2_048
+MAX_DIAGNOSTICS = 1_000
+MAX_DIAGNOSTIC_BYTES = 64 * 1024
+MAX_PATH_BYTES = 4 * 1024
+GLOBAL_DEADLINE_SECONDS = 30.0
+DEPRECATED_FIELD = re.compile(
+    rb"^[\t ]*-?[\t ]*(?:title|depends_on|['\"]title['\"]|['\"]depends_on['\"])[\t ]*:",
+    re.MULTILINE,
+)
+EXCLUDED_PREFIXES = (
+    b"infrastructure/", b"control/", b"provisioning/", b"ci-cd/",
+    b"research/", b"shared/", b"testing/", b".github/", b"agentic/",
+)
 COMMAND_DEADLINE_SECONDS = 5.0
 MAX_STDERR_BYTES = 64 * 1024
 MAX_GIT_POINTER_BYTES = 8 * 1024
@@ -721,6 +741,199 @@ def _verify_blob(object_id, body):
         raise CheckFailure("Git returned blob bytes with the wrong object ID")
 
 
+def _parse_inventory(raw):
+    if raw and not raw.endswith(b"\0"):
+        raise CheckFailure("Git returned a malformed tracked-file inventory")
+    records = raw[:-1].split(b"\0") if raw else []
+    if len(records) > MAX_DOCUMENTS * 4:
+        raise CheckFailure("tracked-file inventory exceeds its entry limit")
+    documents = []
+    for record in records:
+        try:
+            metadata, path = record.split(b"\t", 1)
+            mode, object_id, stage = metadata.split(b" ")
+        except ValueError as error:
+            raise CheckFailure("Git returned a malformed index entry") from error
+        if stage != b"0":
+            raise CheckFailure("unmerged index entries cannot be validated")
+        if not path.endswith(b".md") or path.startswith(EXCLUDED_PREFIXES):
+            continue
+        if len(path) > MAX_PATH_BYTES:
+            raise CheckFailure("tracked documentation path exceeds its byte limit")
+        if mode not in (b"100644", b"100755"):
+            raise CheckFailure("tracked documentation must be a regular blob")
+        if not re.fullmatch(rb"[0-9a-f]{40}|[0-9a-f]{64}", object_id):
+            raise CheckFailure("Git returned an invalid documentation object ID")
+        documents.append((path, object_id.decode("ascii")))
+        if len(documents) > MAX_DOCUMENTS:
+            raise CheckFailure(
+                "first-party documentation exceeds the %d-file limit" % MAX_DOCUMENTS
+            )
+    return documents
+
+
+def _render_path(path):
+    truncated = len(path) > 512
+    rendered = repr(os.fsdecode(path[:512]))
+    return rendered + ("..." if truncated else "")
+
+
+def _api_title_lines(body):
+    """Preserve main's two non-workflow JSON API examples with title fields."""
+    lines = body.decode("utf-8", errors="replace").splitlines()
+    exempt = set()
+    start = None
+    for index, line in enumerate(lines):
+        if start is None:
+            if line.strip() == "```json":
+                start = index + 1
+            continue
+        if line.strip() != "```":
+            continue
+        try:
+            value = json.loads("\n".join(lines[start:index]))
+        except ValueError:
+            value = None
+        if isinstance(value, dict):
+            intake = (
+                value.get("schema") == "hi/nestor/intake-request/v1"
+                and set(value) == {"schema", "intakeId", "workRepository", "title", "body"}
+            )
+            data = value.get("data")
+            event = (
+                value.get("event") == "task.created"
+                and set(value) == {"event", "data", "timestamp"}
+                and isinstance(data, dict)
+                and set(data) == {
+                    "task_id", "team_id", "title", "description", "status", "assigned_to"
+                }
+            )
+            if intake or event:
+                exempt.update(
+                    position + 1 for position in range(start, index)
+                    if re.match(r'^\s*"title"\s*:', lines[position])
+                )
+        start = None
+    return exempt
+
+
+def check_repository(repository):
+    bound = RepositoryBinding(repository)
+    deadline = time.monotonic() + GLOBAL_DEADLINE_SECONDS
+    try:
+        initial_inventory = _run_git(
+            bound.git_fd,
+            bound.index_fd,
+            ["ls-files", "--stage", "-z"],
+            MAX_INVENTORY_BYTES,
+            deadline,
+        )
+        documents = _parse_inventory(initial_inventory)
+        cache = {}
+        total_bytes = 0
+        findings = []
+        finding_bytes = 0
+        findings_truncated = False
+        for path, object_id in documents:
+            if object_id not in cache:
+                body = _run_git(
+                    bound.git_fd,
+                    bound.index_fd,
+                    ["cat-file", "blob", object_id],
+                    MAX_DOCUMENT_BYTES + 1,
+                    deadline,
+                )
+                if len(body) > MAX_DOCUMENT_BYTES:
+                    raise CheckFailure(
+                        "documentation blob exceeds the %d-byte limit"
+                        % MAX_DOCUMENT_BYTES
+                    )
+                _verify_blob(object_id, body)
+                cache[object_id] = body
+            body = cache[object_id]
+            rendered_path = _render_path(path)
+            total_bytes += len(body)
+            if total_bytes > MAX_TOTAL_DOCUMENT_BYTES:
+                raise CheckFailure(
+                    "documentation exceeds the aggregate byte limit"
+                )
+            exempt = _api_title_lines(body)
+            for match in DEPRECATED_FIELD.finditer(body):
+                line = body.count(b"\n", 0, match.start()) + 1
+                if line in exempt:
+                    continue
+                diagnostic_size = len(rendered_path.encode("utf-8", "replace")) + 32
+                if finding_bytes + diagnostic_size > MAX_DIAGNOSTIC_BYTES:
+                    findings_truncated = True
+                    break
+                findings.append((rendered_path, line))
+                finding_bytes += diagnostic_size
+                if len(findings) >= MAX_DIAGNOSTICS:
+                    findings_truncated = True
+                    break
+            if findings_truncated:
+                break
+
+        final_inventory = _run_git(
+            bound.git_fd,
+            bound.index_fd,
+            ["ls-files", "--stage", "-z"],
+            MAX_INVENTORY_BYTES,
+            deadline,
+        )
+        if final_inventory != initial_inventory:
+            raise CheckFailure("Git index changed during documentation validation")
+        bound.revalidate()
+        if not documents:
+            print("check-doc-field-drift: no first-party docs to scan")
+            return 0
+        if findings:
+            for path, line in findings:
+                print("%s:%d: deprecated workflow field key" % (path, line))
+            if findings_truncated:
+                print("additional diagnostics omitted after the output limit")
+            print(
+                "ERROR: deprecated workflow field name(s) found in first-party docs.",
+                file=sys.stderr,
+            )
+            print(
+                "Use 'subject' instead of 'title' and 'blocked_by' instead of "
+                "'depends_on'.",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            "check-doc-field-drift: OK — no deprecated workflow field names "
+            "in first-party docs"
+        )
+        return 0
+    finally:
+        bound.close()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--repo-root", required=True, type=Path)
+    arguments = parser.parse_args()
+    if not sys.flags.isolated or not sys.flags.no_site:
+        print(
+            "error: checker requires isolated Python with site loading disabled",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        return check_repository(arguments.repo_root)
+    except CheckFailure as error:
+        print("error: %s" % error, file=sys.stderr)
+        return 2
+    except OSError as error:
+        if error.errno in (errno.ELOOP, errno.ENOTDIR):
+            print("error: repository path is not a direct directory", file=sys.stderr)
+        else:
+            print("error: documentation validation failed: %s" % error, file=sys.stderr)
+        return 2
+
+
 def _self_test_runner_descendant(runner_name):
     global GIT, _apply_git_resource_limits
 
@@ -870,5 +1083,5 @@ def _self_test():
     return 0
 
 
-if __name__ == "__main__" and sys.argv[1:] == ["--self-test"]:
-    raise SystemExit(_self_test())
+if __name__ == "__main__":
+    raise SystemExit(_self_test() if sys.argv[1:] == ["--self-test"] else main())

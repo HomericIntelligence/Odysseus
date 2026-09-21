@@ -205,6 +205,34 @@ else
 fi
 fixture_git "$FIXTURE_REPO" rm -q --cached -- "$NEWLINE_DOC"
 
+info "non-workflow API title fields remain valid"
+printf '%s\n' '```json' '{"schema":"hi/nestor/intake-request/v1",' \
+    '"intakeId":"example","workRepository":"HomericIntelligence/Odysseus",' \
+    '"title": "Valid API title", "body":"Example"}' '```' >"$FIXTURE_REPO/intake.md"
+printf '%s\n' '```json' '{"event":"task.created","timestamp":"example","data":{' \
+    '"task_id":"example","team_id":"example",' '"title": "Valid event title",' \
+    '"description":"Example","status":"backlog","assigned_to":null}}' '```' \
+    >"$FIXTURE_REPO/event.md"
+fixture_git "$FIXTURE_REPO" add -- intake.md event.md
+if run_exact_checker >"$TMP/api-title.out" 2>&1; then
+    pass "known non-workflow API title fields are accepted"
+else
+    fail "valid API title fields were reported as workflow drift"
+fi
+fixture_git "$FIXTURE_REPO" rm -q --cached -- intake.md event.md
+
+info "quoted deprecated workflow keys remain rejected"
+printf '%s\n' '- "title" : stale-field' >"$FIXTURE_REPO/quoted.md"
+fixture_git "$FIXTURE_REPO" add -- quoted.md
+if run_exact_checker >"$TMP/quoted.out" 2>&1; then
+    fail "a quoted deprecated workflow key was accepted"
+elif grep -Fq 'ERROR: deprecated workflow field name(s) found' "$TMP/quoted.out"; then
+    pass "quoted deprecated workflow keys fail with the drift diagnostic"
+else
+    fail "quoted workflow drift failed without its diagnostic"
+fi
+fixture_git "$FIXTURE_REPO" rm -q --cached -- quoted.md
+
 info "Git metadata and index retargeting cannot produce a success receipt"
 if /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C \
     /usr/bin/python3 -I -S - \

@@ -24,19 +24,15 @@ choice, its context, decision rationale, and consequences.
 | [014](014-runnable-evidence-for-metric-claims.md) | Runnable Evidence for Metric and Training-Run Claims | Proposed | — | — |
 | [015](015-drop-project-prefix.md) | Drop the `Project` Prefix Across the HomericIntelligence Ecosystem | Accepted | — | — |
 | [016](016-split-hephaestus.md) | Split `Hephaestus` — Library vs Agentic Plugins | Accepted | — | — |
-| [017](017-uv-for-python-pixi-for-toolchains.md) | uv for Pure-Python Repos, pixi Where a Conda Toolchain Is Required | Proposed | — | [Proposed ADR-018](018-uv-ecosystem-wide.md) |
-| [018](018-uv-ecosystem-wide.md) | uv Is the Ecosystem-Wide Standard — Toolchains via PyPI, apt, and the Mojo pip Package | Proposed | [Proposed ADR-017](017-uv-for-python-pixi-for-toolchains.md) | — |
+| [017](017-uv-for-python-pixi-for-toolchains.md) | uv for Pure-Python Repos, pixi Where a Conda Toolchain Is Required | Proposed | — | Proposed [ADR-018](018-uv-ecosystem-wide.md), if accepted |
+| [018](018-uv-ecosystem-wide.md) | uv Is the Ecosystem-Wide Standard — Toolchains via PyPI, apt, and the Mojo pip Package | Proposed | Proposed [ADR-017](017-uv-for-python-pixi-for-toolchains.md), if accepted | — |
 | [019](019-lemonade-private-inference-lane.md) | Lemonade as the Private Inference Lane for the Mesh | Proposed | — | — |
 | [020](020-mesh-distributed-hephaestus-loop.md) | Distribute the Hephaestus Automation Loop Across the Mesh | Proposed | — | — |
-| [021](021-defer-multi-host-nomad-scheduling.md) | Defer Multi-Host Nomad Scheduling to a Future Phase | Proposed | — | — |
+| [021](021-fleet-execution-and-web-interface.md) | Extend Fleet Execution and Establish the Odysseus Web Application | Proposed | — | — |
 | [022](022-layered-provider-neutral-agent-instructions.md) | Layered, Provider-Neutral Agent Instructions | Proposed | — | — |
+| [023](023-defer-multi-host-nomad-scheduling.md) | Defer Multi-Host Nomad Scheduling to a Future Phase | Proposed | — | — |
 | [024](024-one-homeric-nats-application-account.md) | One Homeric NATS Application Account with Per-Role Authorization | Proposed | Conflicting Decision 3 portions of Proposed [ADR-009](009-nats-authentication.md) and [ADR-010](010-nats-mtls-subject-scoped-auth.md), only if accepted | — |
-
-ADR-023 is reserved for the Fleet execution and web-interface proposal carried
-by [PR #498](https://github.com/HomericIntelligence/Odysseus/pull/498). It is
-intentionally absent from this tree until that proposal completes its required
-rebase and renumber. A reservation is not an ADR or architectural authority,
-so there is no placeholder row or file.
+| [025](025-isolate-legacy-credential-broker.md) | Migrate Legacy Harness Credentials to an Exact Pod-Namespace Host Broker | Proposed | — | — |
 
 ## How to Create a New ADR
 
@@ -46,16 +42,17 @@ so there is no placeholder row or file.
    Neutral), and References.
 3. Keep **Status** as `Proposed` until a recorded human decision formally
    accepts it. Merge alone does not imply acceptance.
-4. If the proposal supersedes another decision, declare that relationship in
-   the new ADR and update this decision log's `Superseded By` column. Never
+4. If the proposal would supersede another decision, declare that relationship
+   in the new ADR and update this decision log's `Superseded By` column. Never
    edit an Accepted ADR body to add a reverse link.
 5. Create a pull request with your new ADR.
-6. Record formal acceptance through a reviewed status-change PR. After that
-   change lands, the Accepted ADR body is frozen.
+6. Record formal acceptance through a reviewed status-change pull request.
+   After that change lands, the Accepted ADR body is frozen.
 
 ## ADR Process
 
-- **Proposed:** A new ADR that has not yet been reviewed or accepted.
+- **Proposed:** An ADR without a recorded formal acceptance. Review or merge
+  alone does not change this status.
 - **Accepted:** A decision that has been reviewed and approved. Accepted ADRs
   are frozen and never edited.
 - **Superseded:** A decision that has been replaced by a later ADR. The

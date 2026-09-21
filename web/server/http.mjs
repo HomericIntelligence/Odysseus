@@ -1,0 +1,416 @@
+import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
+import { resolve, sep } from "node:path";
+import { createIntakeService } from "./intakes.mjs";
+import {
+  createIssueImportService,
+  createResearchImportService,
+  parseIssueImportJson,
+} from "./research-imports.mjs";
+
+const json = (response, status, data) => {
+  response.writeHead(status, {
+    "content-type": "application/json",
+    "cache-control": "no-store",
+  });
+  response.end(JSON.stringify(data));
+};
+
+async function body(request, limit = 4096, uniqueKeys = false) {
+  if (!request.headers["content-type"]?.startsWith("application/json"))
+    throw new Error("Expected JSON");
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > limit) throw new Error("Body too large");
+    chunks.push(chunk);
+  }
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(
+    Buffer.concat(chunks),
+  );
+  return uniqueKeys ? parseIssueImportJson(text) : JSON.parse(text);
+}
+
+export function createDashboardServer({
+  view,
+  staticDir,
+  commands,
+  research,
+  researchImport,
+  issueImport,
+  sessionOutput,
+} = {}) {
+  if (!view) throw new Error("View is required");
+  const intakes = research ? createIntakeService(research) : null;
+  const imports = researchImport
+    ? createResearchImportService(researchImport)
+    : null;
+  const issueImports = issueImport
+    ? createIssueImportService(issueImport)
+    : null;
+  let streams = 0;
+  let pendingCommands = 0;
+  let pendingReads = 0;
+  let pendingIntakes = 0;
+  const server = createServer(async (request, response) => {
+    response.setHeader("x-content-type-options", "nosniff");
+    response.setHeader("referrer-policy", "no-referrer");
+    response.setHeader(
+      "content-security-policy",
+      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    );
+    const address = server.address();
+    if (address?.address !== "127.0.0.1")
+      return json(response, 403, { error: "Loopback listener required" });
+    const port = address.port;
+    const host = request.headers.host;
+    const allowedHosts = [`127.0.0.1:${port}`, `localhost:${port}`];
+    const origin = request.headers.origin;
+    if (
+      !allowedHosts.includes(host) ||
+      (origin && origin !== `http://${host}`) ||
+      request.headers["sec-fetch-site"] === "cross-site"
+    )
+      return json(response, 403, { error: "Forbidden origin" });
+    let url;
+    try {
+      url = new URL(request.url, `http://${host}`);
+    } catch {
+      return json(response, 400, { error: "Invalid request target" });
+    }
+    if (url.pathname.startsWith("/api/")) {
+      if (request.method === "GET" && url.pathname === "/api/capabilities")
+        return json(response, 200, {
+          ...(commands?.capabilities ?? {
+            sessionCommands: {
+              enabled: false,
+              operations: [],
+              inputWorkerIds: [],
+              approvalWorkerIds: [],
+            },
+          }),
+          researchIntake: { enabled: Boolean(intakes) },
+          researchImport: { enabled: Boolean(imports) },
+          ...(issueImports ? { issueImport: { enabled: true } } : {}),
+        });
+      if (
+        (url.pathname === "/api/issue-intakes" && request.method === "POST") ||
+        (request.method === "GET" &&
+          (url.pathname.startsWith("/api/issue-intakes/") ||
+            url.pathname.startsWith("/api/tasks/")))
+      ) {
+        if (request.method === "POST" && !origin)
+          return json(response, 403, { error: "Origin required" });
+        if (
+          request.method === "GET" &&
+          (request.headers["transfer-encoding"] ||
+            Number(request.headers["content-length"] ?? 0) !== 0)
+        )
+          return json(response, 400, {
+            error: "invalid_request",
+            outcome: "not_submitted",
+          });
+        const registry = url.pathname === "/api/issue-intakes/repositories";
+        const task = url.pathname.startsWith("/api/tasks/");
+        let selection;
+        if (request.method === "GET" && !registry && !task) {
+          const parts = url.pathname
+            .slice("/api/issue-intakes/".length)
+            .split("/");
+          try {
+            decodeURIComponent(url.search);
+            if (
+              parts.length !== 2 ||
+              !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(parts[0]) ||
+              !/^[1-9][0-9]{0,9}$/.test(parts[1]) ||
+              Number(parts[1]) > 2147483647 ||
+              (url.search &&
+                ([...url.searchParams.keys()].length !== 1 ||
+                  url.searchParams.getAll("planCommentId").length !== 1))
+            )
+              throw new Error("Invalid selection");
+            selection = [
+              parts[0],
+              Number(parts[1]),
+              url.search ? url.searchParams.get("planCommentId") : undefined,
+            ];
+          } catch {
+            return json(response, 400, {
+              error: "invalid_request",
+              outcome: "not_submitted",
+            });
+          }
+        } else if (url.search) {
+          return json(response, 400, {
+            error: "invalid_request",
+            outcome: "not_submitted",
+          });
+        }
+        if (!issueImports)
+          return json(response, 503, {
+            error: "not_configured",
+            outcome: "not_submitted",
+          });
+        let result;
+        if (request.method === "POST") {
+          try {
+            result = await issueImports.submit(await body(request, 4096, true));
+          } catch {
+            return json(response, 400, {
+              error: "invalid_request",
+              outcome: "not_submitted",
+            });
+          }
+        } else if (task) {
+          result = await issueImports.readTask(
+            url.pathname.slice("/api/tasks/".length),
+          );
+        } else if (selection) {
+          result = await issueImports.inspect(...selection);
+        } else {
+          result = await issueImports.repositories();
+        }
+        return json(response, result.code, result.body);
+      }
+      if (
+        url.pathname.startsWith("/api/research/tasks/") &&
+        request.method === "GET"
+      ) {
+        if (
+          url.search ||
+          request.headers["transfer-encoding"] ||
+          Number(request.headers["content-length"] ?? 0) !== 0
+        )
+          return json(response, 400, {
+            error: "invalid_request",
+            outcome: "not_submitted",
+          });
+        if (!imports)
+          return json(response, 503, {
+            error: "not_configured",
+            outcome: "not_submitted",
+          });
+        const result = await imports.readTask(
+          url.pathname.slice("/api/research/tasks/".length),
+        );
+        return json(response, result.code, result.body);
+      }
+      if (
+        url.pathname === "/api/research/imports" &&
+        request.method === "POST"
+      ) {
+        if (!origin) return json(response, 403, { error: "Origin required" });
+        if (!imports)
+          return json(response, 503, {
+            error: "not_configured",
+            outcome: "not_submitted",
+          });
+        try {
+          const result = await imports.submit(await body(request, 4096));
+          return json(response, result.code, result.body);
+        } catch {
+          return json(response, 400, {
+            error: "invalid_request",
+            outcome: "not_submitted",
+          });
+        }
+      }
+      if (
+        url.pathname === "/api/research/intakes" &&
+        request.method === "POST"
+      ) {
+        if (!origin) return json(response, 403, { error: "Origin required" });
+        if (!intakes)
+          return json(response, 503, {
+            error: "not_configured",
+            outcome: "not_submitted",
+          });
+        if (pendingIntakes >= 4)
+          return json(response, 429, {
+            error: "busy",
+            outcome: "not_submitted",
+          });
+        pendingIntakes++;
+        try {
+          const input = await body(request, 65536);
+          const result = await intakes.submit(input);
+          return json(response, result.code, result.body);
+        } catch {
+          return json(response, 400, {
+            error: "invalid_request",
+            outcome: "not_submitted",
+          });
+        } finally {
+          pendingIntakes--;
+        }
+      }
+      if (
+        url.pathname.startsWith("/api/research/intakes/") &&
+        request.method === "GET"
+      ) {
+        if (!intakes) return json(response, 503, { error: "not_configured" });
+        if (
+          [...url.searchParams.keys()].length !== 1 ||
+          url.searchParams.getAll("requestDigest").length !== 1
+        )
+          return json(response, 400, { error: "invalid_request" });
+        if (pendingIntakes >= 4) return json(response, 429, { error: "busy" });
+        pendingIntakes++;
+        try {
+          const result = await intakes.inspect(
+            url.pathname.slice("/api/research/intakes/".length),
+            url.searchParams.get("requestDigest"),
+          );
+          return json(response, result.code, result.body);
+        } finally {
+          pendingIntakes--;
+        }
+      }
+      if (request.method === "GET" && url.pathname === "/api/requests") {
+        if (!commands?.requests)
+          return json(response, 503, { error: "not_configured" });
+        const fields = ["sessionId", "workerId", "generation"];
+        if (
+          [...url.searchParams.keys()].length !== fields.length ||
+          fields.some((key) => url.searchParams.getAll(key).length !== 1)
+        )
+          return json(response, 400, { error: "invalid_request" });
+        if (pendingReads >= 4) return json(response, 429, { error: "busy" });
+        pendingReads++;
+        try {
+          const result = await commands.requests({
+            sessionId: url.searchParams.get("sessionId"),
+            workerId: url.searchParams.get("workerId"),
+            generation: Number(url.searchParams.get("generation")),
+          });
+          return json(response, result.code, result.body);
+        } catch {
+          return json(response, 503, { error: "unavailable" });
+        } finally {
+          pendingReads--;
+        }
+      }
+      if (request.method === "GET" && url.pathname === "/api/session-output") {
+        const fields = ["sessionId", "workerId", "generation"];
+        const input = {
+          sessionId: url.searchParams.get("sessionId"),
+          workerId: url.searchParams.get("workerId"),
+          generation: Number(url.searchParams.get("generation")),
+        };
+        if (
+          [...url.searchParams.keys()].length !== fields.length ||
+          fields.some((key) => url.searchParams.getAll(key).length !== 1) ||
+          !/^[A-Za-z0-9_-]{1,128}$/.test(input.sessionId ?? "") ||
+          !/^[A-Za-z0-9_-]{1,128}$/.test(input.workerId ?? "") ||
+          !/^[1-9][0-9]*$/.test(url.searchParams.get("generation") ?? "") ||
+          !Number.isSafeInteger(input.generation) ||
+          request.headers["transfer-encoding"] ||
+          Number(request.headers["content-length"] ?? 0) !== 0
+        )
+          return json(response, 400, { error: "invalid_request" });
+        if (!sessionOutput)
+          return json(response, 503, { error: "not_configured" });
+        if (pendingReads >= 4) return json(response, 429, { error: "busy" });
+        pendingReads++;
+        try {
+          const result = await sessionOutput.read(input);
+          return json(response, result.code, result.body);
+        } catch {
+          return json(response, 503, { error: "unavailable" });
+        } finally {
+          pendingReads--;
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/api/commands") {
+        if (!origin) return json(response, 403, { error: "Origin required" });
+        if (!commands) return json(response, 503, { error: "not_configured" });
+        if (pendingCommands >= 4)
+          return json(response, 429, {
+            error: "busy",
+            outcome: "not_submitted",
+          });
+        pendingCommands++;
+        try {
+          const input = await body(request, 128 * 1024);
+          const result = await commands.submit(input);
+          return json(response, result.code, result.body);
+        } catch {
+          return json(response, 400, { error: "invalid_request" });
+        } finally {
+          pendingCommands--;
+        }
+      }
+      if (request.method === "GET" && url.pathname === "/api/snapshot")
+        return json(
+          response,
+          200,
+          view.snapshot(url.searchParams.get("after")),
+        );
+      if (request.method === "GET" && url.pathname === "/api/events") {
+        if (streams >= 8)
+          return json(response, 429, { error: "Too many live views" });
+        streams++;
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-store",
+          connection: "keep-alive",
+        });
+        let cursor =
+          request.headers["last-event-id"] ?? url.searchParams.get("after");
+        const send = () => {
+          if (response.writableLength > 262144) {
+            response.end();
+            return;
+          }
+          if (response.writableNeedDrain) return;
+          const snapshot = view.snapshot(cursor);
+          cursor = snapshot.cursor;
+          response.write(
+            `id: ${cursor}\nevent: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`,
+          );
+        };
+        send();
+        const timer = setInterval(send, 1000);
+        timer.unref();
+        response.once("close", () => {
+          clearInterval(timer);
+          streams--;
+        });
+        return;
+      }
+      return json(response, 404, { error: "Unknown API operation" });
+    }
+    if (request.method !== "GET" || !staticDir)
+      return json(response, 404, { error: "Not found" });
+    const relative =
+      url.pathname === "/" ? "index.html" : url.pathname.slice(1);
+    const root = resolve(staticDir);
+    const path = resolve(root, relative);
+    if (
+      !path.startsWith(root + sep) ||
+      (!relative.startsWith("assets/") && relative !== "index.html")
+    )
+      return json(response, 404, { error: "Not found" });
+    try {
+      const contents = await readFile(path);
+      const contentType = path.endsWith(".js")
+        ? "text/javascript"
+        : path.endsWith(".css")
+          ? "text/css"
+          : "text/html";
+      response.writeHead(200, {
+        "content-type": contentType,
+        "cache-control": "no-store",
+      });
+      response.end(contents);
+    } catch {
+      json(response, 404, {
+        error: "Web assets not built; run just web-build",
+      });
+    }
+  });
+  server.requestTimeout = 10000;
+  server.headersTimeout = 10000;
+  return server;
+}

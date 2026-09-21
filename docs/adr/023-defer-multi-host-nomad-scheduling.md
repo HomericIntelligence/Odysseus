@@ -1,4 +1,4 @@
-# ADR 021: Defer Multi-Host Nomad Scheduling to a Future Phase
+# ADR 023: Defer Multi-Host Nomad Scheduling to a Future Phase
 
 **Status:** Proposed
 
@@ -9,14 +9,16 @@
 ADR-003 accepted Nomad as the container scheduler for HomericIntelligence,
 chosen over Kubernetes for its single-binary simplicity and right-sized
 operational footprint. The canonical Nomad configs live in `configs/nomad/`
-(`server.hcl`, `client.hcl`). The deployment runbook's Step 5 now treats their
-activation as an operator-owned optional path rather than a generic bootstrap.
+(`server.hcl`, `client.hcl`), and the deployment runbook describes a
+single-node bootstrap.
 
 However, the agent mesh does not yet schedule agents across multiple hosts
-through Nomad. The pinned Myrmidons schema enumerates `local`, `docker`, and a
-future-reserved `nomad` discriminator, while its current runtime scheduling
-paths implement only `local` and `docker`; checked-in manifests and proposed
-pull-worker descriptions do not prove an active worker pool. The architecture document
+through Nomad. The pinned Myrmidons repository is declarative desired state; its
+schema admits `local`, `docker`, and a future-reserved `nomad` discriminator.
+The pinned Agamemnon API/reconciler owns the current runtime application paths
+and implements the supported `local` and `docker` deployments. Checked-in
+manifests and proposed pull-worker descriptions do not prove an active worker
+pool. The architecture document
 (`docs/architecture.md`) describes multi-host scheduling as target work rather
 than deployed state.
 
@@ -35,17 +37,18 @@ deferral.
 Key points:
 
 - **Current supported surface:** The pinned Myrmidons schema admits `local`,
-  `docker`, and a future-reserved `nomad` deployment discriminator. Current
-  runtime scheduling implements `local` and `docker`; live placement and
-  worker-pool state require a reconciler readback, and no current Nomad
-  scheduling path is claimed.
+  `docker`, and a future-reserved `nomad` deployment discriminator. Agamemnon's
+  pinned API/reconciler owns runtime application of the supported `local` and
+  `docker` paths; live placement and worker-pool state require its reconciler
+  readback, and no current Nomad scheduling path is claimed.
 - **What is deferred:** Multi-host agent scheduling and clustering via Nomad —
-  i.e., Myrmidons submitting Nomad job specs that place agent containers across
-  the Tailscale-connected host fleet, as envisioned in ADR-003.
+  i.e., the desired-state schema and Agamemnon reconciliation producing Nomad
+  job specs that place agent containers across the Tailscale-connected host
+  fleet, as envisioned in ADR-003.
 - **Why defer:** The current single-host model meets present needs. Multi-host
   scheduling requires a multi-node Nomad cluster (beyond the
   `bootstrap_expect=1` single-server config currently checked in), a
-  Myrmidons-to-Nomad job submission path, and host-fleet placement logic. That
+  Agamemnon-to-Nomad reconciliation/submission path, and host-fleet placement logic. That
   work is not yet scheduled.
 - **How it is tracked:** While this ADR remains Proposed, it records the
   proposal rather than binding current architecture. If accepted, it becomes
@@ -71,8 +74,7 @@ Key points:
 
 **Neutral:**
 - No code or configuration changes. `configs/nomad/` remains the canonical
-  source for the optional Nomad path, while activation stays operator-owned;
-  ADR-003 remains the accepted scheduler choice.
+  source and remains unchanged; ADR-003 remains the accepted scheduler choice.
 
 ## References
 

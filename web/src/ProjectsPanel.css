@@ -1,0 +1,120 @@
+.pipeline {
+  display: grid;
+  gap: 20px;
+}
+.pipeline-health .panel-heading {
+  align-items: flex-start;
+  gap: 20px;
+}
+.pipeline-health .panel-heading p {
+  max-width: 640px;
+}
+.pipeline-status {
+  color: #ddbb78;
+  border: 1px solid #725e3c;
+  border-radius: 20px;
+  padding: 6px 12px;
+}
+.pipeline-status.healthy {
+  color: #b9e7ae;
+  border-color: #557950;
+}
+.pipeline-explanation {
+  padding: 0 24px 20px;
+}
+.pipeline-timing,
+.pipeline-counts {
+  margin: 0;
+  padding: 18px 24px;
+  border-top: 1px solid #293a31;
+  display: grid;
+  gap: 18px;
+}
+.pipeline-timing {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.pipeline-timing dt,
+.pipeline-counts span {
+  color: #94a599;
+  font-size: 11px;
+}
+.pipeline-timing dd {
+  margin: 8px 0 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.pipeline-counts {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.pipeline-counts strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 20px;
+  font-weight: 500;
+}
+.pipeline .notice {
+  margin: 12px 24px 20px;
+}
+.pipeline-filters {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 20px 24px;
+}
+.pipeline-filters input {
+  min-width: 200px;
+  flex: 1;
+}
+.pipeline-filters span {
+  color: #94a599;
+  font-size: 12px;
+}
+.pipeline-table {
+  min-width: 860px;
+}
+.pipeline-table td {
+  vertical-align: top;
+}
+.pipeline-table td:first-child {
+  max-width: 330px;
+  overflow-wrap: anywhere;
+}
+.pipeline-links {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  font-size: 11px;
+}
+.pipeline-owner {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  gap: 5px;
+  padding: 0 0 12px;
+}
+.pipeline-owner strong {
+  color: #b9e7ae;
+}
+.pipeline-owner span,
+.pipeline-muted {
+  color: #94a599;
+  font-size: 12px;
+}
+@media (max-width: 760px) {
+  .pipeline-health .panel-heading {
+    flex-direction: column;
+  }
+  .pipeline-timing {
+    grid-template-columns: 1fr;
+  }
+  .pipeline-counts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .pipeline-filters input,
+  .pipeline-filters select {
+    width: 100%;
+    min-width: 0;
+  }
+}

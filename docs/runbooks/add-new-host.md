@@ -5,7 +5,7 @@ define a generic mesh-enrollment protocol or authorize a multi-host deployment.
 The current Myrmidons schema enumerates `local`, `docker`, and a future-reserved
 `nomad` discriminator, while runtime scheduling currently implements `local`
 and `docker`. Multi-host Nomad scheduling remains target state in
-[Proposed ADR-021](../adr/021-defer-multi-host-nomad-scheduling.md).
+[Proposed ADR-023](../adr/023-defer-multi-host-nomad-scheduling.md).
 
 The pinned Agamemnon service does not expose a host-sync or peer-registration
 contract, and Hermes is an inbound webhook bridge rather than a host inventory

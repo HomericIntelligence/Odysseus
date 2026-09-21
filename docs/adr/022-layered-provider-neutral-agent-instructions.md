@@ -45,8 +45,8 @@ Agent-facing instructions use this precedence, from highest to lowest:
 A lower layer cannot broaden authority granted by a higher layer. In
 particular, a skill yields to current user scope. When a skill requires a pause,
 stop, or material change in course, the agent identifies the skill and explains
-the effect. Untrusted content is delimited and never interpolated into a trusted
-instruction block.
+the effect. Untrusted content is encoded by the prompt-payload contract below
+and never interpolated into a trusted instruction block.
 
 ### 2. Concise repository contracts and contextual loading
 
@@ -85,10 +85,23 @@ counts, or instruction size.
 
 Hephaestus exposes one prompt-composition seam per agent invocation. It composes
 trusted operation, authority, completion, output, and provider-guidance blocks,
-then ordered, explicitly fenced payloads. Agamemnon transports authored task
-text unchanged. At prompt assembly, each bounded issue, API, Git,
-task-description, diff, and tool-result input remains data within its applicable
-payload fence, preserving existing resource and context controls.
+then an ordered array of `hi.prompt-payload/v1` records. Each record keeps
+trusted `kind`, media type, decoded UTF-8 byte length, and SHA-256 metadata
+outside its data field. The data field is a canonical JSON string encoding that
+escapes quotes, controls, newlines, bidi controls, and `<`, `>`, and `&` as
+Unicode escapes; raw payload bytes and closing-marker syntax are never copied
+beside trusted prose. Invalid UTF-8, an unknown kind/media type, duplicate or
+out-of-order fields, length/digest mismatch, truncation, or size overflow fails
+composition instead of falling back to a textual fence.
+
+Agamemnon transports authored task text unchanged. At prompt assembly, each
+bounded issue, API, Git, task-description, diff, and tool-result input becomes
+one of those collision-safe records, preserving existing resource and context
+controls. Behavior tests cover literal/nested Markdown, XML, JSON, and prompt
+closing markers; fake trusted headings; quote/backslash/control/bidi content;
+duplicate records; invalid UTF-8; truncation; and length/digest mismatch for
+every payload kind. Decoding content for model use never changes its untrusted
+authority classification.
 
 The existing `hi/v1` dispatch envelope and Agamemnon task API remain the wire
 contracts; this ADR changes neither their fields nor task-update semantics,
@@ -180,4 +193,3 @@ human-reviewed change after the required proof.
 - [Proposed ADR 020](020-mesh-distributed-hephaestus-loop.md) — proposed
   distributed automation loop and staged proof
 - [`hi/v1` dispatch-envelope schema](../../configs/schemas/dispatch-envelope.hi-v1.schema.json)
-- [Agamemnon task API at the inventory binding](https://github.com/HomericIntelligence/Agamemnon/blob/50711aca12c251a4020aa99465047f602183c42d/docs/api/openapi.yaml)

@@ -38,6 +38,7 @@ import io
 import json
 import mmap
 import os
+import ast
 import re
 import resource
 import selectors
@@ -48,7 +49,7 @@ import sys
 import tempfile
 import time
 import types
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import yaml
 from yaml.events import AliasEvent
@@ -147,16 +148,16 @@ def _load_git_guard():
             os.close(descriptor)
 
 
-_GIT_GUARD = _load_git_guard()
+try:
+    _GIT_GUARD = _load_git_guard()
+except (OSError, RuntimeError, ImportError, SyntaxError):
+    sys.stderr.write("Grafana credential-hygiene check unavailable: Git input guard could not load\n")
+    raise SystemExit(2)
 RepositoryBinding = _GIT_GUARD.RepositoryBinding
 CheckFailure = _GIT_GUARD.CheckFailure
 _run_git = _GIT_GUARD._run_git
 _run_git_to_fd = _GIT_GUARD._run_git_to_fd
 
-WARNING_LITERAL_RE = re.compile(
-    r"\*\*(warning|caution|important):?\*\*",
-    re.IGNORECASE,
-)
 E2E_MARKER_RE = re.compile(
     rb"(?P<indent>[ \t]*)#\s*e2e-only:\s*anonymous\b", re.IGNORECASE
 )
@@ -288,7 +289,9 @@ def _display_path(path: bytes) -> str:
     return decoded
 
 
-def _parse_tracked_inventory(raw: bytes) -> list[tuple[bytes, str]]:
+def _parse_tracked_inventory(
+    raw: bytes, selected_path: bytes | None = None
+) -> list[tuple[bytes, str]]:
     if raw and not raw.endswith(b"\0"):
         raise CheckFailure("Git returned a malformed tracked-file inventory")
     records = raw[:-1].split(b"\0") if raw else []
@@ -301,7 +304,10 @@ def _parse_tracked_inventory(raw: bytes) -> list[tuple[bytes, str]]:
             raise CheckFailure("Git returned a malformed index entry") from error
         if stage != b"0":
             raise CheckFailure("unmerged index entries cannot be validated")
-        if not path.lower().endswith(TRACKED_SUFFIXES):
+        if selected_path is not None:
+            if path != selected_path:
+                continue
+        elif not path.lower().endswith(TRACKED_SUFFIXES):
             continue
         if mode not in (b"100644", b"100755"):
             raise CheckFailure(
@@ -371,6 +377,51 @@ class TrackedBlobFiles:
         _check_deadline(self.deadline)
         path, object_id = self.inventory[self.position]
         self.position += 1
+        self._validate_worktree_type(path)
+        self.current = self._open_blob(object_id)
+        return path, self.current
+
+    def open_reference(self, path: bytes):
+        """Open one referenced regular blob from the same retained index.
+
+        The caller owns the returned stream. Opening a reference must not close
+        the current Compose stream or consult mutable worktree content.
+        """
+        _check_deadline(self.deadline)
+        entries = _parse_tracked_inventory(self.initial_inventory, path)
+        if not entries:
+            return None
+        if len(entries) != 1:
+            raise CheckFailure("referenced validation path is ambiguous")
+        if not self._validate_worktree_type(path):
+            return None
+        return self._open_blob(entries[0][1])
+
+    def _validate_worktree_type(self, path: bytes) -> bool:
+        """Reject symlink/type replacements without reading worktree contents."""
+        parts = path.split(b"/")
+        if any(part in (b"", b".", b"..") for part in parts):
+            raise CheckFailure("validation path is not repository relative")
+        descriptor = os.dup(self.bound.root.fd)
+        try:
+            for part in parts[:-1]:
+                child = os.open(
+                    part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=descriptor,
+                )
+                os.close(descriptor)
+                descriptor = child
+            metadata = os.stat(parts[-1], dir_fd=descriptor, follow_symlinks=False)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise CheckFailure("validation worktree path is not a regular file")
+            return True
+        except FileNotFoundError:
+            return False
+        finally:
+            os.close(descriptor)
+
+    def _open_blob(self, object_id: str):
+        _check_deadline(self.deadline)
         size_output = _run_git(
             self.bound.git_fd,
             self.bound.index_fd,
@@ -403,8 +454,7 @@ class TrackedBlobFiles:
         except BaseException:
             stream.close()
             raise
-        self.current = stream
-        return path, stream
+        return stream
 
     def _close_current(self):
         if self.current is not None:
@@ -434,6 +484,511 @@ class TrackedBlobFiles:
         return False
 
 
+CRED_RE = re.compile(r"admin\s*/\s*admin", re.IGNORECASE)
+# Accept one narrow affirmative admonition grammar. The action must immediately
+# follow the marker and directly name the credential object; advisory prose that
+# merely contains the same words is not authority for the exception.
+AFFIRMATIVE_WARNING_RE = re.compile(
+    r"^\s*(?:>\s*)?(?:\*\*)?(?:warning|caution|important)\b"
+    r"\s*:?\s*(?:\*\*)?\s*"
+    r"(?:rotate|change|replace)\s+"
+    r"(?:(?:this|these|the|that|default|documented|example|grafana|admin)\s+){0,3}"
+    r"(?:password|credentials?|secrets?|admin\s*/\s*admin)\b"
+    r"(?:\s+(?:before\s+(?:any\s+production\s+or\s+shared-network\s+use|"
+    r"(?:any\s+)?production(?:\s+use)?|use)|immediately|now))?"
+    r"[.!]?\s*$",
+    re.IGNORECASE,
+)
+ANON_NAME = "GF_AUTH_ANONYMOUS_ENABLED"
+ANON_NAME_RE = re.compile(rf"\b{ANON_NAME}\b", re.IGNORECASE)
+YAML_HEX_ESCAPE_RE = re.compile(
+    r"\\x(?P<x>[0-9a-fA-F]{2})|\\u(?P<u>[0-9a-fA-F]{4})|"
+    r"\\U(?P<U>[0-9a-fA-F]{8})"
+)
+# Only an affirmative YAML comment is authority for this exception. Incidental
+# or negated prose containing the same words must not satisfy the gate.
+E2E_MARKER = re.compile(r"^\s*#\s*e2e-only\s*:", re.IGNORECASE)
+ANON_E2E_PATHS = frozenset({"docker-compose.e2e.yml"})
+WARN_WINDOW = 3      # docs: forward look-ahead from the credential line
+ANON_LOOKBACK = 2   # compose: lines above the flag the e2e-only marker may sit on
+
+
+def _is_rotation_warning(line: str) -> bool:
+    return bool(AFFIRMATIVE_WARNING_RE.fullmatch(line))
+
+
+def _marker_is_yaml_comment(
+    lines: list[str], marker_index: int, setting_index: int
+) -> bool:
+    """Accept only a sibling-indented physical YAML comment marker."""
+    marker = lines[marker_index]
+    marker_indent = len(marker) - len(marker.lstrip(" "))
+    setting = lines[setting_index]
+    setting_indent = len(setting) - len(setting.lstrip(" "))
+    # The exemption is intentionally narrower than general YAML comment
+    # placement: the marker must be a physical comment at the setting's exact
+    # indentation. Block/quoted scalar content is necessarily deeper than the
+    # real sibling setting and cannot grant the exception.
+    return marker_indent == setting_indent
+
+
+def _canonicalize_yaml_escapes(text: str) -> str:
+    """Expose YAML hexadecimal escapes before the fail-closed name check."""
+
+    def replace(match: re.Match[str]) -> str:
+        digits = next(group for group in match.groups() if group is not None)
+        try:
+            return chr(int(digits, 16))
+        except (ValueError, OverflowError):
+            return match.group(0)
+
+    return YAML_HEX_ESCAPE_RE.sub(replace, text)
+
+
+def _strip_yaml_comment(text: str) -> str:
+    """Strip only an unquoted YAML comment introduced after whitespace."""
+    single = False
+    double = False
+    escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if double:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                double = False
+        elif single:
+            if char == "'" and index + 1 < len(text) and text[index + 1] == "'":
+                index += 1
+            elif char == "'":
+                single = False
+        elif char == '"':
+            double = True
+        elif char == "'":
+            single = True
+        elif char == "#" and (index == 0 or text[index - 1].isspace()):
+            return text[:index].rstrip()
+        index += 1
+    return text.rstrip()
+
+
+def _split_mapping(text: str) -> tuple[str, str] | None:
+    """Split one simple YAML mapping at its first unquoted colon."""
+    single = False
+    double = False
+    escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if double:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                double = False
+        elif single:
+            if char == "'" and index + 1 < len(text) and text[index + 1] == "'":
+                index += 1
+            elif char == "'":
+                single = False
+        elif char == '"':
+            double = True
+        elif char == "'":
+            single = True
+        elif char == ":":
+            return text[:index].strip(), text[index + 1 :].strip()
+        index += 1
+    return None
+
+
+def _decode_yaml_scalar(text: str) -> str | None:
+    """Decode the bounded scalar forms accepted by Compose environment syntax."""
+    text = text.strip()
+    if not text:
+        return ""
+    if text.startswith('"'):
+        try:
+            value = ast.literal_eval(text)
+        except (SyntaxError, ValueError):
+            return None
+        return value if isinstance(value, str) else None
+    if text.startswith("'"):
+        if not re.fullmatch(r"'(?:[^']|'')*'", text):
+            return None
+        return text[1:-1].replace("''", "'")
+    if any(character.isspace() for character in text):
+        return None
+    return text
+
+
+def _literal_bool(text: str) -> bool | None:
+    scalar = _decode_yaml_scalar(text)
+    if scalar is None:
+        return None
+    if scalar.casefold() == "true":
+        return True
+    if scalar.casefold() == "false":
+        return False
+    return None
+
+
+def _anonymous_assignment(line: str) -> tuple[bool, bool | None]:
+    """Return whether a line assigns the setting and its literal value."""
+    canonical = _canonicalize_yaml_escapes(line)
+    text = _strip_yaml_comment(line).strip()
+    if not text or text.startswith("#"):
+        return False, None
+
+    if text.startswith("-"):
+        item = _decode_yaml_scalar(text[1:].strip())
+        if item is not None and "=" in item:
+            key, value = item.split("=", 1)
+            if key.casefold() == ANON_NAME.casefold():
+                return True, _literal_bool(value)
+        # A list mapping is not canonical Compose syntax, but identify it so it
+        # fails as an unknown form instead of being skipped.
+        text = text[1:].strip()
+
+    mapping = _split_mapping(text)
+    if mapping:
+        key_text, value_text = mapping
+        key = _decode_yaml_scalar(key_text)
+        if key is not None and key.casefold() == ANON_NAME.casefold():
+            return True, _literal_bool(value_text)
+
+    # Any visible or hex-escaped spelling that did not match the closed grammar
+    # is an unsafe/dynamic use, not an unrelated line.
+    return bool(ANON_NAME_RE.search(canonical)), None
+
+
+def _inside_double_quote(text: str) -> bool:
+    """Return whether the end of a physical YAML line is double-quoted."""
+    double = False
+    escaped = False
+    for char in text:
+        if not double:
+            if char == '"':
+                double = True
+            continue
+        if escaped:
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == '"':
+            double = False
+    return double
+
+
+def _logical_yaml_lines(lines: list[str]) -> list[tuple[int, str]]:
+    """Join YAML double-quoted escaped line continuations for inspection."""
+    logical: list[tuple[int, str]] = []
+    buffer = ""
+    start = 0
+    for index, physical in enumerate(lines):
+        if not buffer:
+            start = index
+            buffer = physical
+        else:
+            buffer += physical.lstrip()
+
+        stripped = buffer.rstrip()
+        trailing = len(stripped) - len(stripped.rstrip("\\"))
+        if _inside_double_quote(stripped) and trailing % 2 == 1:
+            buffer = stripped[:-1]
+            continue
+        logical.append((start, buffer))
+        buffer = ""
+    if buffer:
+        logical.append((start, buffer))
+    return logical
+
+
+def _environment_lines(lines: list[str]) -> set[int]:
+    """Return physical line indexes belonging to Compose environment nodes."""
+    indexes: set[int] = set()
+    environment_indent: int | None = None
+    for index, physical in enumerate(lines):
+        text = _strip_yaml_comment(physical)
+        if not text.strip():
+            continue
+        indent = len(text) - len(text.lstrip(" "))
+        if environment_indent is not None:
+            if indent > environment_indent:
+                indexes.add(index)
+                continue
+            environment_indent = None
+
+        mapping = _split_mapping(text.strip())
+        if mapping is None:
+            continue
+        key = _decode_yaml_scalar(mapping[0])
+        if key is None or key.casefold() != "environment":
+            continue
+        indexes.add(index)
+        if not mapping[1].strip():
+            environment_indent = indent
+    return indexes
+
+
+def _dynamic_environment_key(line: str) -> bool:
+    """Reject Compose interpolation in an environment variable name."""
+    text = _strip_yaml_comment(line).strip()
+    if not text:
+        return False
+
+    mapping = _split_mapping(text)
+    if mapping is not None:
+        outer_key = _decode_yaml_scalar(mapping[0])
+        if outer_key is not None and outer_key.casefold() == "environment":
+            value = mapping[1]
+            # Inline list and mapping forms. Values may be dynamic; only a
+            # variable-name position is rejected here.
+            if re.search(
+                r"(?:^|[\[{,])\s*['\"]?\s*\$\{[^}\r\n]+\}"
+                r"(?:[^='\"\r\n]*=|\s*['\"]?\s*:)",
+                value,
+            ):
+                return True
+            return False
+
+    if text.startswith("-"):
+        item = _decode_yaml_scalar(text[1:].strip())
+        if item is None:
+            item = text[1:].strip().strip("'\"")
+        key = item.split("=", 1)[0]
+        return "$" in key
+
+    if mapping is not None:
+        key = _decode_yaml_scalar(mapping[0])
+        if key is None:
+            key = mapping[0]
+        return "$" in key
+    return False
+
+
+def _environment_uses_yaml_indirection(line: str) -> bool:
+    """Reject aliases, anchors, and merge keys on an environment node/member."""
+    text = _strip_yaml_comment(line)
+    return bool(
+        re.search(r"(?:^|[\s\[{,:-])[&*](?=[^\s\[\]{},])", text)
+        or re.search(r"(?:^|[\s\[{,])<<\s*:", text)
+    )
+
+
+def _grafana_service_keys(lines: list[str]) -> set[str]:
+    """Recognize Grafana images independently of a Compose service's name.
+
+    Inspect the complete service before resolving env_file, since image may
+    appear after it. Retain the conventional name for image-less overlays.
+    """
+    names = {"grafana"}
+    services_indent: int | None = None
+    service_indent: int | None = None
+    service: str | None = None
+    field_indent: int | None = None
+    for physical in lines:
+        text = _strip_yaml_comment(physical)
+        if not text.strip():
+            continue
+        indent = len(text) - len(text.lstrip(" "))
+        mapping = _split_mapping(text.strip())
+        key = _decode_yaml_scalar(mapping[0]) if mapping else None
+        if services_indent is not None and indent <= services_indent:
+            services_indent = service_indent = field_indent = None
+            service = None
+        if services_indent is None:
+            if key == "services" and mapping is not None and not mapping[1]:
+                services_indent = indent
+            continue
+        if service_indent is None:
+            service_indent = indent
+        if indent == service_indent:
+            service = key
+            field_indent = None
+            continue
+        if service is None or mapping is None:
+            continue
+        if field_indent is None:
+            field_indent = indent
+        if indent != field_indent or key != "image":
+            continue
+        value = _decode_yaml_scalar(mapping[1])
+        if (value is None or not value or "$" in value
+                or value[0] in "!&*|>[{"
+                or _environment_uses_yaml_indirection(physical)):
+            # A dynamic image cannot prove that the service is unrelated.
+            names.add(service.casefold())
+            continue
+        image_name = value.split("@", 1)[0].rsplit("/", 1)[-1].split(":", 1)[0]
+        if image_name in {"grafana", "grafana-oss", "grafana-enterprise"}:
+            names.add(service.casefold())
+    return names
+
+
+def _grafana_env_file_targets(lines: list[str]) -> list[tuple[int, str | None]]:
+    """Return literal short-syntax env_file entries for the Grafana service.
+
+    ``None`` marks an entry whose syntax is not a single literal scalar.  This
+    intentionally rejects interpolation, aliases, inline collections, and the
+    long mapping syntax rather than attempting a partial Compose parser.
+    """
+    targets: list[tuple[int, str | None]] = []
+    grafana_keys = _grafana_service_keys(lines)
+    services_indent: int | None = None
+    service_indent: int | None = None
+    grafana_service = False
+    env_file_indent: int | None = None
+    env_file_line: int | None = None
+    env_file_had_entry = False
+
+    for index, physical in enumerate(lines):
+        text = _strip_yaml_comment(physical)
+        if not text.strip():
+            continue
+        indent = len(text) - len(text.lstrip(" "))
+        stripped = text.strip()
+
+        if env_file_indent is not None:
+            if indent > env_file_indent:
+                env_file_had_entry = True
+                if not stripped.startswith("-") or _environment_uses_yaml_indirection(
+                    physical
+                ):
+                    targets.append((index, None))
+                else:
+                    targets.append((index, _decode_yaml_scalar(stripped[1:].strip())))
+                continue
+            if not env_file_had_entry and env_file_line is not None:
+                targets.append((env_file_line, None))
+            env_file_indent = None
+            env_file_line = None
+            env_file_had_entry = False
+
+        mapping = _split_mapping(stripped)
+        key = _decode_yaml_scalar(mapping[0]) if mapping is not None else None
+
+        if services_indent is not None and indent <= services_indent:
+            services_indent = None
+            service_indent = None
+            grafana_service = False
+
+        if services_indent is None:
+            if (
+                mapping is not None
+                and key is not None
+                and key.casefold() == "services"
+            ):
+                if mapping[1]:
+                    targets.append((index, None))
+                else:
+                    services_indent = indent
+            continue
+
+        if service_indent is None:
+            service_indent = indent
+
+        if indent == service_indent:
+            if _environment_uses_yaml_indirection(physical):
+                targets.append((index, None))
+                grafana_service = False
+                continue
+            is_grafana = bool(
+                mapping is not None
+                and key is not None
+                and key.casefold() in grafana_keys
+            )
+            if is_grafana and mapping is not None and mapping[1]:
+                targets.append((index, None))
+            grafana_service = is_grafana and mapping is not None and not mapping[1]
+            continue
+
+        if not grafana_service or mapping is None or key is None:
+            continue
+        if _environment_uses_yaml_indirection(physical):
+            targets.append((index, None))
+            continue
+        if key.casefold() != "env_file":
+            continue
+        if not mapping[1]:
+            env_file_indent = indent
+            env_file_line = index
+            continue
+        targets.append((index, _decode_yaml_scalar(mapping[1])))
+
+    if (
+        env_file_indent is not None
+        and not env_file_had_entry
+        and env_file_line is not None
+    ):
+        targets.append((env_file_line, None))
+    return targets
+
+
+def _bind_env_file_target(compose_relative: str, target: str) -> str | None:
+    """Bind one literal Compose env_file path inside the repository."""
+    if (
+        not target
+        or target[0] in "[{!&*|>"
+        or "$" in target
+        or "\x00" in target
+        or "\n" in target
+        or "\r" in target
+    ):
+        return None
+    path = PurePosixPath(target)
+    if path.is_absolute() or ".." in path.parts:
+        return None
+    bound = PurePosixPath(compose_relative).parent / path
+    if not bound.parts or any(part in {"", ".", ".."} for part in bound.parts):
+        return None
+    return bound.as_posix()
+
+
+def _has_e2e_marker(
+    lines: list[str],
+    setting_index: int,
+    *,
+    allowed_indexes: set[int] | None = None,
+) -> bool:
+    """Return whether a same-indent e2e-only comment authorizes a setting."""
+    context_start = max(0, setting_index - ANON_LOOKBACK)
+    return any(
+        (allowed_indexes is None or marker_index in allowed_indexes)
+        and E2E_MARKER.search(lines[marker_index])
+        and _marker_is_yaml_comment(lines, marker_index, setting_index)
+        for marker_index in range(context_start, setting_index + 1)
+    )
+
+
+def _env_comment_lines(lines: list[str]) -> set[int]:
+    """Return e2e marker lines that are outside multiline dotenv quotes."""
+    indexes: set[int] = set()
+    quote: str | None = None
+    for index, line in enumerate(lines):
+        if quote is None and E2E_MARKER.search(line):
+            indexes.add(index)
+
+        escaped = False
+        for offset, character in enumerate(line):
+            if quote is not None:
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == quote:
+                    quote = None
+                continue
+            if character == "#" and (offset == 0 or line[offset - 1].isspace()):
+                break
+            if character in {"'", '"'}:
+                quote = character
+    return indexes
+
+
 def _tracked_blob_files(root: Path, deadline: float):
     return TrackedBlobFiles(root, deadline)
 
@@ -451,97 +1006,41 @@ def _decoded_line_chunks(mapped, start, end, deadline):
         offset = chunk_end
 
 
-def _line_quote_prefix(mapped, start, end, deadline):
-    blockquote = False
-    after_quote = False
-    prefix = []
+def _normalized_warning_line(mapped, start, end, deadline):
+    """Normalize whitespace with bounded storage for the warning grammar."""
+    characters = []
+    pending_space = False
     for text in _decoded_line_chunks(mapped, start, end, deadline):
         for character in text:
-            if not blockquote:
-                if character.isspace():
-                    continue
-                if character != ">":
-                    return False, False
-                blockquote = True
+            if character.isspace():
+                pending_space = bool(characters)
                 continue
-            if not after_quote:
-                if character.isspace():
-                    continue
-                after_quote = True
-            if len(prefix) < 32:
-                prefix.append(character)
-                if len(prefix) < 32:
-                    continue
-            return True, WARNING_LITERAL_RE.match("".join(prefix)) is not None
-    return blockquote, WARNING_LITERAL_RE.match("".join(prefix)) is not None
-
-
-def _line_keyword_flags(mapped, start, end, deadline):
-    actions = {"rotate", "change", "replace"}
-    targets = {"password", "credential", "credentials"}
-    has_action = False
-    has_target = False
-    token = []
-    overlong = False
-
-    def finish_token():
-        nonlocal has_action, has_target, overlong
-        if token and not overlong:
-            value = "".join(token)
-            has_action = has_action or value in actions
-            has_target = has_target or value in targets
-        token.clear()
-        overlong = False
-
-    for text in _decoded_line_chunks(mapped, start, end, deadline):
-        for character in text:
-            if character == "_" or character.isalnum():
-                folded = character.casefold()
-                if not overlong and len(token) + len(folded) <= 16:
-                    token.extend(folded)
-                else:
-                    overlong = True
-            else:
-                finish_token()
-    finish_token()
-    return has_action, has_target
+            if pending_space:
+                characters.append(" ")
+                pending_space = False
+            characters.append(character)
+            # The finite affirmative grammar cannot match a longer normalized
+            # sentence. This bounds matcher state, not document input size.
+            if len(characters) > 512:
+                return None
+    return "".join(characters)
 
 
 def _has_rotation_warning(mapped, lines, deadline) -> bool:
-    """Return whether the window contains a credential-specific admonition."""
-    for index, (_number, start, end) in enumerate(lines):
-        _blockquote, warning = _line_quote_prefix(
-            mapped,
-            start,
-            end,
-            deadline,
-        )
-        if not warning:
+    """Require an affirmative credential-rotation admonition, not keywords."""
+    normalized = [
+        _normalized_warning_line(mapped, start, end, deadline)
+        for _number, start, end in lines
+    ]
+    for index, line in enumerate(normalized):
+        if line is None:
             continue
-        has_action, has_target = _line_keyword_flags(
-            mapped,
-            start,
-            end,
-            deadline,
-        )
-        for _line_number, continuation_start, continuation_end in lines[index + 1 :]:
-            blockquote, _warning = _line_quote_prefix(
-                mapped,
-                continuation_start,
-                continuation_end,
-                deadline,
-            )
-            if not blockquote:
+        sentence = line
+        for continuation in normalized[index + 1:]:
+            if continuation is None or not continuation.startswith(">"):
                 break
-            continuation_action, continuation_target = _line_keyword_flags(
-                mapped,
-                continuation_start,
-                continuation_end,
-                deadline,
-            )
-            has_action = has_action or continuation_action
-            has_target = has_target or continuation_target
-        if has_action and has_target:
+            sentence += " " + continuation[1:].lstrip()
+        if _is_rotation_warning(sentence):
             return True
     return False
 
@@ -699,6 +1198,8 @@ def _environment_mark(environment: object, node):
     """Return the source line for one effective enabled setting."""
     source_node = None
     if isinstance(environment, dict):
+        if any(not isinstance(key, str) or "$" in key for key in environment):
+            raise YamlPolicyError("nonliteral environment key", node)
         if ANON_SETTING not in environment:
             return None
         found = _mapping_lookup(node, ANON_SETTING)
@@ -711,8 +1212,10 @@ def _environment_mark(environment: object, node):
         enabled_index = None
         for index, item in enumerate(environment):
             if not isinstance(item, str):
-                continue
+                raise YamlPolicyError("nonliteral environment key", node)
             name, separator, value = item.partition("=")
+            if "$" in name:
+                raise YamlPolicyError("nonliteral environment key", node)
             if name.strip() != ANON_SETTING:
                 continue
             if not separator:
@@ -752,12 +1255,10 @@ def _anonymous_entries(document: object, node):
             continue
         visited.add(identity)
         if isinstance(value, dict) and isinstance(value_node, yaml.MappingNode):
-            if "env_file" in value:
-                found = _mapping_lookup(value_node, "env_file")
-                raise YamlPolicyError(
-                    "Compose env_file is not permitted",
-                    found[0] if found is not None else value_node,
-                )
+            if ANON_SETTING in value:
+                mark = _environment_mark(value, value_node)
+                if mark is not None:
+                    results.add(mark)
             if "environment" in value:
                 found = _mapping_lookup(value_node, "environment")
                 if found is None:
@@ -837,8 +1338,36 @@ def _yaml_error_position(error):
     )
 
 
-def _yaml_worker_payload(source, deadline):
+def _yaml_worker_payload(source, deadline, dotenv=False):
     try:
+        if dotenv:
+            lines = source.read().splitlines()
+            _check_deadline(deadline)
+            markers = _env_comment_lines(lines)
+            entries = []
+            unmarked = []
+            for index, line in enumerate(lines):
+                _check_deadline(deadline)
+                matched, value = _anonymous_assignment(f"- {line}")
+                if not matched or value is False:
+                    continue
+                if value is None:
+                    raise YamlPolicyError("invalid anonymous-auth literal")
+                if len(entries) >= MAX_YAML_RESULT_LINES:
+                    return {
+                        "status": "error",
+                        "kind": "resource",
+                        "classification": "worker result limit",
+                        "line": None,
+                        "column": None,
+                    }
+                entries.append(index)
+                if not _has_e2e_marker(lines, index, allowed_indexes=markers):
+                    unmarked.append(index)
+            return {
+                "status": "ok", "lines": entries,
+                "env_files": [], "unmarked_lines": unmarked,
+            }
         entries = []
         for document, node in _load_bounded_yaml(source, deadline):
             for line in _anonymous_entries(document, node):
@@ -851,7 +1380,21 @@ def _yaml_worker_payload(source, deadline):
                         "column": None,
                     }
                 entries.append(line)
-        return {"status": "ok", "lines": entries}
+        # Resolve Compose references inside the same resource-bounded worker.
+        # The parent receives paths only, never environment-file contents.
+        source.seek(0)
+        _check_deadline(deadline)
+        env_files = _grafana_env_file_targets(source.read().splitlines())
+        _check_deadline(deadline)
+        if len(env_files) > MAX_YAML_RESULT_LINES:
+            return {
+                "status": "error",
+                "kind": "resource",
+                "classification": "worker result limit",
+                "line": None,
+                "column": None,
+            }
+        return {"status": "ok", "lines": entries, "env_files": env_files}
     except YamlPolicyError as error:
         return {
             "status": "error",
@@ -1018,7 +1561,7 @@ def _finish_yaml_worker(pid, status, process_group_ready, terminate):
     return None
 
 
-def _contained_yaml_parse(stream, deadline):
+def _contained_yaml_parse(stream, deadline, dotenv=False):
     if not sys.platform.startswith("linux") and not (
         sys.platform == "darwin" and _DARWIN_SELF_TEST_WITHOUT_MEMORY_RLIMIT
     ):
@@ -1048,6 +1591,7 @@ def _contained_yaml_parse(stream, deadline):
                 payload = _yaml_worker_payload(
                     source,
                     min(deadline, time.monotonic() + YAML_WORKER_WALL_SECONDS),
+                    dotenv=dotenv,
                 )
             finally:
                 source.close()
@@ -1161,13 +1705,34 @@ def _contained_yaml_parse(stream, deadline):
         if (
             not isinstance(lines, list)
             or len(lines) > MAX_YAML_RESULT_LINES
-            or any(not isinstance(line, int) or line < 0 for line in lines)
+            or any(type(line) is not int or line < 0 for line in lines)
         ):
             raise CheckFailure("YAML worker returned invalid source lines")
+        env_files = payload.get("env_files", [])
+        if (
+            not isinstance(env_files, list)
+            or len(env_files) > MAX_YAML_RESULT_LINES
+            or any(
+                not isinstance(entry, list)
+                or len(entry) != 2
+                or type(entry[0]) is not int
+                or entry[0] < 0
+                or (entry[1] is not None and not isinstance(entry[1], str))
+                for entry in env_files
+            )
+        ):
+            raise CheckFailure("YAML worker returned invalid environment references")
+        unmarked = payload.get("unmarked_lines", [])
+        if (
+            not isinstance(unmarked, list)
+            or len(unmarked) > MAX_YAML_RESULT_LINES
+            or any(type(line) is not int or line not in lines for line in unmarked)
+            or (dotenv and "unmarked_lines" not in payload)
+        ):
+            raise CheckFailure("worker returned invalid environment marker results")
         return payload
     allowed_kinds = {"encoding", "policy", "resource", "structure", "syntax"}
     allowed_classifications = {
-        "Compose env_file is not permitted",
         "YAML merge keys are not permitted",
         "YAML structure limit",
         "duplicate YAML mapping key",
@@ -1177,6 +1742,7 @@ def _contained_yaml_parse(stream, deadline):
         "missing anonymous-auth literal",
         "missing anonymous-auth source",
         "missing environment source",
+        "nonliteral environment key",
         "syntax error",
         "worker containment failure",
         "worker deadline exceeded",
@@ -1240,7 +1806,43 @@ def _marker_status(mapped, entries, deadline):
     return status
 
 
-def check_compose(blobs, findings: FindingBudget, deadline: float) -> None:
+def _check_environment_references(
+    path, references, reader, findings: FindingBudget, deadline: float
+):
+    for source_line, target_text in references:
+        _check_deadline(deadline)
+        if findings.exhausted:
+            return
+        location = f"{_display_path(path)}:{source_line + 1}"
+        target = (
+            _bind_env_file_target(os.fsdecode(path), target_text)
+            if target_text is not None else None
+        )
+        if target is None:
+            findings.add(location + ": Grafana env_file requires a literal repository path")
+            continue
+        if reader is None:
+            raise CheckFailure("staged environment reference reader is unavailable")
+        stream = reader.open_reference(os.fsencode(target))
+        if stream is None:
+            findings.add(location + ": Grafana env_file target is missing or untracked")
+            continue
+        with stream:
+            result = _contained_yaml_parse(stream, deadline, dotenv=True)
+        if result["status"] == "error":
+            findings.add(_yaml_finding(os.fsencode(target), result))
+            continue
+        for line in result["lines"]:
+            target_location = f"{_display_path(os.fsencode(target))}:{line + 1}"
+            if os.fsdecode(path) not in E2E_COMPOSE_PATHS:
+                findings.add(target_location + ": anonymous Grafana read is not allowed here")
+            elif line in result["unmarked_lines"]:
+                findings.add(target_location + ": anonymous Grafana read requires an e2e-only comment")
+
+
+def check_compose(
+    blobs, findings: FindingBudget, deadline: float, reference_reader=None
+) -> None:
     """Parse staged YAML and enforce the anonymous Grafana e2e marker."""
     for path, stream in blobs:
         if findings.exhausted:
@@ -1251,6 +1853,9 @@ def check_compose(blobs, findings: FindingBudget, deadline: float) -> None:
         if result["status"] == "error":
             findings.add(_yaml_finding(path, result))
             continue
+        _check_environment_references(
+            path, result.get("env_files", []), reference_reader, findings, deadline
+        )
         entries = result["lines"]
         display_path = _display_path(path)
         marker_status = {}
@@ -1284,7 +1889,9 @@ def _run(root: Path) -> int:
                 if path.lower().endswith(b".md"):
                     check_docs(((path, stream),), findings, deadline)
                 else:
-                    check_compose(((path, stream),), findings, deadline)
+                    check_compose(
+                        ((path, stream),), findings, deadline, reference_reader=blobs
+                    )
                 if findings.exhausted:
                     break
         errs = findings.errors
@@ -1294,7 +1901,8 @@ def _run(root: Path) -> int:
             if isinstance(error, CheckFailure)
             else "operating-system input failure"
         )
-        errs = ["validation input failure: " + classification]
+        sys.stderr.write("Grafana credential-hygiene check unavailable: " + classification + "\n")
+        return 2
     if errs:
         sys.stderr.write("Grafana credential-hygiene check FAILED (#179):\n")
         for e in errs:
@@ -1359,7 +1967,7 @@ def _self_test_git(directory: str, *arguments: str) -> None:
         raise RuntimeError("self-test Git failed: " + diagnostic[:1_000])
 
 
-def _self_test() -> int:
+def _staged_input_self_test() -> int:
     """Embedded unit tests — stdlib only, no pytest (repo has no py test harness)."""
     global _DARWIN_SELF_TEST_WITHOUT_MEMORY_RLIMIT
     _DARWIN_SELF_TEST_WITHOUT_MEMORY_RLIMIT = sys.platform == "darwin"
@@ -1958,7 +2566,7 @@ def _self_test() -> int:
                     target.unlink()
                 os.rename(moved, target)
             output = stdout.getvalue() + stderr.getvalue()
-            ok = got == 1 and "Grafana credential hygiene OK." not in output
+            ok = got == 2 and "Grafana credential hygiene OK." not in output
             cases.append((name, ok, int(not ok), 0))
 
     retarget_case(
@@ -2099,7 +2707,7 @@ def _self_test() -> int:
         (root / "linked.md").symlink_to(outside)
         _self_test_git(directory, "add", "--", "linked.md")
         got = _run(root)
-        cases.append(("tracked_symlink_fails_closed", got == 1, got, 1))
+        cases.append(("tracked_symlink_fails_closed", got == 2, got, 2))
 
     failed = [c for c in cases if not c[1]]
     for name, ok, got, want in cases:
@@ -2113,6 +2721,772 @@ def _self_test() -> int:
     return 0
 
 
+def _compatibility_self_test() -> int:
+    """Embedded unit tests — stdlib only, no pytest (repo has no py test harness)."""
+    cases: list[tuple[str, bool, int, int]] = []
+
+    def case(
+        name: str,
+        files: dict[str, str],
+        want: int,
+        *,
+        missing: frozenset[str] = frozenset(),
+        untracked: frozenset[str] = frozenset(),
+    ) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _self_test_git(d, "init", "-q", "--object-format=sha1")
+            for rel, body in files.items():
+                p = root / rel
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(body)
+            tracked = [relative for relative in files if relative not in untracked]
+            _self_test_git(d, "add", "--", *tracked)
+            for relative in missing:
+                (root / relative).unlink()
+            got = _run(root)
+            cases.append((name, got == want, got, want))
+
+    # --- doc rule ---
+    case(
+        "creds_no_warning_fails",
+        {"doc.md": "Default credentials: `admin / admin`\nNext line.\n"},
+        1,
+    )
+    case(
+        "creds_with_blank_then_warning_passes",  # mirrors the shipped doc layout
+        {
+            "doc.md": (
+                "Default credentials: `admin / admin`\n\n"
+                "> **WARNING:** Rotate this password before any production use\n"
+            )
+        },
+        0,
+    )
+    case(
+        "shipped_shared_network_warning_passes",
+        {
+            "doc.md": (
+                "Default credentials: `admin / admin`\n\n"
+                "> **WARNING:** Rotate this password before any production or "
+                "shared-network use.\n"
+            )
+        },
+        0,
+    )
+    case(
+        "loose_word_does_not_satisfy",
+        {"doc.md": "Default credentials: `admin / admin`\nWe rotate logs nightly.\n"},
+        1,  # bare verb must NOT pass
+    )
+    case(
+        "change_phrase_without_admonition_fails",
+        {
+            "doc.md": (
+                "Default credentials: `admin / admin`\n"
+                "Replace default dashboard panels in examples.\n"
+            )
+        },
+        1,
+    )
+    case(
+        "unrelated_admonition_and_change_fails",
+        {
+            "doc.md": (
+                "Default credentials: `admin / admin`\n"
+                "> **WARNING:** Change the dashboard theme before production.\n"
+            )
+        },
+        1,
+    )
+    case(
+        "admin_theme_warning_fails",
+        {
+            "doc.md": (
+                "Default credentials: `admin / admin`\n"
+                "> **WARNING:** Change the admin dashboard theme before production.\n"
+            )
+        },
+        1,
+    )
+    case(
+        "theme_change_then_password_text_fails",
+        {
+            "doc.md": (
+                "Default credentials: `admin / admin`\n"
+                "> **WARNING:** Change the dashboard theme; the password remains admin/admin.\n"
+            )
+        },
+        1,
+    )
+    case(
+        "negated_rotation_warning_fails",
+        {
+            "doc.md": (
+                "Default credentials: `admin / admin`\n"
+                "> **WARNING:** Do not rotate or change the default password.\n"
+            )
+        },
+        1,
+    )
+    case(
+        "not_necessary_rotation_fails",
+        {
+            "doc.md": (
+                "Default credentials: `admin / admin`\n"
+                "> **WARNING:** It is not necessary to change the default password.\n"
+            )
+        },
+        1,
+    )
+    case(
+        "refuse_rotation_fails",
+        {
+            "doc.md": (
+                "Default credentials: `admin / admin`\n"
+                "> **WARNING:** Refuse to change this password.\n"
+            )
+        },
+        1,
+    )
+    case(
+        "suffix_negation_warning_fails",
+        {
+            "doc.md": (
+                "Default credentials: `admin / admin`\n"
+                "> **WARNING:** Change the default password? No; retain admin/admin.\n"
+            )
+        },
+        1,
+    )
+
+    # --- compose rule ---
+    case(
+        "anon_no_marker_fails",
+        {
+            "docker-compose.e2e.yml": (
+                'environment:\n  GF_AUTH_ANONYMOUS_ENABLED: "true"\n'
+            )
+        },
+        1,
+    )
+    case(
+        "anon_marker_one_line_above_passes",
+        {
+            "docker-compose.e2e.yml": (
+                "  # e2e-only: anonymous viewer (no prod data)\n"
+                '  GF_AUTH_ANONYMOUS_ENABLED: "true"\n'
+            )
+        },
+        0,
+    )
+    case(
+        "anon_marker_two_lines_above_passes",  # EXACT shipped layout: marker @ i-2
+        {
+            "docker-compose.e2e.yml": (
+                "  # e2e-only: anonymous Viewer for the local demo stack.\n"
+                "  # Never enable this in a prod-facing stack; see #179.\n"
+                '  GF_AUTH_ANONYMOUS_ENABLED: "true"\n'
+            )
+        },
+        0,
+    )
+    case(
+        "anon_marker_three_lines_above_fails",  # boundary: i-3 is out of window
+        {
+            "docker-compose.e2e.yml": (
+                "  # e2e-only: marker too far up\n"
+                "  # filler comment a\n"
+                "  # filler comment b\n"
+                '  GF_AUTH_ANONYMOUS_ENABLED: "true"\n'
+            )
+        },
+        1,
+    )
+    case(
+        "negated_marker_comment_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "  # not e2e-only: this is the production stack\n"
+                '  GF_AUTH_ANONYMOUS_ENABLED: "true"\n'
+            )
+        },
+        1,
+    )
+    case(
+        "marker_text_in_yaml_value_fails",
+        {
+            "docker-compose.e2e.yml": (
+                '  deployment_note: "e2e-only is forbidden here"\n'
+                '  GF_AUTH_ANONYMOUS_ENABLED: "true"\n'
+            )
+        },
+        1,
+    )
+    case(
+        "marker_inside_block_scalar_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "environment:\n"
+                "  NOTE: |\n"
+                "    # e2e-only: this is scalar data, not a comment\n"
+                "  GF_AUTH_ANONYMOUS_ENABLED: true\n"
+            )
+        },
+        1,
+    )
+    case(
+        "marker_after_block_scalar_content_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "environment:\n"
+                "  NOTE: |\n"
+                "    ordinary scalar line\n"
+                "    # e2e-only: still scalar data\n"
+                "  GF_AUTH_ANONYMOUS_ENABLED: true\n"
+            )
+        },
+        1,
+    )
+    case(
+        "marker_in_explicit_indent_scalar_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "environment:\n"
+                "  NOTE: |2-\n"
+                "    # e2e-only: explicit-indent scalar data\n"
+                "  GF_AUTH_ANONYMOUS_ENABLED: true\n"
+            )
+        },
+        1,
+    )
+    case(
+        "marker_in_multiline_quote_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "environment:\n"
+                "  NOTE: \"ordinary text\\\n"
+                "    # e2e-only: continued quoted scalar data\"\n"
+                "  GF_AUTH_ANONYMOUS_ENABLED: true\n"
+            )
+        },
+        1,
+    )
+    case(
+        "marker_in_unclassified_yaml_fails",
+        {
+            "production.yml": (
+                "  # e2e-only: misleading marker in an unclassified path\n"
+                '  GF_AUTH_ANONYMOUS_ENABLED: "true"\n'
+            )
+        },
+        1,
+    )
+    case(
+        "dynamic_anonymous_value_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "  # e2e-only: value must still be literal\n"
+                '  GF_AUTH_ANONYMOUS_ENABLED: "${GRAFANA_ANON:-true}"\n'
+            )
+        },
+        1,
+    )
+    case(
+        "dynamic_environment_list_key_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "environment:\n"
+                '  - "${ANON_KEY}=true"\n'
+            )
+        },
+        1,
+    )
+    case(
+        "dynamic_environment_mapping_key_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "environment:\n"
+                '  "${ANON_KEY}": true\n'
+            )
+        },
+        1,
+    )
+    case(
+        "aliased_environment_fragment_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "x-env: &anon_env\n"
+                '  - "${ANON_KEY}=true"\n'
+                "services:\n"
+                "  grafana:\n"
+                "    environment: *anon_env\n"
+            )
+        },
+        1,
+    )
+    case(
+        "environment_list_alias_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "environment:\n"
+                "  - *hidden_setting\n"
+            )
+        },
+        1,
+    )
+    case(
+        "dotted_environment_alias_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "services:\n"
+                "  grafana:\n"
+                "    environment: *.hidden\n"
+            )
+        },
+        1,
+    )
+    case(
+        "unicode_environment_alias_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "services:\n"
+                "  grafana:\n"
+                "    environment: *\u914d\u7f6e\n"
+            )
+        },
+        1,
+    )
+    case(
+        "inline_environment_merge_key_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "services:\n"
+                "  grafana:\n"
+                "    environment: {<<: {SAFE: false}}\n"
+            )
+        },
+        1,
+    )
+    case(
+        "dynamic_unrelated_environment_value_is_not_a_key",
+        {
+            "docker-compose.e2e.yml": (
+                "environment:\n"
+                '  OTHER_SETTING: "${OTHER_VALUE:-safe}"\n'
+            )
+        },
+        0,
+    )
+    case(
+        "quoted_mapping_key_in_unclassified_yaml_fails",
+        {
+            "production.yml": (
+                '  "GF_AUTH_ANONYMOUS_ENABLED": "true"\n'
+            )
+        },
+        1,
+    )
+    case(
+        "quoted_list_item_in_unclassified_yaml_fails",
+        {
+            "production.yml": (
+                '  - "GF_AUTH_ANONYMOUS_ENABLED=true"\n'
+            )
+        },
+        1,
+    )
+    case(
+        "quoted_list_dynamic_value_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "  # e2e-only: value must still be literal\n"
+                '  - "GF_AUTH_ANONYMOUS_ENABLED=${GRAFANA_ANON:-true}"\n'
+            )
+        },
+        1,
+    )
+    case(
+        "escaped_mapping_key_in_unclassified_yaml_fails",
+        {
+            "production.yml": (
+                '  "GF_AUTH_ANONYMOUS_\\u0045NABLED": "true"\n'
+            )
+        },
+        1,
+    )
+    case(
+        "escaped_list_key_in_unclassified_yaml_fails",
+        {
+            "production.yml": (
+                '  - "GF_AUTH_ANONYMOUS_\\u0045NABLED=true"\n'
+            )
+        },
+        1,
+    )
+    case(
+        "mapping_hash_without_comment_space_is_dynamic",
+        {
+            "docker-compose.e2e.yml": (
+                "  # e2e-only: value must still be literal\n"
+                "  GF_AUTH_ANONYMOUS_ENABLED: true#suffix\n"
+            )
+        },
+        1,
+    )
+    case(
+        "list_hash_without_comment_space_is_dynamic",
+        {
+            "docker-compose.e2e.yml": (
+                "  # e2e-only: value must still be literal\n"
+                "  - GF_AUTH_ANONYMOUS_ENABLED=true#suffix\n"
+            )
+        },
+        1,
+    )
+    case(
+        "escaped_multiline_mapping_key_fails",
+        {
+            "production.yml": (
+                '  "GF_AUTH_ANONYMOUS_ENA\\\n'
+                '    BLED": "true"\n'
+            )
+        },
+        1,
+    )
+    case(
+        "escaped_multiline_list_key_fails",
+        {
+            "production.yml": (
+                '  - "GF_AUTH_ANONYMOUS_ENA\\\n'
+                '    BLED=true"\n'
+            )
+        },
+        1,
+    )
+    case(
+        "tracked_production_env_file_enablement_fails",
+        {
+            "production.yml": (
+                "services:\n"
+                "  grafana:\n"
+                "    env_file:\n"
+                "      - grafana.env\n"
+            ),
+            "grafana.env": "GF_AUTH_ANONYMOUS_ENABLED=true\n",
+        },
+        1,
+    )
+    for image in ("grafana/grafana:11", "grafana/grafana-enterprise:11",
+                  "registry.example/grafana/grafana@sha256:example"):
+        for image_first in (True, False):
+            properties = [f"    image: {image}\n", "    env_file: dashboard.env\n"]
+            if not image_first:
+                properties.reverse()
+            case(
+                f"renamed_grafana_service_{image}_{image_first}",
+                {
+                    "production.yml": "services:\n  dashboards:\n" + "".join(properties),
+                    "dashboard.env": "GF_AUTH_ANONYMOUS_ENABLED=true\n",
+                },
+                1,
+            )
+    case(
+        "renamed_grafana_literal_false_passes",
+        {
+            "production.yml": "services:\n  dashboards:\n    env_file: dashboard.env\n    image: grafana/grafana:11\n",
+            "dashboard.env": "GF_AUTH_ANONYMOUS_ENABLED=false\n",
+        },
+        0,
+    )
+    for image_value in ("*dashboard_image", "!custom grafana/grafana", "|", ">"):
+        case(
+            f"renamed_grafana_indirect_image_{image_value}",
+            {
+                "production.yml": (
+                    "x-image: &dashboard_image grafana/grafana:11\n"
+                    "services:\n  dashboards:\n"
+                    f"    image: {image_value}\n"
+                    "    env_file: dashboard.env\n"
+                ),
+                "dashboard.env": "GF_AUTH_ANONYMOUS_ENABLED=true\n",
+            },
+            1,
+        )
+    case(
+        "dotted_grafana_service_alias_with_env_file_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "x-grafana: &.shared\n"
+                "  env_file: grafana.env\n"
+                "services:\n"
+                "  grafana: *.shared\n"
+            ),
+            "grafana.env": (
+                "# e2e-only: anonymous viewer for the local demo stack\n"
+                "GF_AUTH_ANONYMOUS_ENABLED=true\n"
+            ),
+        },
+        1,
+    )
+    case(
+        "dotted_services_alias_with_env_file_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "x-services: &.shared\n"
+                "  grafana:\n"
+                "    env_file: grafana.env\n"
+                "services: *.shared\n"
+            ),
+            "grafana.env": (
+                "# e2e-only: anonymous viewer for the local demo stack\n"
+                "GF_AUTH_ANONYMOUS_ENABLED=true\n"
+            ),
+        },
+        1,
+    )
+    case(
+        "tracked_e2e_env_file_with_marker_passes",
+        {
+            "docker-compose.e2e.yml": (
+                "services:\n"
+                "  grafana:\n"
+                "    env_file: grafana.env\n"
+            ),
+            "grafana.env": (
+                "# e2e-only: anonymous viewer for the local demo stack\n"
+                "GF_AUTH_ANONYMOUS_ENABLED=true\n"
+            ),
+        },
+        0,
+    )
+    case(
+        "tracked_e2e_env_file_without_marker_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "services:\n"
+                "  grafana:\n"
+                "    env_file: grafana.env\n"
+            ),
+            "grafana.env": "GF_AUTH_ANONYMOUS_ENABLED=true\n",
+        },
+        1,
+    )
+    case(
+        "env_file_marker_inside_multiline_value_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "services:\n"
+                "  grafana:\n"
+                "    env_file: grafana.env\n"
+            ),
+            "grafana.env": (
+                "NOTE='ordinary text\n"
+                "# e2e-only: quoted value data, not a comment\n"
+                "'\n"
+                "GF_AUTH_ANONYMOUS_ENABLED=true\n"
+            ),
+        },
+        1,
+    )
+    case(
+        "inline_env_file_collection_fails_closed",
+        {
+            "docker-compose.e2e.yml": (
+                "services:\n"
+                "  grafana:\n"
+                "    env_file: [grafana.env]\n"
+            ),
+            "grafana.env": "GF_AUTH_ANONYMOUS_ENABLED=true\n",
+            "[grafana.env]": "SAFE=true\n",
+        },
+        1,
+    )
+    case(
+        "tracked_env_file_literal_false_passes",
+        {
+            "production.yml": (
+                "services:\n"
+                "  grafana:\n"
+                "    env_file: grafana.env\n"
+            ),
+            "grafana.env": "GF_AUTH_ANONYMOUS_ENABLED=false\n",
+        },
+        0,
+    )
+    case(
+        "nested_compose_binds_env_file_from_its_parent",
+        {
+            "deploy/production.yml": (
+                "services:\n"
+                "  grafana:\n"
+                "    env_file: ./grafana.env\n"
+            ),
+            "deploy/grafana.env": "GF_AUTH_ANONYMOUS_ENABLED=false\n",
+        },
+        0,
+    )
+    case(
+        "dynamic_grafana_env_file_target_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "services:\n"
+                "  grafana:\n"
+                '    env_file: "${GRAFANA_ENV_FILE}"\n'
+            )
+        },
+        1,
+    )
+    case(
+        "empty_grafana_env_file_target_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "services:\n"
+                "  grafana:\n"
+                "    env_file:\n"
+                "    image: grafana/grafana\n"
+            )
+        },
+        1,
+    )
+    case(
+        "missing_grafana_env_file_target_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "services:\n"
+                "  grafana:\n"
+                "    env_file: missing.env\n"
+            ),
+            "missing.env": "GF_AUTH_ANONYMOUS_ENABLED=true\n",
+        },
+        1,
+        missing=frozenset({"missing.env"}),
+    )
+    case(
+        "untracked_grafana_env_file_target_fails",
+        {
+            "docker-compose.e2e.yml": (
+                "services:\n"
+                "  grafana:\n"
+                "    env_file: grafana.env\n"
+            ),
+            "grafana.env": "GF_AUTH_ANONYMOUS_ENABLED=true\n",
+        },
+        1,
+        untracked=frozenset({"grafana.env"}),
+    )
+    case(
+        "unrelated_service_dynamic_env_file_is_out_of_scope",
+        {
+            "docker-compose.e2e.yml": (
+                "services:\n"
+                "  helper:\n"
+                '    env_file: "${HELPER_ENV_FILE}"\n'
+            )
+        },
+        0,
+    )
+
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        _self_test_git(d, "init", "-q", "--object-format=sha1")
+        compose = root / "docker-compose.e2e.yml"
+        compose.write_text(
+            "services:\n"
+            "  grafana:\n"
+            "    env_file: grafana.env\n"
+        )
+        env_file = root / "grafana.env"
+        env_file.write_text("GF_AUTH_ANONYMOUS_ENABLED=false\n")
+        _self_test_git(d, "add", "--", compose.name, env_file.name)
+        env_file.unlink()
+        env_file.symlink_to("missing.env")
+        got = _run(root)
+        cases.append(("tracked_env_file_symlink_is_unavailable", got == 2, got, 2))
+
+    with tempfile.TemporaryDirectory() as d:
+        got = _run(Path(d))
+        cases.append(("inventory_failure_is_unavailable", got == 2, got, 2))
+
+    with tempfile.TemporaryDirectory() as d:
+        copied = Path(d) / "check_grafana_credentials.py"
+        copied.write_bytes(Path(__file__).read_bytes())
+        result = subprocess.run(
+            [sys.executable, str(copied)], cwd=d, capture_output=True, text=True
+        )
+        cases.append(
+            (
+                "missing_shared_reader_is_unavailable",
+                result.returncode == 2,
+                result.returncode,
+                2,
+            )
+        )
+
+    with tempfile.TemporaryDirectory() as d:
+        result = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve())],
+            cwd=d,
+            capture_output=True,
+            text=True,
+        )
+        cases.append(
+            (
+                "outside_repo_is_unavailable",
+                result.returncode == 2,
+                result.returncode,
+                2,
+            )
+        )
+
+    # A tracked deletion remains visible to plain `git ls-files` until it is
+    # staged. The worktree gate must scan the current filesystem instead of
+    # crashing while a legitimate rename or deletion is under review.
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        _self_test_git(d, "init", "-q", "--object-format=sha1")
+        deleted = root / "deleted.md"
+        deleted.write_text("Default credentials: `admin / admin`\n")
+        _self_test_git(d, "add", "deleted.md")
+        deleted.unlink()
+        try:
+            got = _run(root)
+        except FileNotFoundError:
+            got = 99
+        cases.append(("tracked_worktree_deletion_is_ignored", got == 0, got, 0))
+
+    # A tracked file replaced by a symlink is not a deletion. The gate must
+    # reject the worktree type change instead of following or silently skipping
+    # it, including when the symlink target is missing.
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        _self_test_git(d, "init", "-q", "--object-format=sha1")
+        replaced = root / "replaced.md"
+        replaced.write_text("safe\n")
+        _self_test_git(d, "add", "replaced.md")
+        replaced.unlink()
+        replaced.symlink_to("missing.md")
+        got = _run(root)
+        cases.append(("tracked_symlink_type_change_fails", got == 2, got, 2))
+
+    failed = [c for c in cases if not c[1]]
+    for name, ok, got, want in cases:
+        print(f"  [{'PASS' if ok else 'FAIL'}] {name} (got={got} want={want})")
+    if failed:
+        sys.stderr.write(f"SELF-TEST FAILED: {len(failed)}/{len(cases)} cases\n")
+        return 1
+    print(f"SELF-TEST OK: {len(cases)}/{len(cases)} cases passed.")
+    return 0
+
+
+
+def _self_test() -> int:
+    """Run both inherited behavior suites without short-circuiting failures."""
+    staged_result = _staged_input_self_test()
+    compatibility_result = _compatibility_self_test()
+    return int(staged_result != 0 or compatibility_result != 0)
+
+
 def main(argv: list[str]) -> int:
     if not sys.flags.isolated:
         sys.stderr.write(
@@ -2122,6 +3496,10 @@ def main(argv: list[str]) -> int:
     if "--self-test" in argv:
         return _self_test()
     root = Path(os.path.realpath(Path(__file__).parent.parent))
+    current = Path(os.path.realpath(Path.cwd()))
+    if current != root and root not in current.parents:
+        sys.stderr.write("Grafana credential-hygiene check unavailable: invocation is outside this repository\n")
+        return 2
     return _run(root)
 
 

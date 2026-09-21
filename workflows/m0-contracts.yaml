@@ -46,12 +46,14 @@ teams:
           authority. Complete when a read-only comparison and focused config
           validation confirm all four exact IDs. Blocks everything downstream.
         assign_to: loop-planner
-      - subject: Freeze dispatch envelope and budget-carriage fields
+      - subject: Record dispatch envelope and budget-carriage compatibility
         description: >-
           Verify that the existing hi/v1 pointer envelope carries the current
           stage-chaining fields: stage, attempt, budget counters, verdict, and
           remediation payload. Treat the checked-in schema as the preserved
-          contract: do not edit hi/v1 fields or transport semantics. Any wire
+          contract: do not edit hi/v1 fields or transport semantics. Schema
+          compatibility does not establish deployed retry or exhaustion
+          behavior; those semantics remain Proposed ADR-020 targets. Any wire
           change requires a separately scoped, newly versioned schema and
           compatible consumer plan. Change only validation examples, tests, or
           references needed to prove the current contract. Complete when valid
@@ -91,6 +93,6 @@ teams:
         assign_to: loop-planner
         blocked_by:
           - Verify planning / implementation / review / mechanical lane model IDs
-          - Freeze dispatch envelope and budget-carriage fields
+          - Record dispatch envelope and budget-carriage compatibility
           - Define the retained Odyssey agent-role migration boundary
 teardown: on_completion

@@ -187,8 +187,7 @@ assert_retired_github_script() {
   local script=$1
   shift
   local status=0
-  local call_log
-  local output
+  local call_log output
   call_log="$tmp_dir/retired-$(basename "$script").calls"
   output="$tmp_dir/retired-$(basename "$script").log"
   : >"$call_log"
@@ -1175,6 +1174,7 @@ run_live_update() {
   local put_count_file=$6
   local get_count_file=$7
   local evidence_file="$tmp_dir/evidence-${repos//,/-}.json"
+  local policy_source_path=${FLEET_RULESET_POLICY_FILE:-}
   local repository_state_file=${GH_REPOSITORY_STATE:-"$tmp_dir/repository-${repos//,/-}.json"}
   local repository_state_dir=""
   local settings_count_file=${GH_SETTINGS_PATCH_COUNT_FILE:-"$tmp_dir/settings-${repos//,/-}.count"}
@@ -2220,7 +2220,7 @@ assert_remote_evidence_rejected() {
   local value=$3
   local state_file="$tmp_dir/evidence-$name-state.json"
   local pre_file="$tmp_dir/evidence-$name-pre.json"
-  local snapshot_dir="$tmp_dir/evidence-$name-snapshots"
+  local evidence_snapshots="$tmp_dir/evidence-$name-snapshots"
   local output_file="$tmp_dir/evidence-$name.log"
   local put_count="$tmp_dir/evidence-$name-put-count"
   local get_count="$tmp_dir/evidence-$name-get-count"
@@ -2230,7 +2230,7 @@ assert_remote_evidence_rejected() {
   cp "$state_file" "$pre_file"
   export "$variable=$value"
   if run_live_update "$myrmidons_fixture" Myrmidons "$state_file" \
-      "$snapshot_dir" "$output_file" "$put_count" "$get_count"; then
+      "$evidence_snapshots" "$output_file" "$put_count" "$get_count"; then
     accepted=true
   fi
   unset "$variable"

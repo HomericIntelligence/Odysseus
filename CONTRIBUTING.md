@@ -1,11 +1,10 @@
 # Contributing to Odysseus
 
-Thank you for your interest in contributing to Odysseus! This is the meta-repo
-and unified architecture hub for the HomericIntelligence distributed agent
-mesh. It owns integration and operator tooling, E2E harnesses, Architecture
-Decision Records, operational runbooks, shared infrastructure configs, and
-component gitlinks; component service implementations live in their owning
-repositories.
+Thank you for your interest in contributing to Odysseus! This is the meta-repo and unified
+architecture hub for the HomericIntelligence distributed agent mesh. It contains the Fleet web
+application under `web/` as well as its coordination surfaces: Architecture Decision Records,
+operational runbooks, shared infrastructure configs, and submodule references for every
+component in the ecosystem.
 
 ## Quick Links
 
@@ -60,9 +59,10 @@ Odysseus is a meta-repo. Contributions fall into these categories:
 
 - **Architecture Decision Records (ADRs)** -- Propose new architectural decisions in
   `docs/adr/`. Copy the format from an existing ADR, use the next sequential number,
-  and keep Status as "Proposed" until a recorded human decision formally accepts it.
-  ADRs are append-only once accepted. Superseding decisions get a new ADR that
-  references the old one.
+  and keep Status as "Proposed" until a reviewed status change records formal human
+  acceptance. Merge alone does not imply acceptance. ADRs are append-only: once
+  accepted, they are never edited. Superseding decisions get a new ADR that references
+  the old one.
 
 - **Runbooks** -- Add contextual operational procedures in `docs/runbooks/`.
   State the exact scope, prerequisites, authority, allowed effects, success,
@@ -284,17 +284,21 @@ activation.
 - **Live merge policy is authoritative** - Query the repository when a pull
   request is ready; checked-in documentation does not pin an enabled merge
   method.
-- **Merge queue is staged** - Workflow readiness lands first. A human-reviewed, post-merge operator step dry-runs the live-derived payload, activates one pilot, and records a queued smoke result before any fleet rollout.
+- **Merge queue is not assumed** - Verify live ruleset authority. A future queue rollout requires a separately reviewed operator change.
 
 ### Merge Readiness
 
-Merge only after required CI passes for the current head and the current-head
-Athena review exchange reaches terminal `GO`. Resolve required review threads
-and any other live branch-protection conditions before merging.
-
-Read the repository's live merge policy when the pull request is ready, then
-select one of its enabled merge methods. Do not assume that a checked-in merge
-method, merge queue, or auto-merge setting still matches repository state.
+Repository agents may enable the supported squash auto-merge on their own pull
+request only when the current task authorizes merge and after an exact-head
+Athena GO, all required checks from the expected apps, zero unresolved review
+threads, and fresh source head/base-tip readback. The live repository has no
+merge queue or strict
+up-to-date-check rule, so do not describe an ordinary squash or auto-merge as
+atomic source-and-base admission. Under explicit current-user merge authority,
+re-read the head and base immediately before the supported squash merge, verify
+the merged commit and pull request afterward, and disclose that residual race.
+If the task requires the stronger atomic predicate proposed by ADR-020, stop for
+a repository admin until that primitive is deployed.
 
 ### For Repo Admins
 

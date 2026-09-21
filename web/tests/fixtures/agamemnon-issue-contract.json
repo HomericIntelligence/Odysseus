@@ -1,0 +1,261 @@
+{
+  "claimCommand": {
+    "command": {
+      "agentId": "fixture-agent",
+      "commandId": "fixture-start",
+      "executionId": "fixture-execution",
+      "generation": 1,
+      "idempotencyKey": "fixture-start",
+      "operation": "start",
+      "payload": {},
+      "schema": "hi/fleet/v1",
+      "sessionId": "fixture-session",
+      "stage": "implementation",
+      "targetId": "fixture-session",
+      "targetKind": "sessions",
+      "taskId": "issue-2be92942689bad6ddb5bf5b8a8d930926496abcc969a908daa2fada5bb5ab481",
+      "workerId": "fixture-worker",
+      "workspace": "/work/fixture-issue"
+    },
+    "status": "pending"
+  },
+  "claimedTask": {
+    "layer": "L3_TaskAgent",
+    "state": "Delegated",
+    "task": {
+      "assigned_lead_id": "fixture-agent",
+      "blocked_by": [],
+      "brief_id": "",
+      "child_task_ids": [],
+      "completed_at": "",
+      "created_at": "2026-09-13T14:29:55Z",
+      "delivery": {
+        "issueIntake": {
+          "forge": "github",
+          "issue": {
+            "number": 42,
+            "repository": "Example/Project",
+            "url": "https://github.com/Example/Project/issues/42"
+          },
+          "issueId": "I_fixture",
+          "observedAt": "2026-09-13T14:29:55Z",
+          "plan": {
+            "digest": "70a0e27a0bf3ca22a0f113df2b8911379ca0f5cc84f10c7fc8c2e71bbfa98878",
+            "kind": "issue_body"
+          },
+          "repositoryId": "R_fixture",
+          "routing": {
+            "domain": "pipeline",
+            "hmasRole": "task-agent",
+            "stage": "implementation"
+          },
+          "schema": "hi/agamemnon/issue-intake/v1"
+        }
+      },
+      "description": "Execute the referenced canonical planned issue.",
+      "escalations": [],
+      "fleet_claim": {
+        "agentId": "fixture-agent",
+        "generation": 1,
+        "schema": "hi/fleet/claim/v1",
+        "targetId": "fixture-session",
+        "targetKind": "sessions",
+        "workerId": "fixture-worker",
+        "workspace": "/work/fixture-issue"
+      },
+      "id": "issue-2be92942689bad6ddb5bf5b8a8d930926496abcc969a908daa2fada5bb5ab481",
+      "issue": 42,
+      "layer": "L3_TaskAgent",
+      "module": "",
+      "parent_task_id": "",
+      "repo": "Example/Project",
+      "state": "Delegated",
+      "subject": "Planned issue intake"
+    },
+    "task_id": "issue-2be92942689bad6ddb5bf5b8a8d930926496abcc969a908daa2fada5bb5ab481"
+  },
+  "fixture": "controlled-controller-import-and-claim",
+  "importReceipt": {
+    "issue": {
+      "number": 42,
+      "repository": "Example/Project",
+      "url": "https://github.com/Example/Project/issues/42"
+    },
+    "provenance": {
+      "forge": "github",
+      "issue": {
+        "number": 42,
+        "repository": "Example/Project",
+        "url": "https://github.com/Example/Project/issues/42"
+      },
+      "issueId": "I_fixture",
+      "observedAt": "2026-09-13T14:29:55Z",
+      "plan": {
+        "digest": "70a0e27a0bf3ca22a0f113df2b8911379ca0f5cc84f10c7fc8c2e71bbfa98878",
+        "kind": "issue_body"
+      },
+      "repositoryId": "R_fixture",
+      "routing": {
+        "domain": "pipeline",
+        "hmasRole": "task-agent",
+        "stage": "implementation"
+      },
+      "schema": "hi/agamemnon/issue-intake/v1"
+    },
+    "routing": {
+      "domain": "pipeline",
+      "hmasRole": "task-agent",
+      "stage": "implementation"
+    },
+    "schema": "hi/agamemnon/issue-import-receipt/v1",
+    "state": "Pending",
+    "taskId": "issue-2be92942689bad6ddb5bf5b8a8d930926496abcc969a908daa2fada5bb5ab481"
+  },
+  "importRequest": {
+    "issueId": "I_fixture",
+    "issueNumber": 42,
+    "plan": {
+      "digest": "70a0e27a0bf3ca22a0f113df2b8911379ca0f5cc84f10c7fc8c2e71bbfa98878",
+      "kind": "issue_body"
+    },
+    "repositoryId": "R_fixture",
+    "repositoryKey": "implementation",
+    "schema": "hi/agamemnon/issue-import/v1"
+  },
+  "inspection": {
+    "issue": {
+      "number": 42,
+      "repository": "Example/Project",
+      "url": "https://github.com/Example/Project/issues/42"
+    },
+    "issueId": "I_fixture",
+    "observedAt": "2026-09-13T14:29:55Z",
+    "plan": {
+      "digest": "70a0e27a0bf3ca22a0f113df2b8911379ca0f5cc84f10c7fc8c2e71bbfa98878",
+      "kind": "issue_body"
+    },
+    "repositoryId": "R_fixture",
+    "repositoryKey": "implementation",
+    "schema": "hi/agamemnon/issue-inspection/v1",
+    "state": "open",
+    "title": "Planned implementation"
+  },
+  "pendingTask": {
+    "layer": "L3_TaskAgent",
+    "state": "Pending",
+    "task": {
+      "assigned_lead_id": "",
+      "blocked_by": [],
+      "brief_id": "",
+      "child_task_ids": [],
+      "completed_at": "",
+      "created_at": "2026-09-13T14:29:55Z",
+      "delivery": {
+        "issueIntake": {
+          "forge": "github",
+          "issue": {
+            "number": 42,
+            "repository": "Example/Project",
+            "url": "https://github.com/Example/Project/issues/42"
+          },
+          "issueId": "I_fixture",
+          "observedAt": "2026-09-13T14:29:55Z",
+          "plan": {
+            "digest": "70a0e27a0bf3ca22a0f113df2b8911379ca0f5cc84f10c7fc8c2e71bbfa98878",
+            "kind": "issue_body"
+          },
+          "repositoryId": "R_fixture",
+          "routing": {
+            "domain": "pipeline",
+            "hmasRole": "task-agent",
+            "stage": "implementation"
+          },
+          "schema": "hi/agamemnon/issue-intake/v1"
+        }
+      },
+      "description": "Execute the referenced canonical planned issue.",
+      "escalations": [],
+      "id": "issue-2be92942689bad6ddb5bf5b8a8d930926496abcc969a908daa2fada5bb5ab481",
+      "issue": 42,
+      "layer": "L3_TaskAgent",
+      "module": "",
+      "parent_task_id": "",
+      "repo": "Example/Project",
+      "state": "Pending",
+      "subject": "Planned issue intake"
+    },
+    "task_id": "issue-2be92942689bad6ddb5bf5b8a8d930926496abcc969a908daa2fada5bb5ab481"
+  },
+  "registry": {
+    "repositories": [
+      {
+        "key": "implementation",
+        "repository": "Example/Project",
+        "repositoryId": "R_fixture"
+      }
+    ],
+    "schema": "hi/agamemnon/issue-repositories/v1"
+  },
+  "replayReceipt": {
+    "issue": {
+      "number": 42,
+      "repository": "Example/Project",
+      "url": "https://github.com/Example/Project/issues/42"
+    },
+    "provenance": {
+      "forge": "github",
+      "issue": {
+        "number": 42,
+        "repository": "Example/Project",
+        "url": "https://github.com/Example/Project/issues/42"
+      },
+      "issueId": "I_fixture",
+      "observedAt": "2026-09-13T14:29:55Z",
+      "plan": {
+        "digest": "70a0e27a0bf3ca22a0f113df2b8911379ca0f5cc84f10c7fc8c2e71bbfa98878",
+        "kind": "issue_body"
+      },
+      "repositoryId": "R_fixture",
+      "routing": {
+        "domain": "pipeline",
+        "hmasRole": "task-agent",
+        "stage": "implementation"
+      },
+      "schema": "hi/agamemnon/issue-intake/v1"
+    },
+    "routing": {
+      "domain": "pipeline",
+      "hmasRole": "task-agent",
+      "stage": "implementation"
+    },
+    "schema": "hi/agamemnon/issue-import-receipt/v1",
+    "state": "Delegated",
+    "taskId": "issue-2be92942689bad6ddb5bf5b8a8d930926496abcc969a908daa2fada5bb5ab481"
+  },
+  "schema": "hi/agamemnon/issue-contract-fixture/v1",
+  "session": {
+    "agentId": "fixture-agent",
+    "allocationId": null,
+    "claimStatus": "reserved",
+    "commandId": "fixture-start",
+    "createdAt": "2026-09-13T14:29:55Z",
+    "domain": "pipeline",
+    "executionId": "fixture-execution",
+    "generation": 1,
+    "hmasRole": "task-agent",
+    "host": "fixture-host",
+    "id": "fixture-session",
+    "kind": "sessions",
+    "lastActivityAt": null,
+    "poolId": "fixture-laptop",
+    "schema": "hi/fleet/v1",
+    "sessionId": "fixture-session",
+    "stage": "implementation",
+    "status": "admitted",
+    "taskId": "issue-2be92942689bad6ddb5bf5b8a8d930926496abcc969a908daa2fada5bb5ab481",
+    "updatedAt": "2026-09-13T14:29:55Z",
+    "waitingReason": null,
+    "workerId": "fixture-worker",
+    "workspace": "/work/fixture-issue"
+  }
+}

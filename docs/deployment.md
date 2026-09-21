@@ -251,7 +251,7 @@ The repository retains Nomad configuration for explicitly operated multi-host
 infrastructure. It is not the current general agent scheduler: the checked-in
 Myrmidons schema reserves a `nomad` discriminator but current runtime
 scheduling implements `local` and `docker`, and
-[ADR-021](adr/021-defer-multi-host-nomad-scheduling.md) remains Proposed.
+[ADR-023](adr/023-defer-multi-host-nomad-scheduling.md) remains Proposed.
 Skip this section for the supported local or Docker reconciliation path.
 
 ### 5a. Use the Operator-Owned Activation Route

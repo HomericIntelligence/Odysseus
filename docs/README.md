@@ -2,13 +2,20 @@
 
 Welcome to the HomericIntelligence documentation hub. This page serves as a table of contents for all architecture, decisions, and operational guides.
 
+The [modernization disposition ledger](agent-instruction-modernization-ledger.md)
+tracks ownership, protected boundaries, dependencies, and verification still
+required. Proposed ADR-022 remains the governance gate for dependent ecosystem
+instruction changes; merging a proposal does not accept it.
+
 ---
 
 ## Architecture Overview
 
 Start here to understand the HomericIntelligence system as a whole:
 
-- **[System Architecture](architecture.md)** — Complete overview of the 16 canonical repositories (Odysseus plus 15 component gitlinks), their roles, and how current interfaces differ from Proposed ADR target state.
+- **[System Architecture](architecture.md)** — Overview of the 16 canonical repositories, their roles, and current interfaces versus Proposed ADR target state.
+- **[Homeric Fleet Implementation Plan](homeric-fleet-plan.md)** — Consolidated Odysseus integration, laptop/SSH/Slurm operations, and the 108-agent acceptance gates.
+- **[Fleet Web Application](../web/README.md)** — Run the local ownership, message-flow, and session-control interface; configure backend sources and private input.
 
 ---
 
@@ -16,14 +23,8 @@ Start here to understand the HomericIntelligence system as a whole:
 
 All significant architectural decisions are recorded here. ADRs are append-only—once accepted, they are never edited. Superseding decisions get a new ADR that references the old one.
 
-This table mirrors the canonical [ADR decision log](adr/README.md). A proposal
-describes a possible target; it is not deployed or binding architecture until
-its status is formally changed to Accepted. Checked-in runtime schemas,
-configuration, and verified live state remain the authority for current
-behavior.
-
 | # | Title | Status | Supersedes |
-|---|---|---|---|
+|---|-------|--------|-----------|
 | [001](adr/001-podman-over-docker.md) | Use Podman as Primary Container Runtime | Accepted | — |
 | [002](adr/002-nats-event-bridge.md) | Use NATS JetStream as Event Bridge for ai-maestro Webhooks | Accepted | — |
 | [003](adr/003-nomad-over-k8s.md) | Use Nomad for Multi-Host Container Scheduling Instead of Kubernetes | Accepted | — |
@@ -41,36 +42,24 @@ behavior.
 | [015](adr/015-drop-project-prefix.md) | Drop the `Project` Prefix Across the HomericIntelligence Ecosystem | Accepted | — |
 | [016](adr/016-split-hephaestus.md) | Split `Hephaestus` — Library vs Agentic Plugins | Accepted | — |
 | [017](adr/017-uv-for-python-pixi-for-toolchains.md) | uv for Pure-Python Repos, pixi Where a Conda Toolchain Is Required | Proposed | — |
-| [018](adr/018-uv-ecosystem-wide.md) | uv Is the Ecosystem-Wide Standard — Toolchains via PyPI, apt, and the Mojo pip Package | Proposed | Proposed ADR-017 |
+| [018](adr/018-uv-ecosystem-wide.md) | uv Is the Ecosystem-Wide Standard — Toolchains via PyPI, apt, and the Mojo pip Package | Proposed | Proposed ADR-017, only if accepted |
 | [019](adr/019-lemonade-private-inference-lane.md) | Lemonade as the Private Inference Lane for the Mesh | Proposed | — |
 | [020](adr/020-mesh-distributed-hephaestus-loop.md) | Distribute the Hephaestus Automation Loop Across the Mesh | Proposed | — |
-| [021](adr/021-defer-multi-host-nomad-scheduling.md) | Defer Multi-Host Nomad Scheduling to a Future Phase | Proposed | — |
+| [021](adr/021-fleet-execution-and-web-interface.md) | Extend Fleet Execution and Establish the Odysseus Web Application | Proposed | — |
 | [022](adr/022-layered-provider-neutral-agent-instructions.md) | Layered, Provider-Neutral Agent Instructions | Proposed | — |
+| [023](adr/023-defer-multi-host-nomad-scheduling.md) | Defer Multi-Host Nomad Scheduling to a Future Phase | Proposed | — |
 | [024](adr/024-one-homeric-nats-application-account.md) | One Homeric NATS Application Account with Per-Role Authorization | Proposed | Conflicting Decision 3 portions of Proposed ADR-009 and ADR-010, only if accepted |
+| [025](adr/025-isolate-legacy-credential-broker.md) | Migrate Legacy Harness Credentials to an Exact Pod-Namespace Host Broker | Proposed | — |
 
-ADR-023 is reserved for the Fleet proposal in PR #498 and is intentionally
-absent until that proposal completes its required rebase and renumber. The
-reservation is not an ADR or architectural authority.
-
-[ADR-022](adr/022-layered-provider-neutral-agent-instructions.md) is the
-instruction-modernization governance proposal and remains a dependency for
-ecosystem-wide consumer changes. [ADR-024](adr/024-one-homeric-nats-application-account.md)
-separately proposes a compatible NATS account topology; neither proposal is
-deployed or binding until formally accepted and implemented.
-
-The associated
-[modernization disposition ledger](agent-instruction-modernization-ledger.md)
-records repository ownership, protected boundaries, dependencies, and evidence
-still required without claiming unfinished work as complete.
+Statuses in this table are copied from the ADR bodies. Merging a Proposed ADR
+does not accept it or authorize implementation; formal acceptance is recorded
+through a separate reviewed status change.
 
 ---
 
 ## Operational Runbooks
 
-Contextual guides for common operational tasks. Select the guide that matches
-the exact operation, bind its prerequisites and authority, and execute ordered
-steps only after its gates are satisfied. Some guides intentionally stop at a
-live-state or operator-approval boundary.
+Step-by-step guides for common operational tasks. Execute each runbook top-to-bottom without prior context.
 
 | Runbook | When to Use |
 |---------|------------|
@@ -90,8 +79,8 @@ live-state or operator-approval boundary.
 ## Additional Resources
 
 - **[Architecture Analysis: ai-maestro Migration](odysseus-ai-maestro-analysis.md)** — Historical analysis of the ai-maestro integration and subsequent decoupling.
-- **[Historical Architecture Analysis: Ruflo Integration](odysseus-ruflo-analysis.md)** — Preserved 2026-03-27 analysis; not current operating authority.
-- **[Historical E2E Walkthrough Report](e2e-walkthrough-report.md)** — Frozen 2026-04-06 evidence; not a current runbook, topology source, or authorization for its retired commands.
+- **[Architecture Analysis: Ruflo Integration](odysseus-ruflo-analysis.md)** — Analysis of Ruflo system integration patterns.
+- **[E2E Walkthrough Report](e2e-walkthrough-report.md)** — End-to-end system test results and topology validation.
 
 ---
 
@@ -107,6 +96,4 @@ live-state or operator-approval boundary.
 2. **ADRs are append-only.** Once accepted, never edited. Superseding decisions get a new ADR.
 3. **Configs are canonical.** The Nomad and NATS configs in `../configs/` are authoritative.
 4. **Submodule pins matter.** Submodule SHAs represent the last known-good cross-repo integration point.
-5. **ai-maestro is not part of the current meta-repo or runtime coordination path.**
-   Agamemnon owns current task coordination; preserved historical references remain evidence,
-   not operating authority.
+5. **ai-maestro has been fully removed per ADR-006.** Agamemnon replaces its task coordination role.
