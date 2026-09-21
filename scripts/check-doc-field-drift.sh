@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 #
 # check-doc-field-drift.sh — Guard Odysseus first-party docs against
 # deprecated workflow-schema field names (issue #25).
@@ -22,14 +22,16 @@
 # Exit codes:
 #   0  No deprecated workflow field names found.
 #   1  Drift detected — a deprecated field name appears in a guarded doc.
-#   2  Usage or operational/unavailable failure.
+#   2  Usage error.
 
-set -uo pipefail
+set -u
 
 case "${1:-}" in
   "") ;;
   -h|--help)
-    sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+    printf '%s\n' \
+      'Usage: check-doc-field-drift.sh [-h|--help]' \
+      'Check exact staged first-party Markdown blobs for deprecated workflow keys.'
     exit 0
     ;;
   *)
@@ -38,135 +40,21 @@ case "${1:-}" in
     ;;
 esac
 
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-  printf 'error: not inside a git repository\n' >&2
-  exit 2
-}
-cd "$REPO_ROOT" || exit 2
-
-# First-party markdown docs only; never scan submodule trees or GitHub templates
-# (.github/ISSUE_TEMPLATE uses YAML frontmatter with a 'title:' key that is not
-# a workflow field — exclude to avoid false positives).
-#
-# Capture the NUL-delimited inventory in a private temporary file so both Git's
-# exit status and unusual tracked path bytes are preserved. Process-substitution
-# status is not propagated by pipefail, while a shell variable cannot contain
-# NUL bytes.
-tracked_inventory="$(mktemp)" || {
-  printf 'error: cannot allocate tracked-document inventory\n' >&2
-  exit 2
-}
-# shellcheck disable=SC2329  # Invoked indirectly by the trap below.
-cleanup() {
-  rm -f -- "$tracked_inventory"
-}
-trap cleanup EXIT HUP INT TERM
-if ! git ls-files -z -- '*.md' > "$tracked_inventory"; then
-  printf 'error: git ls-files failed\n' >&2
-  exit 2
-fi
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)" || exit 2
-python3 - "$tracked_inventory" "$REPO_ROOT" "$script_dir" <<'PY'
-import os
-import json
-import re
-import sys
-from pathlib import Path
-
-inventory_path, root_text, script_dir = sys.argv[1:]
-sys.path.insert(0, script_dir)
-from tracked_scan import UnsafeTrackedPathError, read_regular_no_follow
-
-excluded = (
-    "infrastructure/", "control/", "provisioning/", "ci-cd/", "research/",
-    "shared/", "testing/", ".github/",
-)
-pattern = re.compile(
-    r"^[ \t]*-?[ \t]*(?:title|depends_on|['\"]title['\"]|"
-    r"['\"]depends_on['\"])[ \t]*:"
-)
-
-def api_title_lines(lines):
-    """Recognize the two documented API contracts whose field is still title.
-
-    These are not Telemachy workflow tasks. Require complete JSON and the
-    known field sets; unknown examples still receive the normal drift check.
-    """
-    exempt = set()
-    start = None
-    for index, line in enumerate(lines):
-        if start is None:
-            if line.strip() == "```json":
-                start = index + 1
-            continue
-        if line.strip() != "```":
-            continue
-        try:
-            value = json.loads("\n".join(lines[start:index]))
-        except ValueError:
-            value = None
-        if isinstance(value, dict):
-            intake = (
-                value.get("schema") == "hi/nestor/intake-request/v1"
-                and set(value) == {"schema", "intakeId", "workRepository", "title", "body"}
-            )
-            data = value.get("data")
-            event = (
-                value.get("event") == "task.created"
-                and set(value) == {"event", "data", "timestamp"}
-                and isinstance(data, dict)
-                and set(data) == {"task_id", "team_id", "title", "description", "status", "assigned_to"}
-            )
-            if intake or event:
-                exempt.update(
-                    position + 1 for position in range(start, index)
-                    if re.match(r'^\s*"title"\s*:', lines[position])
-                )
-        start = None
-    return exempt
-
-found = False
-scanned = 0
-for encoded in Path(inventory_path).read_bytes().split(b"\0"):
-    if not encoded:
-        continue
-    relative = os.fsdecode(encoded)
-    if relative.startswith(excluded):
-        continue
-    try:
-        content = read_regular_no_follow(Path(root_text), relative)
-    except (UnsafeTrackedPathError, OSError) as exc:
-        print(f"error: document-field scan unavailable for {relative!r}: {exc}", file=sys.stderr)
-        raise SystemExit(2)
-    if content is None:
-        continue
-    scanned += 1
-    lines = content.decode("utf-8", errors="replace").splitlines()
-    exempt = api_title_lines(lines)
-    for number, line in enumerate(lines, 1):
-        if number not in exempt and pattern.search(line):
-            print(f"{relative}:{number}:{line}")
-            found = True
-if not scanned:
-    print("check-doc-field-drift: no first-party docs to scan")
-# Keep content drift distinct from Python/import/inventory failures, which
-# conventionally exit 1 and must be reported as unavailable rather than as a
-# false policy finding.
-raise SystemExit(3 if found else 0)
-PY
-scan_status=$?
-case "$scan_status" in
-  0)
-    echo "check-doc-field-drift: OK — no deprecated workflow field names in first-party docs"
-    exit 0
-    ;;
-  3)
-    echo "ERROR: deprecated workflow field name(s) found in first-party docs." >&2
-    echo "Use 'subject' instead of 'title' and 'blocked_by' instead of 'depends_on'." >&2
-    exit 1
-    ;;
-  *)
-    printf 'error: document-field scan failed or was unavailable\n' >&2
-    exit 2
-    ;;
+case "$0" in
+  /*) script_path=$0 ;;
+  *) script_path=$PWD/$0 ;;
 esac
+script_directory=${script_path%/*}
+if [ "$script_directory" = "$script_path" ]; then
+  script_directory=.
+fi
+unset CDPATH
+repo_root=$(command cd -P -- "$script_directory/.." && command pwd -P) || {
+  printf 'error: could not bind the repository directory\n' >&2
+  exit 2
+}
+unset BASH_ENV ENV GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE \
+  GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+exec /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C \
+  /usr/bin/python3 -I -S "$repo_root/scripts/check_doc_field_drift.py" \
+  --repo-root "$repo_root"

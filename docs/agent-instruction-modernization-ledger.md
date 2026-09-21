@@ -344,3 +344,49 @@ This tranche must leave all of the following byte-unchanged:
 Formal acceptance of a Proposed ADR requires an explicit reviewed status-change
 pull request. Merge of this governance tranche alone is not acceptance and
 does not release any implementation dependency.
+
+## PR #511 historical repair record
+
+The [earlier repair ledger](agent-instruction-modernization-history.md)
+preserves the source-bound inventory, findings, and verification history from
+PR #511 head `084a94d4a0ce78079e09fd0eb07efe0ed003f06b`. Its identifiers and
+status claims are historical, not replacements for this governance inventory.
+The merge with `fbf2ca27bc874031d5a191db123d3625113dfd57` retains this reviewed
+governance ledger. PR #511 still requires completed conflict resolution,
+exact-head source review, and passing required CI/CD before merge.
+
+### Retired migration scripts: merge revalidation
+
+At incoming main `fbf2ca27bc874031d5a191db123d3625113dfd57`, tracked-tree
+consumer searches for `athena-create.sh`, `apply-odysseus-rename.sh`, and
+`tools/github/rename-repo.sh` found only self-references, the historical
+rename runbook, and the retired `hephaestus-prune-pr.sh` companion. Hidden
+worktree searches found only the focused tests that require their absence.
+Organization-wide `gh search code` queries for each name returned those same
+Odysseus paths and no external consumer. Code-search results are supplemental,
+not proof that unindexed consumers cannot exist.
+
+The incoming changes repair shell syntax in these completed one-shot scripts;
+they introduce no new loader, package, generator, or runtime consumer. The merge
+therefore retains their deletion. Their exact incoming versions remain in the
+bound Git commit above; the historical runbook routes future migrations to new
+approval rather than replaying the old commands. No migration was executed.
+
+### Grafana checker merge: unresolved compatibility boundary
+
+Source comparison at PR #511 head `084a94d4a0ce78079e09fd0eb07efe0ed003f06b`
+and incoming main `fbf2ca27bc874031d5a191db123d3625113dfd57` found a behavioral
+conflict, not merely overlapping formatting. Main supports tracked literal
+Grafana `env_file` paths, validates their anonymous-auth settings, and leaves
+unrelated services' environment files out of scope. Its tests cover literal
+false, nested relative paths, absent/untracked targets, dynamic targets, and
+markers concealed in multiline values. The earlier PR implementation instead
+rejects every `env_file` mapping while adding bounded YAML parsing and
+hash-verified staged-blob input.
+
+The merge must preserve the supported Grafana environment-file behavior and
+its negative tests without discarding bounded parsing, exact staged input,
+diagnostic limits, or process cleanup. Selecting either file wholesale is not
+a completed repair. Warning-grammar and canonical-e2e-path differences also
+require reconciliation. The conflict remains unresolved; neither source
+comparison nor the historical tests constitute passing current-head evidence.

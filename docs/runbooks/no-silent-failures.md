@@ -10,8 +10,11 @@ repository **must not** contain:
 
 The `forbid-suppressions` job in `.github/workflows/_required.yml` (and the
 matching pre-commit hook in `.pre-commit-config.yaml`) enforce this on every
-PR. Both run a simple grep — no allowlist, no escape hatch — because every
-historical exception in this codebase eventually masked a real bug.
+PR. The pre-commit hook binds one immutable snapshot of the complete staged
+index and structurally inspects every in-scope entry; it does not trust the
+working tree or the filenames passed by pre-commit. There is no source-file
+allowlist or inline escape hatch, because every historical exception in this
+codebase eventually masked a real bug.
 
 ## Why
 
@@ -35,10 +38,12 @@ apply the corresponding fix:
 ### Bucket A — Masks a real failure → fix the root cause, then delete `|| true`
 
 Example:
+
 ```bash
 # WRONG: the whole point of doctor is to fail if apt-install fails
 apt_install git && check_pass "git installed" || true
 ```
+
 ```bash
 # RIGHT: explicit branches for success and failure
 if apt_install git; then
@@ -51,10 +56,12 @@ fi
 ### Bucket B — Best-effort cleanup or teardown → explicit `if`-guard
 
 Example:
+
 ```bash
 # WRONG: discards every error from podman, including unexpected ones
 xargs -r podman rm -f 2>/dev/null || true
 ```
+
 ```bash
 # RIGHT: log unexpected failures but do not abort teardown
 if ! xargs -r podman rm -f 2>/dev/null; then
@@ -63,6 +70,7 @@ fi
 ```
 
 For trap handlers that kill PIDs, guard with `kill -0`:
+
 ```bash
 for pid in "${_BG_PIDS[@]}"; do
     if [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null; then
@@ -80,6 +88,7 @@ value, which is `0` (falsy) on the first call. Sidestep the idiom entirely:
 # WRONG
 ((PASS++)) || true
 ```
+
 ```bash
 # RIGHT
 PASS=$((PASS + 1))
@@ -95,6 +104,7 @@ not to swallow the exit code:
 # WRONG
 version=$("$@" 2>&1 | grep -oP '\d+\.\d+[\.\d]*' | head -1 || true)
 ```
+
 ```bash
 # RIGHT: separate the failing step, give it an explicit fallback
 if out=$("$@" 2>&1); then
@@ -105,24 +115,34 @@ fi
 printf '%s' "$version"
 ```
 
-For count-style queries where "no matches" means zero, use `grep -c`:
+For count-style queries where "no matches" means zero, bind the producer
+before counting:
+
 ```bash
 # WRONG
 UNINIT=$(git submodule status | grep -c '^-' || true)
 ```
+
 ```bash
-# RIGHT — grep -c always returns 0 if the input is non-empty:
-UNINIT=$(git submodule status | grep -c '^-' || printf '0')
+# RIGHT — producer failure remains a failure; awk reports a real zero count:
+if ! submodule_status=$(git submodule status); then
+    echo "submodule inventory unavailable" >&2
+    exit 2
+fi
+UNINIT=$(printf '%s\n' "$submodule_status" | awk '/^-/{count++} END{print count+0}')
 ```
-The trailing `|| printf '0'` is **not** `|| true` — it provides a real value
-on the unmatched-no-input case. (Reviewers: this is allowed because the
-fallback is a concrete value, not a discarded exit code.)
+
+Do not attach a zero fallback to a pipeline whose producer can fail: with
+`pipefail`, that fallback also turns an unavailable inventory into a false
+zero.
 
 ### Bucket E — `continue-on-error: true` in workflows
 
-Always wrong. Fix the underlying step (e.g., bot opens PR + auto-merges
-instead of pushing to a protected branch directly). See AchaeanFleet
-changelog-workflow lessons in skill `ci-cd-achaean-fleet-ci-cascade-patterns`.
+Wrong on any required build, security, schema, parser, trust-boundary, or
+behavioral gate. An explicitly advisory diagnostic may continue only when its
+non-blocking status is part of the documented workflow contract and its result
+cannot be presented as required validation. Fix required failures at their
+source; do not convert them into warnings or completion.
 
 ### Bucket F — Advisory `::warning::` annotation wrapping a tool's exit
 
@@ -205,17 +225,26 @@ this runbook) is not scanned. Use the runbook's quoted examples as fenced
 code in PR descriptions or issue comments when explaining the rule.
 
 Inside the scanned files, the guard recognises `|| true` at any control-flow
-boundary: end-of-line, before `#` (trailing comment), before `)` (closing
-substitution or subshell), before `;`, before `&&` or `||`. Comment lines
-(starting with optional whitespace then `#`) are exempt so that this runbook
-can quote the idiom for teaching. The regex used is:
+boundary, including line continuations, command substitutions, executable
+expansions in unquoted heredocs, assignments before the no-op command,
+redirections, and grouped or `case`-based command lists. The rejected
+right-hand commands include `true` (with or without ignored arguments), `:`,
+and `exit 0`. Quoted strings, comments, arithmetic, `[[ ... ]]` conditional
+operators, and quoted-heredoc bodies remain authored data rather than
+executable commands.
 
-```
-^(?!\s*#).*\|\|\s*true(\s*$|\s*[#);&|])
-```
+GitHub Actions files are parsed as YAML. Only job and step control fields and
+step `run` bodies are executable policy inputs. A custom or dynamic `shell:`
+selector is treated as shell unless it is exactly one of the fixed known
+non-shell selectors (`python {0}`, `python2 {0}`, `python3 {0}`, `node {0}`,
+`perl {0}`, or `ruby {0}`). Wrappers and selector expressions therefore fail
+closed instead of disabling inspection.
 
-If you discover a control-flow boundary not covered by this regex, file a
-follow-up and widen the pattern — the guard is meant to be inclusive.
+Dockerfiles contribute shell-form `RUN` instructions, justfiles contribute
+recipe bodies, and HCL contributes literal command strings that immediately
+follow `-c` in an `args` list. Docker labels, just assignments, HCL prose,
+line comments, and HCL block comments are not executable contexts. If the
+bounded parser cannot determine the structure safely, validation fails closed.
 
 ## Adding new files
 
@@ -230,7 +259,7 @@ When you add a new shell script, YAML workflow, or Dockerfile:
 
 ## Operational lessons (from the 2026-05-10 ecosystem sweep)
 
-### The first CI run after removing a suppression will fail. That is success.
+### The first CI run after removing a suppression will fail; that is success
 
 When you refactor a `|| true` or `continue-on-error: true` out of a CI
 workflow, the very next CI run will almost certainly fail — because the
@@ -249,38 +278,25 @@ Examples observed:
 Diagnose the failure and **fix the root cause**. Never re-introduce the
 suppression as a "temporary" workaround — there is no such thing.
 
-### Update meta-tests that pin to the literal suppression syntax
+### Make meta-tests prove fail-fast behavior
 
-Some test suites have regression-guard tests that assert on the *exact
-string* of a known suppression mechanism — e.g.:
-
-```python
-def test_npm_audit_is_non_blocking():
-    assert "continue-on-error: true" in workflow_step_text
-```
-
-When the silent-failures sweep replaces `continue-on-error: true` with an
-in-script `if !` + `::warning::` wrapper (Bucket E refactor), these tests
-fail even though the *property* they were checking is preserved.
-
-**Fix the meta-test before running the sweep**, not after. Broaden the
-assertion from syntax to property:
+Do not replace one source-text assertion with another spelling of the same
+suppression. A useful regression test executes the checked command through the
+real wrapper or a faithful harness, makes the dependency return nonzero, and
+asserts that the enclosing script or job also returns nonzero before publishing
+a success artifact.
 
 ```python
-def test_npm_audit_is_non_blocking():
-    # Accept either form — the property is "audit findings do not fail the workflow"
-    legacy = "continue-on-error: true" in step_text
-    in_script_capture = (
-        "|| AUDIT_EXIT=$?" in step_text
-        and "AUDIT_EXIT:-0" in step_text
-    )
-    assert legacy or in_script_capture, "audit step must be non-blocking"
+def test_audit_failure_blocks_publication(fake_audit, run_gate):
+    fake_audit.returncode = 23
+    result = run_gate()
+    assert result.returncode != 0
+    assert not result.success_artifact.exists()
 ```
 
-> **Note:** With the Bucket F clarification (above), even the
-> in-script-capture form is now forbidden if it's morally an advisory
-> warning. The test should be updated to assert the underlying tool runs
-> fail-fast. The above example is preserved as a transitional pattern.
+Keep parser, schema, permission, tool-scope, and security checks. Remove tests
+whose only contract is exact prose, headings, or the literal syntax used to
+express failure propagation.
 
 To find these tests before refactoring:
 
@@ -308,12 +324,10 @@ don't match. The current Odysseus hooks use both strategies; the CI job's
 
 ## See also
 
-- Skill `ci-cd-achaean-fleet-ci-cascade-patterns` (v2.0.0, verified-ci):
+- Skill `ci-cd-achaean-fleet-ci-cascade-patterns` (v2.1.0, verified-ci):
   Level 8 documents the `goose --version || true` arm64 incident.
-- Skill `bash-set-e-pipefail-grep-no-matches-trap` (v1.0.0, verified-ci):
-  the canonical Bucket D refactor.
-- Skill `bash-unbound-array-pipefail-crash` (v1.0.0, verified-ci): if
-  removing `|| true` exposes an unbound-array crash, the fix is `local -a
-  ARR=()`, not re-adding the suppression.
-- Skill `pre-commit-hook-configuration` (v2.3.0, verified-ci): the
-  `language: pygrep` pattern used by this repo's hook.
+- Skill `bash-script-and-jq-failure-modes` (v2.0.0, verified-ci): strict-shell
+  failure branches, including no-match pipelines and initialized arrays.
+- Skill `pre-commit-hooks-and-linting-config` (v3.0.0,
+  verified-precommit): staged-file, hook-stage, and lint configuration
+  boundaries.

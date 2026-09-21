@@ -6,7 +6,18 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$REPO_ROOT"
 
 tmp_dir=$(mktemp -d)
-trap 'rm -rf "$tmp_dir"' EXIT
+cleanup_tmp_dir() {
+  local status=$1
+  trap - EXIT
+  if ! rm -rf -- "$tmp_dir"; then
+    echo "FAIL: could not remove test directory: $tmp_dir" >&2
+    if [[ "$status" -eq 0 ]]; then
+      status=1
+    fi
+  fi
+  exit "$status"
+}
+trap 'cleanup_tmp_dir "$?"' EXIT
 mkdir -p "$tmp_dir/bin"
 cp tests/fixtures/github/mock-ruleset-gh.sh "$tmp_dir/bin/gh"
 chmod +x "$tmp_dir/bin/gh"
@@ -1176,7 +1187,10 @@ run_live_update() {
   local classic_mutation_count_file=${GH_CLASSIC_MUTATION_COUNT_FILE:-"$tmp_dir/classic-${repos//,/-}.count"}
   local classic_signature_count_file=${GH_CLASSIC_SIGNATURE_COUNT_FILE:-"$tmp_dir/classic-signatures-${repos//,/-}.count"}
   local observed_at=${GH_EVIDENCE_OBSERVED_AT_OVERRIDE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+  local policy_source_path
   local extra_approval_args=()
+
+  policy_source_path=${FLEET_RULESET_POLICY_FILE:-}
 
   if [[ -n "${GH_EXTRA_RULESET_APPROVAL_FILE:-}" ]]; then
     extra_approval_args=(
@@ -1351,7 +1365,7 @@ run_live_update() {
     RULESET_SNAPSHOT_DIR="$snapshot_dir" \
     tools/github/apply-repo-rulesets.sh "${RULESET_MODE:---active}" --repos "$repos" \
       --evidence-file "$evidence_file" \
-      "${extra_approval_args[@]}" \
+      ${extra_approval_args[@]+"${extra_approval_args[@]}"} \
       >"$output_file" 2>&1
 }
 
@@ -1361,11 +1375,13 @@ assert_durable_snapshot() {
   local label=$3
   local expected_count=${4:-3}
   local snapshots=()
-  mapfile -t snapshots < <(find "$snapshot_dir" -type f -name '*.json' | sort)
+  while IFS= read -r snapshot_path; do
+    snapshots[${#snapshots[@]}]=$snapshot_path
+  done < <(find "$snapshot_dir" -type f -name '*.json' | sort)
   [[ ${#snapshots[@]} -eq "$expected_count" ]] || \
     fail "$label expected $expected_count durable pre-state snapshots, found ${#snapshots[@]}"
   snapshot_match=false
-  for snapshot in "${snapshots[@]}"; do
+  for snapshot in ${snapshots[@]+"${snapshots[@]}"}; do
     if jq -e --slurpfile expected "$expected_file" '. == $expected[0]' \
         "$snapshot" >/dev/null; then
       snapshot_match=true

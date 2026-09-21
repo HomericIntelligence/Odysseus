@@ -101,7 +101,7 @@ test("import configuration rejects invalid endpoints or credentials before trans
     ["missing credential", { apiKey: undefined }],
     ["empty credential", { apiKey: "" }],
     ["wrong credential type", { apiKey: 42 }],
-    ["header injection", { apiKey: "synthetic\r\nheader" }],
+    ["header injection", { apiKey: "x\r\ny" }],
     ["credential byte bound", { apiKey: "λ".repeat(4097) }],
   ]) {
     await t.test(name, () => {

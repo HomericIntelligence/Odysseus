@@ -2,7 +2,13 @@
 
 ## End-to-End Ecosystem Deployment
 
-This guide walks through deploying the HomericIntelligence distributed agent mesh from scratch on a fresh infrastructure. Follow these steps top-to-bottom to bring the entire ecosystem online.
+This guide walks through the checked-in deployment entry points. The current
+Myrmidons schema enumerates `local`, `docker`, and a future-reserved `nomad`
+discriminator; current runtime scheduling implements `local` and `docker`.
+The Tailscale and Nomad sections below apply only to an explicitly operated multi-host
+environment; they are not prerequisites for local development or CI and do not
+prove that the Proposed ADR-021 target is deployed. Confirm desired state
+through Agamemnon and the component runbooks before making remote changes.
 
 ---
 
@@ -12,7 +18,9 @@ Before starting, ensure the following are installed and available on all target 
 
 ### 1. Pixi (Package Manager)
 
-Pixi manages Python environments and project dependencies across all submodules.
+Pixi manages the Odysseus orchestration environment and the C++/Mojo toolchain
+used by root `just` recipes. Each component repository owns its own dependency
+environment.
 
 ```bash
 # Install Pixi (see https://pixi.sh/latest/#installation)
@@ -27,7 +35,8 @@ pixi --version
 
 ### 2. Podman (Container Runtime)
 
-All services and agents run in Podman containers on a shared `homeric-mesh` network.
+Containerized services and `docker` agents use Podman. Agents whose deployment
+type is `local` do not require a container.
 
 ```bash
 # On Debian/Ubuntu:
@@ -37,10 +46,12 @@ sudo apt-get install -y podman podman-compose
 sudo dnf install -y podman podman-compose
 ```
 
-Start the Podman daemon (if not already running):
+Podman is daemonless for ordinary container commands. Enable its rootless API
+socket only when an API consumer, such as the optional Nomad driver path,
+requires it:
 
 ```bash
-sudo systemctl start podman
+systemctl --user enable --now podman.socket
 ```
 
 Verify installation:
@@ -49,22 +60,15 @@ Verify installation:
 podman --version
 ```
 
-### 3. Tailscale (VPN Mesh)
+### 3. Tailscale (Optional Multi-Host VPN Mesh)
 
-All inter-host traffic flows over Tailscale. Install on every host that will participate in the mesh:
-
-```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up --authkey=<your-tailscale-authkey>
-```
-
-Verify connectivity:
-
-```bash
-sudo tailscale ip -4
-```
-
-Record the Tailscale IP addresses; you will need them when configuring NATS and Nomad across hosts.
+The checked-in multi-host paths use Tailscale. Install it only on hosts that
+will participate in such an operator-approved mesh; it is neither a local nor
+a CI prerequisite. The network operator must use the current vendor enrollment
+procedure and an approved secret-input mechanism. Never place an auth key in a
+command argument, environment variable, shell history, or repository file.
+After enrollment, obtain the approved addresses from an operator-owned
+readback; do not infer or copy them from documentation.
 
 ### 4. Just (Task Runner)
 
@@ -105,66 +109,84 @@ Or use the one-command bootstrap task:
 just bootstrap
 ```
 
-This downloads and initializes all 12 submodule repositories into their designated directories.
+This downloads and initializes all 15 component submodule repositories at the
+recorded gitlink commits (16 canonical repositories including Odysseus).
 
 ---
 
 ## Step 2: Install Dependencies
 
-Install project-wide Python dependencies using Pixi:
+Install the Odysseus root toolchain using Pixi:
 
 ```bash
 pixi install
 ```
 
-This resolves dependencies across all submodules and creates the environment lock file.
+This resolves the root environment from `pixi.toml` and `pixi.lock`. It does not
+replace the dependency setup documented by each submodule.
 
 ---
 
-## Step 3: Build All Components
+## Step 3: Build the Root-Supported Targets
 
-Build all compilable submodules (C++, CMake, and Mojo sources):
+Build the root recipe's supported C++, CMake, Mojo, and example targets:
 
 ```bash
 just build
 ```
 
-Build artifacts are placed in `build/` subdirectories:
+Targets that actually run place artifacts in `build/` subdirectories:
 
 - `build/Agamemnon/` — Planning and orchestration engine
-- `build/Nestor/` — Research and ideation service
+- `build/Nestor/` — Research-request intake and status service
 - `build/Charybdis/` — Chaos and resilience testing
-- `build/Keystone/` — Transport layer (BlazingMQ + NATS)
+- `build/Keystone/` — In-process MessageBus and optional NATS bridge
 - `build/Odyssey/` — ML research sandbox
+- `build/Myrmidons/hello-world/` — Hello-world C++ myrmidon
 
-Verify all builds succeeded:
+The successful exit of `just build` is evidence only for targets it actually
+attempted. Review its output and record every explicit skip; do not report a
+skipped target as built. Artifact inspection is supplementary inventory, not
+proof of build success:
 
 ```bash
-ls -la build/
+test -d build && find build -maxdepth 2 -type f -print
 ```
 
 ---
 
 ## Step 4: Configure NATS (Message Bus)
 
-NATS JetStream is the cross-host event bus. Configure it on the primary host:
+NATS JetStream is the cross-host event bus. The checked-in broker policy is
+not currently deployable by the complete exact-pin ecosystem; bind and clear
+the compatibility gates below before any activation.
 
 ### 4a. NATS Authentication Prerequisites (Required Before Starting NATS)
 
-The canonical NATS config enforces mutual TLS (`verify_and_map`) and subject-scoped account
-authorization (ADR-010). **All clients must present a role certificate and connect over `tls://`
-before you start NATS with the updated config** — enforcement is fail-closed.
+ADRs 008–010 are Proposed at this revision. The checked-in NATS configuration
+and a live-state readback, not proposal status, determine what the deployed
+server enforces. The ADR links below provide design context for these steps.
 
-The following services default to plain `nats://` and must be reconfigured:
+The canonical NATS config enforces mutual TLS (`verify_and_map`) and
+subject-scoped authorization. Enforcement is fail-closed, but several exact-pin
+clients cannot yet satisfy it: Agamemnon and Nestor lack the complete client
+certificate configuration, Telemachy does not load a client certificate,
+Hermes does not pass its constructed SSL context to the publisher connection,
+and the Odysseus console has no dedicated account. Do not borrow another
+role's credentials.
 
-| Service | Default | Required change |
-|---------|---------|-----------------|
-| `Hermes` (`infrastructure/Hermes/src/hermes/config.py:34`) | `nats://localhost:4222` | Set `NATS_URL=tls://…`, `TLS_CERT_FILE`, `TLS_KEY_FILE`, `TLS_CA_BUNDLE` |
-| `Telemachy` (`provisioning/Telemachy/src/telemachy/config.py:21`) | `nats://localhost:4222` | Set `NATS_URL=tls://…`, `REQUIRE_TLS=true` (client-cert wiring tracked separately) |
-| `docker-compose.crosshost.yml:45` | `NATS_URL: nats://nats:4222` | Update to `tls://nats:4222` and mount client cert |
+The four checked-in application accounts are also isolated NATS subject and
+JetStream spaces. Without explicit, reviewed exports/imports, that topology
+cannot carry the cross-role fan-out required by Accepted ADR-002 and ADR-005.
+Proposed ADR-024 describes one possible resolution but supplies no deployment
+authority. Treat this account-topology conflict as a separate stop condition
+even after every client can present valid credentials.
 
-Follow `docs/runbooks/enable-nats-auth.md` to issue role certs, distribute them, and
-configure each service before proceeding with steps 4b–4c.
+Consequently, do not start this config as the ecosystem broker at the current
+pins. First land, review, and integrate compatible least-privilege client paths,
+then follow [`runbooks/enable-nats-auth.md`](runbooks/enable-nats-auth.md). An
+isolated broker canary with disposable credentials, storage, and no production
+clients is validation evidence only; it is not a deployment.
 
 ### 4b. Review the NATS Configuration
 
@@ -174,159 +196,106 @@ The canonical NATS server config is at `configs/nats/server.conf`. It configures
 - Mutual-TLS authentication with `verify_and_map` (ADR-010)
 - Subject-scoped account authorization per the `hi.*` schema (ADR-005)
 - Leaf nodes (for multi-cluster federation)
-- Max connections and per-client limits
-- Authentication (fail-closed): client connections are authenticated via
+- Authentication (fail-closed): client connections would be authenticated via
   cert-mapped subject-scoped accounts (`verify_and_map`, ADR-010), so no client
-  token is required. Leaf-node connections still require `$NATS_LEAF_TOKEN`
-  (issue #176). NATS will refuse leaf connections without that credential — set
-  it in your deployment secrets before starting the server. The recommended
-  production path is per-leaf NKey/JWT `.creds` files; see ADR-010 and
-  `docs/runbooks/add-new-host.md` step 5.
+  token is required. The primary server's leaf listener reads
+  four independent `$NATS_LEAF_<ACCOUNT>_PASSWORD` variables, for HERMES,
+  AGENTS, KEYSTONE, and TELEMACHY. Each `leaf-<lowercase-account>` user is
+  bound to that account. Supply nonempty passwords through deployment secrets.
 - Cluster route authorization (multi-server clusters only): the `cluster {}`
-  listener on port 6222 requires a shared `$NATS_CLUSTER_TOKEN` in addition
-  to TLS (ADR-009, issue #306). Before starting any server that participates
-  in a multi-server cluster, export the token — it must match on every peer:
+  listener on port 6222 reads `$NATS_CLUSTER_USER` and
+  `$NATS_CLUSTER_PASSWORD` in addition to TLS (ADR-009, issue #306). Before
+  starting an approved multi-server cluster, provision the same scoped
+  credentials to every peer through the operator-owned secret mechanism.
 
-  ```bash
-  export NATS_CLUSTER_TOKEN="$(openssl rand -hex 32)"   # same value on every peer
-  ```
-
-  The server fails closed if a configured route peer presents the wrong token.
+  The server fails closed if a configured route peer presents the wrong
+  credentials.
   Single-host deployments (no configured routes) are unaffected at runtime.
 
-For a single-host setup, client connections are authenticated via cert-mapped
-subject-scoped accounts (ADR-010) — provision the role certs per step 4a and no
-client token is required. Set `$NATS_LEAF_TOKEN` before starting the server so
-the leafnode listener stays authenticated (issue #176).
+The checked-in config defines leaf and cluster listeners even when no remote
+peers are configured. That does not remove the client-compatibility gate or
+authorize publishing those listeners.
 
-### 4c. Start the NATS Server
+### 4c. Activation Is Blocked at the Current Pins
 
-```bash
-podman run -d \
-  --name nats-server \
-  --network homeric-mesh \
-  -p 4222:4222 \
-  -v $(pwd)/configs/nats/server.conf:/etc/nats/server.conf:ro \
-  nats:3.12.0 -c /etc/nats/server.conf
-```
-
-Verify NATS is running:
-
-```bash
-podman logs nats-server
-```
-
-You should see: `Server is ready for connections on 0.0.0.0:4222`
+There is intentionally no live launch command here. After the client and leaf
+compatibility gaps are repaired, an operator-approved deployment procedure must
+bind an immutable NATS image or binary, explicit private listener addresses,
+persistent JetStream storage, versioned credentials, and the deployment-owned
+service manager. It must validate the candidate before activation and preserve
+the exact rollback set. Until then, record NATS activation as unavailable
+rather than substituting a permissive broker or treating a canary as complete.
 
 ### 4d. Configure Leaf Nodes (Multi-Host Only)
 
-If deploying across multiple hosts, configure leaf node connections in `configs/nats/leaf.conf` to federate the NATS clusters over Tailscale. Export `NATS_LEAF_URL` before starting the leaf node:
+The checked-in server and leaf configurations use matching, account-scoped
+user/password authentication in addition to TLS. Provision each leaf's
+`NATS_LEAF_<ACCOUNT>_URL` as a complete
+`nats+tls://leaf-<lowercase-account>:<encoded-password>@<approved-hub>:7422`
+URL. Its password must match the hub's corresponding password variable;
+percent-encode reserved URL characters. SYS has no remote or leaf credential.
 
-```bash
-export NATS_LEAF_URL="nats+tls://$(tailscale ip -4):7422"   # run on the primary NATS server host for its IP
-nats-server -c configs/nats/leaf.conf
-```
-
-See `docs/runbooks/add-new-host.md` for details.
+This replaces the unsupported remote token declaration and the shared listener
+credential. Migrate both sides together under operator approval; do not reuse
+the old `NATS_LEAF_TOKEN`, `NATS_LEAF_USER`, or `NATS_LEAF_PASSWORD` interface.
+Static validation uses public test credentials and does not verify deployed
+secrets or prove connectivity. Activation remains blocked by section 4c.
+See `docs/runbooks/add-new-host.md` and `docs/runbooks/enable-nats-auth.md` for
+the certificate and credential flow.
 
 ---
 
-## Step 5: Configure Nomad (Job Scheduler)
+## Step 5: Configure Nomad (Optional Multi-Host Infrastructure)
 
-Nomad schedules and manages all agent workloads. Configure it on the primary host:
+The repository retains Nomad configuration for explicitly operated multi-host
+infrastructure. It is not the current general agent scheduler: the checked-in
+Myrmidons schema reserves a `nomad` discriminator but current runtime
+scheduling implements `local` and `docker`, and
+[ADR-023](adr/023-defer-multi-host-nomad-scheduling.md) remains Proposed.
+Skip this section for the supported local or Docker reconciliation path.
 
-### 5a. Review the Nomad Configuration
+### 5a. Use the Operator-Owned Activation Route
 
 The canonical Nomad configs are at:
 
 - `configs/nomad/server.hcl` — Primary cluster controller
 - `configs/nomad/client.hcl` — Worker node config
 
-For a single-host setup, run both server and client on the same host.
+Activation is a protected infrastructure operation because the repository
+cannot determine the live network addresses, filesystem ownership, TLS state,
+ACL principals, or container runtime socket. Obtain operator approval and bind
+those values from live state before starting either agent. In particular:
 
-### 5a-bis. Render the Nomad configs (required)
+1. Set `NOMAD_SERVER_IP` and `NOMAD_ADVERTISE_ADDR` from the approved network;
+   do not copy historical host addresses from documentation.
+2. Provision an operator-owned writable render directory outside the checkout,
+   then run `just render-nomad-configs <operator-owned-writable-directory>`.
+   Nomad does not expand the source HCL's environment placeholders itself.
+3. Validate the rendered HCL and effective TLS/ACL settings before activation.
+4. Use separate persistent data directories for server and client. If the
+   client uses rootless Podman, resolve and verify that user's live API socket
+   rather than assuming `/var/run/podman` exists.
+5. Start the server through the operator-owned service or container definition,
+   bootstrap its ACL system exactly once, store the management token in the
+   approved secret manager, and issue a scoped node token.
+6. Supply the scoped `NOMAD_TOKEN` to the client through the approved secret
+   channel, start it through its operator-owned definition, and verify
+   registration with an authenticated `nomad node status` readback.
 
-Nomad does not expand environment variables in its config files, so render the
-canonical placeholders to a deploy-local path first:
-
-```bash
-export NOMAD_SERVER_IP=$(tailscale ip -4)
-export NOMAD_ADVERTISE_ADDR=$(tailscale ip -4)
-just render-nomad-configs            # writes /etc/nomad.d/{server,client}.hcl
-```
-
-### 5b. Start Nomad Server
-
-```bash
-mkdir -p /var/nomad/{data,plugins}
-sudo chown nomad:nomad /var/nomad
-
-podman run -d \
-  --name nomad-server \
-  --network homeric-mesh \
-  -p 4646:4646 \
-  -p 4647:4647 \
-  -p 4648:4648/udp \
-  -v /var/nomad:/nomad/data \
-  -v /etc/nomad.d/server.hcl:/etc/nomad/server.hcl:ro \
-  hashicorp/nomad:1.6 agent -config /etc/nomad/server.hcl
-```
-
-### 5c. Bootstrap the Nomad ACL System (required)
-
-`configs/nomad/server.hcl` ships with `acl { enabled = true }` (issue #196),
-so the cluster requires a token before any further `nomad` command or client
-registration will succeed. Bootstrap the initial management token **once** per
-cluster, immediately after the server starts:
-
-```bash
-nomad acl bootstrap          # prints the Secret ID — store it in your secret manager
-export NOMAD_TOKEN=<secret-id>
-```
-
-Then create scoped tokens for clients and operators with
-`nomad acl policy apply` + `nomad acl token create`. If you skip this step,
-`nomad node status` and Step 5d's client will fail with "ACL token not found".
-
-### 5d. Start Nomad Client
-
-```bash
-podman run -d \
-  --name nomad-client \
-  --network homeric-mesh \
-  -v /var/nomad:/nomad/data \
-  -v /etc/nomad.d/client.hcl:/etc/nomad/client.hcl:ro \
-  -v /var/run/podman:/var/run/podman:ro \
-  hashicorp/nomad:1.6 agent -config /etc/nomad/client.hcl
-```
-
-Verify Nomad is running:
-
-```bash
-nomad status
-```
+There is intentionally no generic `podman run` command here: without the
+operator-owned mounts, credentials, ownership, and socket mapping it would be
+an unsafe and non-executable deployment recipe.
 
 ---
 
-## Step 6: Start Keystone (Transport Layer)
+## Step 6: Select the Keystone-Owned Development Path
 
-Keystone wraps BlazingMQ (intra-host) and NATS (cross-host) behind a unified event interface. Start it on all hosts:
-
-```bash
-just keystone-start
-```
-
-This task:
-
-1. Builds Keystone (if not already built)
-2. Starts the Keystone service in a Podman container
-3. Registers it as the event bus for all downstream services
-
-Verify connectivity:
-
-```bash
-podman logs keystone
-```
+Odysseus does not proxy a live submodule `justfile`: a dirty or replaced child
+recipe would execute outside the component's review boundary. Use an isolated
+checkout of the exact Keystone revision, read its current `AGENTS.md` and
+README, and invoke only the component-owned development path authorized there.
+Starting a development container does not start a production transport daemon
+or prove NATS connectivity.
 
 ---
 
@@ -334,107 +303,105 @@ podman logs keystone
 
 Agamemnon is the central orchestration engine. It coordinates planning, reconciliation, and HMAS (Hierarchical Multi-Agent System) orchestration.
 
-```bash
-just start-agamemnon
-```
+The root repository does not expose a generic Agamemnon launcher. Such a
+launcher cannot select an authorized NATS identity, transport policy, or
+deployment target. Use the deployment path owned by
+`control/Agamemnon/README.md` only after you configure the canonical NATS
+authentication policy in [`runbooks/enable-nats-auth.md`](runbooks/enable-nats-auth.md).
 
-This task:
-
-1. Builds Agamemnon (if not already built)
-2. Starts the Agamemnon API service at `http://localhost:8080`
-3. Registers GitHub for backing storage
-
-Verify it is running:
+After an operator starts the service, verify the documented health contract:
 
 ```bash
-curl http://localhost:8080/health
+AGAMEMNON_URL=http://localhost:8080
+curl --fail --silent --show-error "${AGAMEMNON_URL}/v1/health" |
+  python3 -c 'import json,sys; assert json.load(sys.stdin).get("status") == "ok"'
 ```
-
-Expected response: `{"status":"healthy"}`
 
 ---
 
 ## Step 8: Deploy Initial Agent Fleet (Myrmidons)
 
-The Myrmidons repository contains declarative YAML manifests describing the desired agent state. Apply them via Agamemnon's reconciliation API:
+The Myrmidons repository contains declarative YAML manifests describing desired
+agent state. At the current pin it is a dataset package and does not expose an
+`apply` recipe; Odysseus therefore has no `apply-all` wrapper. Do not infer that
+the authored dataset matches live reconciler state, and do not apply it during
+ordinary setup.
+
+If desired state must be reconstructed, first query the live Agamemnon
+reconciler, confirm that no conflicting task is active, and obtain explicit
+operator approval for the exact dataset and effects. Then follow the
+version-matched reconciler procedure in the pinned Agamemnon checkout:
 
 ```bash
-just apply-all
+cd provisioning/Myrmidons
+just --list
+
+cd ../../control/Agamemnon
+find tools/reconciler -maxdepth 2 -type f -print
 ```
 
-This task:
+If no compatible, documented procedure is present, stop and escalate rather
+than inventing a wrapper or treating an unavailable reconciliation as success.
 
-1. Reads all YAML files from `provisioning/Myrmidons/`
-2. Submits them to Agamemnon via the `/apply` API endpoint
-3. Agamemnon creates Nomad jobs to instantiate the agents
+An approved reconciler run must submit desired state through the Agamemnon API
+and verify convergence. Runtime creation uses each agent's explicit `local` or
+`docker` deployment type; it does not implicitly create Nomad jobs.
 
 Monitor agent startup:
 
-```bash
-nomad status
-```
-
-You should see agent jobs transitioning to the `running` state.
+Query Agamemnon with the reconciler's documented status command and compare the
+result with the authored desired state. Nomad status is relevant only when an
+operator has separately enabled the optional Nomad path in Step 5.
 
 ---
 
-## Step 9: Start Hermes (External Bridge)
+## Step 9: Hermes Activation Boundary
 
-Hermes bridges external service events (Slack, GitHub, email) into NATS and handles outbound message delivery:
+The pinned Hermes service accepts signed HTTP webhooks, maps supported GitHub,
+Slack, and third-party events, and publishes them to NATS. It does not implement
+outbound delivery or email handling.
 
-```bash
-just hermes-start
-```
-
-Verify it is running:
-
-```bash
-podman logs hermes
-```
+The root repository does not expose a generic Hermes launcher. At the current
+pins, Hermes does not apply its constructed TLS context to the NATS publisher,
+so starting it against the canonical authenticated broker cannot establish the
+required transport identity. First repair and integrate that compatibility gap,
+then follow the version-matched deployment and health procedure in
+`infrastructure/Hermes/README.md`. Until then, report Hermes activation as
+unavailable; do not substitute a plain-NATS listener.
 
 ---
 
-## Step 10: Start Argus (Observability Stack)
+## Step 10: Argus Activation Boundary
 
-Argus provides metrics, logging, and dashboards via Prometheus, Loki, and Grafana:
+Argus provides metrics, logging, and dashboards via Prometheus, Loki, and Grafana.
 
-```bash
-just argus-start
-```
+Argus activation is unavailable through the current gitlink pin. Its pinned
+`start` recipe generates `configs/nginx/htpasswd`, while the pinned Compose
+stack mounts `secrets/htpasswd`; delegating to it would mutate local state
+without establishing a runnable credential boundary. The root
+`just argus-start` compatibility entry point therefore exits before invoking
+the component or container runtime.
 
-This task:
-
-1. Starts Prometheus (metrics scraping)
-2. Starts Loki (log aggregation)
-3. Starts Grafana (dashboards)
-4. Configures Promtail (log shipper)
-
-Access Grafana:
-
-```
-http://localhost:3000
-```
-
-Default credentials: `admin / admin`
-
-> **WARNING:** Rotate this password before any production or shared-network use.
-> Set `GF_SECURITY_ADMIN_PASSWORD` (see `infrastructure/Argus/docker-compose.yml`)
-> and never expose port 3000 with the default credentials still active.
-> For e2e deployments, the admin password is overridable via `GF_E2E_ADMIN_PASSWORD` in `docker-compose.e2e.yml`.
+A later Argus revision contains a candidate repair, but it is not part of this
+exact integration point. Review and integrate the fixed Argus commit first,
+then use that version's component-owned setup, activation, and health
+procedure. Do not copy credentials or commands across revisions.
 
 ---
 
 ## Step 11: Verification
 
-Verify the full ecosystem is operational:
+Collect evidence for each deployed surface. No single command below proves the
+entire ecosystem is operational.
 
-### 11a. Check All Services
+### 11a. Check Repository State
 
 ```bash
 just status
 ```
 
-This shows git status across all submodules and should show no uncommitted changes (all pinned at known-good commits).
+This shows Git status across the root and initialized submodules. It does not
+query service health.
 
 ### 11b. Verify Network Connectivity
 
@@ -444,65 +411,109 @@ Confirm all hosts can reach each other over Tailscale:
 sudo tailscale ping <peer-tailscale-ip>
 ```
 
-### 11c. Check Nomad Job Status
+Skip this check for local or CI deployments with no operator-approved
+multi-host mesh.
+
+### 11c. Check Optional Nomad Job Status
 
 ```bash
 nomad status
 ```
 
-All agent jobs should be in the `running` state.
+Run this check only for an explicitly operated Nomad deployment. For the
+current `local` and `docker` agent paths, use Agamemnon's reconciler status
+instead.
 
 ### 11d. Verify NATS JetStream
 
-```bash
-podman exec nats-server nats stream ls
-```
+This operator probe is unavailable at the current pins: the canonical policy
+has no dedicated least-privilege diagnostic identity, and the pinned server
+image does not provide the NATS CLI. Do not borrow Hermes, Agamemnon, Nestor, or
+another service's credentials for an operator check.
 
-You should see several streams (e.g., `research-requests`, `orchestration-commands`).
+After a dedicated diagnostic identity and its exact subject/API permissions are
+approved, integrated, and deployed, use the deployment-owned probe procedure.
+Record an allowed JetStream read and a denied out-of-scope operation against the
+bound listener, then remove or disable any temporary diagnostic access. Until
+that exists, report the JetStream authorization probe as unavailable rather
+than substituting a credential or a permissive local broker.
+
+Compare the live streams and consumers with the checked-in subject setup and
+the services you actually started; do not infer deployment from a fixed stream
+name list.
 
 ### 11e. Test Nestor (Research Service)
 
-Submit a research request and verify it is processed:
+If Nestor was started separately, use its read-only health endpoint:
 
 ```bash
-curl -X POST http://localhost:8080/research \
-  -H "Content-Type: application/json" \
-  -d '{"query":"test query"}'
+curl --fail --silent --show-error "$NESTOR_URL/v1/health" |
+  python3 -c 'import json,sys; assert json.load(sys.stdin).get("status") == "ok"'
 ```
 
-Monitor the response through Agamemnon's task queue.
+A successful response proves only that the bound HTTP service reports healthy.
+Do not create a persistent research intake as a routine deployment probe. Any
+write-path canary requires separate approval for the exact environment and
+payload plus a version-matched cleanup/readback procedure. The pinned Nestor
+service does not run a research-worker pool.
 
 ---
 
 ## Step 12: Production Hardening
 
-Before running in production, complete these additional steps:
+This section is a routing checklist, not authorization to change a live
+environment. For each service selected for production, the operator must bind
+the exact target and current readback, approve the proposed delta and effects,
+and record a tested rollback path. If any of those inputs or a version-matched
+component procedure is unavailable, stop before mutation.
 
 ### 12a. Enable TLS and NATS Authentication
 
 Nomad ACLs are already enabled in `configs/nomad/server.hcl` and `client.hcl`
-(issue #196) — ensure you completed the `nomad acl bootstrap` in Step 5c.
+(issue #196). An operator-owned activation must bootstrap the server ACL once,
+store the management token, and issue scoped client tokens as described in
+Step 5.
 
-NATS TLS encryption (ADR-008) and mutual-TLS authentication (ADR-010) are enabled by default
-in `configs/nats/server.conf`. Ensure role certs are provisioned and all clients are configured
-before starting NATS (see step 4a and `docs/runbooks/enable-nats-auth.md`). For Nomad TLS,
-update `configs/nomad/server.hcl` to add TLS certificates.
+NATS TLS encryption and mutual-TLS authentication are enabled in the checked-in
+`configs/nats/server.conf`; ADRs 008 and 010 remain Proposed design context.
+Ensure role certs are provisioned and all clients are configured
+before starting NATS (see step 4a and `docs/runbooks/enable-nats-auth.md`). If
+Nomad TLS requires a canonical config change, obtain human coordination
+approval before editing `configs/nomad/`, then render and validate a new
+operator-owned deployment copy.
 
 ### 12b. Configure Persistent Storage
 
-Ensure NATS, Nomad, and Loki are backed by persistent storage (not ephemeral containers). Use mounted volumes or cloud object storage.
+For each selected stateful service, use its version-matched deployment
+procedure to compare the current storage attachment with the proposed durable
+target. Record ownership, retention, migration, backup verification, and
+rollback before an operator approves the exact change. Do not infer a volume or
+cloud-storage target from this repository.
 
 ### 12c. Set Up Monitoring Alerts
 
-Configure Grafana alert rules to notify on service degradation, high error rates, or agent failures.
+After a repaired Argus commit is integrated, use that version's procedure to
+discover existing alert rules and destinations. An operator must approve the
+exact rule and notification delta plus rollback before it is applied; the root
+repository does not select recipients or mutate Grafana.
 
 ### 12d. Enable Audit Logging
 
-Enable GitHub audit logging to capture all Agamemnon decisions for compliance and debugging.
+If the selected deployment requires durable orchestration records, use the
+exact Agamemnon version's procedure to inventory its store and logging state,
+then have the operator approve a scoped destination, retention policy, secret
+boundary, migration, and rollback. Its default in-memory store is not a durable
+decision log. GitHub audit logs cover GitHub-side events only and must not be
+represented as a complete record of Agamemnon orchestration decisions.
 
 ### 12e. Secure Tailscale
 
-Configure Tailscale ACLs to restrict which hosts can communicate. See `docs/runbooks/add-new-host.md`.
+For an explicitly selected multi-host mesh, the network operator owns the ACL
+policy. Use current vendor documentation and an administrative readback to
+bind the exact peers and ports, review the proposed least-privilege delta and
+rollback, and obtain approval before any policy change. The
+`docs/runbooks/add-new-host.md` checklist is a fail-closed routing guide, not
+deployment authority.
 
 ---
 
@@ -510,7 +521,9 @@ Configure Tailscale ACLs to restrict which hosts can communicate. See `docs/runb
 
 ### Services Fail to Start
 
-Check container logs:
+For container-managed services, check the actual container name reported by
+the component's status recipe. For native services such as Hermes, inspect the
+foreground process output or run the component health recipe instead.
 
 ```bash
 podman logs <container-name>
@@ -518,35 +531,34 @@ podman logs <container-name>
 
 ### Network Connectivity Issues
 
-Verify Tailscale is connected:
-
-```bash
-sudo tailscale status
-```
-
-If not connected, re-authenticate:
-
-```bash
-sudo tailscale up --authkey=<new-authkey>
-```
+This route applies only to an operator-enabled multi-host deployment. Have the
+network operator verify current peer state through the approved administrative
+readback. If re-enrollment is required, use the current vendor procedure and an
+approved secret-input mechanism; never put an auth key in command arguments,
+environment variables, shell history, or repository files.
 
 ### Agents Not Spawning
 
-Verify Nomad client is registered:
+For the current `local` and `docker` paths, inspect the Agamemnon reconciler
+response and Agamemnon process logs first. Compare the returned agent state to
+the submitted Myrmidons manifest; a failed or unavailable wrapper is not a
+successful apply.
+
+For an operator-enabled Nomad deployment only, verify the Nomad client is
+registered:
 
 ```bash
 nomad node status
 ```
 
-If no clients appear, restart the Nomad client:
-
-```bash
-podman restart nomad-client
-```
+If no clients appear, inspect the operator-owned client service, its scoped
+token, rendered config, and runtime socket. Restart it only through that
+deployment's approved service manager.
 
 ### NATS Cluster Not Forming
 
-Check NATS logs and verify all hosts have matching NATS cluster IDs in their configs:
+This check applies only to an operator-enabled multi-host NATS cluster. Check
+NATS logs and verify all hosts use matching cluster credentials and routes:
 
 ```bash
 podman logs nats-server

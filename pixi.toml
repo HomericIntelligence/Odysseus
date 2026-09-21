@@ -17,6 +17,10 @@ nodejs = ">=22.12,<23"
 shellcheck = "==0.10.0"
 python = ">=3.13,<3.14"
 yamllint = ">=1.35,<2"
+python-hcl2 = ">=8.1.2,<9"
+pyyaml = ">=6.0,<7"
+jsonschema = ">=4.25,<5"
+rfc3339-validator = ">=0.1.4,<0.2"
 
 [tasks]
 bootstrap = "just bootstrap"

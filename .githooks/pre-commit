@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 # .githooks/pre-commit — Odysseus meta-repo commit-time guardrails.
 #
-# Installed via `just install-hooks` (sets `git config core.hooksPath .githooks`).
+# `tools/propagate-pre-commit-hooks.sh` copies this standalone guard into the
+# default hook directories of initialized submodules. Root developer setup
+# installs `.pre-commit-config.yaml` through `scripts/install/dev/80-precommit.sh`;
+# this repository does not expose a `just install-hooks` recipe.
 # This hook is the last-mile layer on top of:
-#   - global commit.gpgsign = true (already enforced via ~/.gitconfig)
+#   - the stdin-preserving signed-commit check in .githooks/pre-push
 #   - the banned-paths list in .gitignore
-#   - the "Prohibited Actions — Commit secrets" clause in AGENTS.md
+#   - the secret-handling rule under "Protected boundaries" in AGENTS.md
 #
 # Scope of THIS hook: refuse to commit a staged file that matches a banned
 # credential / secret / private-key / large-file pattern. The hook fails
 # loudly with a remediation hint, never silently bypasses.
 #
-# Per AGENTS.md "Prohibited Actions", `--no-verify` is forbidden. If this
-# hook fails, fix the staged set: `git restore --staged <path>`, edit the
-# file, or `git rm --cached <path>` to untrack a tracked file.
+# Per AGENTS.md, repository hooks must not be bypassed. If this hook fails,
+# fix the staged set: `git restore --staged <path>`, edit the file, or
+# `git rm --cached <path>` to untrack a tracked file.
 #
 # Exit code: 0 on clean, 1 on any banned path detected.
 
@@ -37,9 +40,9 @@ set -euo pipefail
 # limitation above. Once here (newline-separated, safe for $()), and once
 # below into a temp file (NUL-delimited, safe for `read -d ''`). The
 # duplication is intentional.
-if ! staged=$(git diff --cached --name-only --diff-filter=ACMR); then
+if ! staged=$(git diff --cached --name-only --diff-filter=ACMRT); then
     echo "ERROR: 'git diff --cached --name-only' failed; refusing to commit unverified." >&2
-    echo "       Re-run with 'git commit --no-verify' only if you understand why." >&2
+    echo "       Resolve the Git/index failure and retry; do not bypass repository hooks." >&2
     exit 1
 fi
 
@@ -65,55 +68,93 @@ fi
 # the caller's shell options; on hardened systems it is rejected outright.
 # The template-form prefix used here is universally supported.
 #
-# `trap ... EXIT` fires on every exit path — clean, `set -e`, explicit
-# `exit 1`, normal EOF — and cleans up the temp file. SIGKILL / SIGQUIT
+# The EXIT trap fires on every exit path: clean, `set -e`, explicit
+# `exit 1`, and normal EOF. It preserves the incoming status. It also makes a
+# cleanup failure fatal after a successful inspection. SIGKILL and SIGQUIT
 # cannot be caught by bash, so a `kill -9` mid-flight WILL leak the file;
 # mktemp's 0600 mode ensures any stranded file is unreadable to other
-# users, and the only impact is a single ~10-byte file in /tmp
-# accumulating over time. This is the standard `set -e` exit-trap
-# cleanup pattern and is documented as a known best-effort mitigation,
-# not a hard guarantee.
+# users. The only impact is one small file in /tmp. This is a best-effort
+# mitigation, not a hard guarantee.
 temp_diff=$(mktemp "${TMPDIR:-/tmp}/pre-commit.XXXXXX")
-trap 'rm -f "$temp_diff"' EXIT
 
-if ! git diff --cached --name-only -z --diff-filter=ACMR > "$temp_diff"; then
+cleanup_temp_diff() {
+    cleanup_status=$1
+    trap - EXIT
+    if ! rm -f -- "$temp_diff"; then
+        echo "ERROR: failed to remove pre-commit temporary file: $temp_diff" >&2
+        if [ "$cleanup_status" -eq 0 ]; then
+            cleanup_status=1
+        fi
+    fi
+    exit "$cleanup_status"
+}
+trap 'cleanup_temp_diff "$?"' EXIT
+
+if ! git diff --cached --name-only -z --diff-filter=ACMRT > "$temp_diff"; then
     echo "ERROR: 'git diff --cached --name-only -z' failed during loop setup; aborting." >&2
     exit 1
 fi
 
-# Banned patterns. Each is anchored to a typical credential / secret shape.
-# Match against staged basenames (not full paths) so a repo-level
-# `secrets/dev-notes.md` (which we DO want to keep) does not false-positive,
-# but `secrets/` (top-level credentials dir) does.
-banned='(^|/)(secrets/|\.env$|\.env\.[^/]+$|\.pem$|\.key$|\.p12$|\.pfx$|id_rsa$|id_ed25519$|\.gpg$|credentials\.json$|service-account.*\.json$)'
+# Banned patterns. Each pattern is anchored to a path segment or a secret-file
+# suffix. Permit the tracked `.env.example` template, but reject every other
+# `.env` variant. A `secrets/` path remains banned, including a template in it.
+banned='(^|/)(secrets/|id_rsa$|id_ed25519$|credentials\.json$|service-account[^/]*\.json$)|\.(pem|key|p12|pfx|gpg)$'
+banned_env='(^|/)\.env($|\.[^/]+$)'
 
-# Large-file guard: 512 KiB — matches pre-commit-config.yaml
-# `check-added-large-files` (maxkb=512). Single source of truth.
+# Large-file guard: 512 KiB. This native local hook owns the threshold; no
+# pre-commit-framework or CI parity is claimed.
 max_bytes=$((512 * 1024))
 
 bad_paths=()
 big_files=()
+index_failures=()
 # Iterate via -z (NUL-separated) and read with -d '' so paths containing
 # spaces, tabs, or newlines are preserved. Avoids `for f in $staged` which
 # would word-split on $IFS and break on whitespace in paths.
 while IFS= read -r -d '' f; do
+    is_banned=0
     if printf '%s\n' "$f" | grep -Eq "$banned"; then
+        is_banned=1
+    elif [ "${f##*/}" != ".env.example" ] && \
+        printf '%s\n' "$f" | grep -Eq "$banned_env"; then
+        is_banned=1
+    fi
+    if [ "$is_banned" -eq 1 ]; then
         bad_paths+=("$f")
     fi
-    if [ -f "$f" ]; then
-        size=$(wc -c < "$f" | tr -d ' ')
-        if [ "$size" -gt "$max_bytes" ]; then
+    index_type=""
+    if ! index_type=$(git cat-file -t ":./$f" 2>/dev/null); then
+        index_failures+=("$f (staged object type unavailable)")
+        continue
+    fi
+    # Index entries for ordinary files and symlinks are blobs. A staged
+    # gitlink is a commit object and has no repository-owned file payload to
+    # size here.
+    if [ "$index_type" = "blob" ]; then
+        size=""
+        if ! size=$(git cat-file -s ":./$f" 2>/dev/null); then
+            index_failures+=("$f (staged blob size unavailable)")
+        elif [ "$size" -gt "$max_bytes" ]; then
             big_files+=("$f (${size} bytes)")
         fi
     fi
 done < "$temp_diff"
 
-if [ "${#bad_paths[@]}" -gt 0 ]; then
+if [ "${index_failures[0]+present}" = "present" ]; then
+    echo "ERROR: Could not inspect staged Git object(s); commit aborted." >&2
+    for p in "${index_failures[@]}"; do
+        printf '  - %s\n' "$p" >&2
+    done
+    echo "Resolve the index/object failure and retry; repository hooks must not be bypassed." >&2
+    exit 1
+fi
+
+if [ "${bad_paths[0]+present}" = "present" ]; then
     cat >&2 <<EOF
 ERROR: Banned credential / secret file(s) staged. Commit aborted.
 
   AGENTS.md prohibits committing .env, *.key, *.pem, secrets/, etc.
-  See "Prohibited Actions — Commit secrets" in the agent contract.
+  See "Protected boundaries" in the agent contract.
 
 Staged files matching the banned pattern:
 EOF
@@ -128,19 +169,19 @@ To remediate:
   # If the path is genuinely required, move it OUTSIDE the repo and load
   # via an environment loader, never commit it.
 
-The --no-verify flag is FORBIDDEN per AGENTS.md. Fix the staged set.
+Fix the staged set and retry the commit; repository hooks must not be bypassed.
 EOF
     exit 1
 fi
 
-if [ "${#big_files[@]}" -gt 0 ]; then
+if [ "${big_files[0]+present}" = "present" ]; then
     cat >&2 <<'EOF'
 ERROR: File(s) larger than 512 KiB staged. Commit aborted.
 
   Meta-repo commits are expected to be small (text-only). A 512 KiB+ file
   is almost certainly a build artefact, dataset, or accidental binary.
-  See `.github/workflows/_required.yml` "check-added-large-files" hook
-  (maxkb=512) — same threshold as the pre-commit-config.yaml gate.
+  This repository-local native hook enforces the 512 KiB threshold before
+  commit. Its result is local evidence, not a claim that CI repeats the gate.
 EOF
     for f in "${big_files[@]}"; do
         printf '  - %s\n' "$f" >&2
@@ -154,11 +195,10 @@ EOF
     exit 1
 fi
 
-# Note: commit signing is enforced globally via commit.gpgsign = true in
-# ~/.gitconfig. This hook does not re-check signatures — git itself
-# refuses to commit unsigned, so re-checking here would be redundant.
-# Operators can still attempt `git commit --no-verify` to bypass BOTH this
-# hook AND the global sign requirement; AGENTS.md "Prohibited Actions"
-# forbids that path.
+# Commit-signature validation is owned by the separate native pre-push hook in
+# .githooks/pre-push and is not duplicated here. Repository policy
+# requires contributors to repair hook failures and retry rather than
+# bypassing either check.
 
+printf '%s\n' "Pre-commit staged-content check passed."
 exit 0

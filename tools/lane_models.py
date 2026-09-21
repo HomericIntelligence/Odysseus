@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Lane model loader for the ADR-020 automation lanes (issue #465).
+"""Lane-model loader for the current pins (issue #465).
+
+Proposed ADR-020 records the target-state automation-lane design.
 
 Reads the canonical pin file ``configs/lane-models.yaml`` and either
 validates + prints it as a markdown table (default / ``--table``) or emits
@@ -63,7 +65,9 @@ def load_lanes(config_path: Path = CONFIG_PATH) -> dict[str, str]:
     if missing:
         raise ValueError(f"{config_path}: missing lane(s): {', '.join(missing)}")
     if extra:
-        raise ValueError(f"{config_path}: unexpected lane(s): {', '.join(sorted(extra))}")
+        raise ValueError(
+            f"{config_path}: unexpected lane(s): {', '.join(sorted(extra))}"
+        )
 
     validated: dict[str, str] = {}
     for lane in REQUIRED_LANES:
@@ -99,8 +103,12 @@ def format_env(lanes: dict[str, str]) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--table", action="store_true", help="print markdown table (default)")
-    mode.add_argument("--env", action="store_true", help="emit source-able HEPH_*_MODEL exports")
+    mode.add_argument(
+        "--table", action="store_true", help="print markdown table (default)"
+    )
+    mode.add_argument(
+        "--env", action="store_true", help="emit source-able HEPH_*_MODEL exports"
+    )
     parser.add_argument(
         "--config",
         type=Path,

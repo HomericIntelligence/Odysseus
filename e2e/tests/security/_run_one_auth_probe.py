@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Issue #180 live auth probe: build a worker's real container command and run a
-trivial prompt, asserting auth succeeds with the secret kept off the cmdline."""
+"""Issue #180 live probe for the host-only key and scoped broker boundary."""
 import importlib.util
+import io
 import pathlib
 import subprocess
 import sys
+from contextlib import redirect_stderr, redirect_stdout
 
 E2E = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(E2E))
 
 
 def load(fn: str) -> object:
@@ -17,42 +19,59 @@ def load(fn: str) -> object:
     return mod
 
 
+if len(sys.argv) != 2 or sys.argv[1] not in {"single", "multi"}:
+    sys.stderr.write("live auth probe worker must be 'single' or 'multi'\n")
+    sys.exit(2)
+
 worker = sys.argv[1]
 prompt = "Reply with exactly: OK"
 
 if worker == "single":
     m = load("claude-myrmidon.py")
-    cmd = m._build_container_cmd(
-        [
-            "claude-host",
-            "-p", prompt,
-            "--dangerously-skip-permissions",
-            "--allowedTools", "Read",
-        ],
-        cwd="/tmp",
-    )
+    session_context = m._private_session_home()
 else:
     m = load("claude-myrmidon-multi.py")
-    cmd = m._build_container_cmd_scoped(
-        [
-            "claude",
-            "-p", prompt,
-            "--permission-mode", "acceptEdits",
-            "--allowedTools", "Read",
-        ],
-        cwd="/tmp",
-        scope="plan",
-    )
+    session_context = m._private_session_home("live-auth-probe")
 
-result = subprocess.run(
-    cmd,
-    capture_output=True,
-    text=True,
-    stdin=subprocess.DEVNULL,
-    timeout=120,
-)
+with session_context as session_home, m._scoped_claude_auth() as scoped_auth:
+    claude_program = "claude-host" if worker == "single" else "claude"
+    claude_args = [
+        claude_program,
+        "-p", prompt,
+        "--permission-mode", "acceptEdits",
+        "--allowedTools", "Read",
+    ]
+    # The probe emits only its own fixed status. Do not forward harness or
+    # child output, because either stream can contain credentials or context.
+    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        if worker == "single":
+            cmd = m._build_container_cmd(
+                claude_args,
+                cwd="/tmp",
+                scope="plan",
+                session_home=session_home,
+                scoped_auth=scoped_auth,
+            )
+        else:
+            cmd = m._build_container_cmd_scoped(
+                claude_args,
+                cwd="/tmp",
+                scope="plan",
+                session_home=session_home,
+                scoped_auth=scoped_auth,
+            )
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=120,
+            env=m._container_runtime_environment(),
+        )
 out = (result.stdout or "").strip()
-err = (result.stderr or "").lower()
+raw_err = result.stderr or ""
+err = raw_err.lower()
 
 # Auth failure surfaces as non-zero exit, empty output, or a specific
 # credential-error token in stderr. Anchor on concrete failure phrases rather
@@ -66,12 +85,14 @@ _AUTH_FAIL_TOKENS = (
     "credential",
 )
 if (
-    result.returncode != 0
-    or not out
+    m._credential_canary_present(out)
+    or m._credential_canary_present(raw_err)
+    or result.returncode != 0
+    or out != "OK"
     or any(tok in err for tok in _AUTH_FAIL_TOKENS)
 ):
-    sys.stderr.write(f"rc={result.returncode} stderr={result.stderr[:300]}\n")
+    sys.stderr.write("live auth probe failed\n")
     sys.exit(1)
 
-print(out[:200])
+print("OK")
 sys.exit(0)

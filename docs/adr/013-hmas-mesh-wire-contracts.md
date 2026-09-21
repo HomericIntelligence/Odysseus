@@ -4,6 +4,11 @@
 
 **Extends:** [ADR 005](005-nats-subject-schema.md)
 
+> **Proposal status:** The wire contracts, ownership rules, and migration below
+> are candidate target architecture. Checked-in schemas, service interfaces,
+> and verified live-state readbacks remain the authorities for current
+> behavior until this ADR is accepted and implemented.
+
 ---
 
 ## Context
@@ -23,10 +28,10 @@ but the connective wire contracts between them were never defined:
   research dispatch queue, and no lease/heartbeat/idempotency contract for
   workers.
 
-This ADR defines the authoritative wire contracts for the HMAS mesh pipeline:
-subject grammar, JetStream consumer configuration, payload envelopes, task
-sizing and overrun re-adjustment, event-vs-store ownership, the interview
-relay, and epic conventions.
+This proposal would define wire contracts for the HMAS mesh pipeline: subject
+grammar, JetStream consumer configuration, payload envelopes, task sizing and
+overrun re-adjustment, event-vs-store ownership, the interview relay, and epic
+conventions.
 
 ## Decision
 
@@ -39,20 +44,19 @@ hi.myrmidon.{domain}.{role}.task.{task_id}
 - **domain** ∈ `research`, `pipeline` (extensible: any slugified domain).
 - **role** is an HMAS role NAME, never a level number: `chief-architect`,
   `component-lead`, `module-lead`, `task-agent`, and deeper roles as the
-  hierarchy grows (`specialist`, `engineer`, `junior`, …).
+    hierarchy grows (`specialist`, `engineer`, `junior`, …).
 - The literal `task` token separates new subjects from legacy two-token
   publishes so new consumers never receive legacy messages.
 
 **Role taxonomy.** Myrmidon roles ARE the HMAS agentic roles at every level of
 the hierarchy, crossed with domain — a `research.chief-architect` myrmidon and
 a `pipeline.chief-architect` myrmidon are distinct pool queues. The hierarchy
-is extensible beyond four levels: ProjectAgamemnon's AGENTS.md 4-level
-instantiation (L0 chief-architect → L3 task-agent) and ProjectOdyssey's
-`agents/hierarchy.md` 6-level/30-agent instantiation are both valid. Model
-tiers map to role depth: opus for architect-level roles, sonnet for
-mid-hierarchy and task agents, **haiku for junior roles**. The wire contract
-never encodes the level number — only the role name — so deeper hierarchies
-require no subject changes.
+is extensible beyond four levels: Agamemnon's four-level instantiation (L0
+chief-architect → L3 task-agent) and Odyssey's deeper hierarchy are both valid
+examples. Provider and model assignment belongs to invocation-local runtime
+configuration, not the role taxonomy or wire payload. The wire contract never
+encodes the level number, provider, or model—only the role name—so deeper
+hierarchies require no subject changes.
 
 **Consumers.** One durable pull consumer per (domain, role):
 
@@ -64,16 +68,22 @@ require no subject changes.
 | Ack policy | `AckExplicit` |
 | AckWait | 900 s (15 min) |
 | MaxDeliver | 3 |
-| MaxAckPending | pool concurrency cap (initial: 3 = host heavy-agent budget) |
+| MaxAckPending | per-consumer in-flight cap (initial: 3) |
 
 Each worker fetches one message at a time (`fetch(1)`) — one task per
-myrmidon. Workers heartbeat with `msg.in_progress()` every 5 minutes; three
-missed heartbeats (AckWait expiry) mean the worker is dead and the task is
+myrmidon. Because multiple role consumers can run on one host, a separate
+host-wide semaphore or scheduler must enforce the aggregate three-heavy-agent
+budget across every local consumer; `MaxAckPending` alone cannot do that.
+Workers heartbeat with `msg.in_progress()` every 5 minutes; three missed
+heartbeats (AckWait expiry) mean the worker is dead and the task is
 redelivered. Ack happens only after completion.
 
 **Migration.** Legacy two-token subjects (`hi.myrmidon.{type}.{task_id}`) are
-dual-published for one release, then removed. Operators must purge the stale
-`homeric-myrmidon` backlog before bringing up role-addressed consumers.
+dual-published for one release, then removed. Before any backlog change,
+operators must bind the exact stream and consumer inventory, prove no active
+task depends on the messages, preserve the required recovery evidence, and
+approve the exact purge effect. If those conditions are not met, leave the
+backlog intact and stop the migration.
 
 ### 2. Task state events (facts, fan-out)
 
@@ -85,16 +95,17 @@ This adds the `started` verb to ADR-005's list. Workers publish `started`
 immediately after claiming (payload carries `agent_id` and `exec_host` — this
 IS the assignment record; assignment happens at claim, not at dispatch).
 
-**Ownership rule (normative):**
+**Proposed ownership rule (would become normative if accepted):**
 
 - **Workers publish events.** They never write Agamemnon's store directly.
-- **Only Agamemnon writes its backing store** (GitHub Issues/Projects).
+- **Only Agamemnon writes its configured task store.**
 - **Only Hephaestus automation writes `state:*` labels** (`state:needs-plan`,
   `state:plan-go/-no-go`, `state:implementation-go/-no-go`, `state:skip`).
 
-Code truth lives in the git branch; state truth lives in GitHub labels plus
-Agamemnon's store. NATS messages are pointers and facts, never the state
-itself.
+Code truth lives in the git branch; task state truth lives in Agamemnon's
+configured store. Where the automation integration uses GitHub labels, only
+Hephaestus writes the `state:*` labels. NATS messages are pointers and facts,
+never the state itself.
 
 ### 3. Payload envelope
 
@@ -160,8 +171,11 @@ Fallback ladder:
 3. A late console answer wins over a pending GitHub poll. GitHub answers are
    re-published on the answer subject with `"channel": "github"` so NATS
    carries the full transcript.
-4. Both channels time out → the worker proceeds with stated assumptions and
-   re-publishes the question with `"status": "assumed"`.
+4. Both channels time out → the worker may proceed with stated assumptions only
+   when they cannot expand scope or effects or materially change the requested
+   outcome. It re-publishes the question with `"status": "assumed"`. Otherwise
+   it records the unresolved decision, reports the block truthfully, and waits
+   for authorized direction.
 
 All Q&A is mirrored to the intake issue for audit.
 
@@ -176,7 +190,7 @@ issues, then publishes this subject. Agamemnon consumes it with durable
 `agamemnon-epics` and submits the HMAS root (Pending → Decomposing).
 
 **Epic body convention** (parseable task list, precedent:
-ProjectOdyssey `scripts/implement_issues.py`):
+Odyssey `scripts/implement_issues.py`):
 
 ```markdown
 - [ ] #123 (depends on: #456)
@@ -204,11 +218,11 @@ Every payload carries `exec_host`.
 
 | Stream | Subjects | Notes |
 |---|---|---|
-| `homeric-myrmidon` | `hi.myrmidon.>` | exists; work queues |
-| `homeric-tasks` | `hi.tasks.>` | exists; state events |
-| `homeric-agents` | `hi.agents.>` | exists |
-| `homeric-logs` | `hi.logs.>` | exists |
-| `homeric-pipeline` | `hi.pipeline.>` | made authoritative; limits-based retention (multiple readers) |
+| `homeric-myrmidon` | `hi.myrmidon.>` | declared by current runtime paths/config; work queues; deployment requires live readback |
+| `homeric-tasks` | `hi.tasks.>` | declared by current runtime paths/config; state events; deployment requires live readback |
+| `homeric-agents` | `hi.agents.>` | declared by current runtime paths/config; deployment requires live readback |
+| `homeric-logs` | `hi.logs.>` | declared by current runtime paths/config; deployment requires live readback |
+| `homeric-pipeline` | `hi.pipeline.>` | would become authoritative if accepted and implemented; limits-based retention (multiple readers) |
 
 ### 10. State machine mapping
 
@@ -223,7 +237,7 @@ One row per pipeline phase — owner / storage / trigger:
 | Planned / Delegated | Decomposing → Delegated | planner `completed` → brief ingested (`POST /v1/briefs`, L0–L3 tree, child-issue refs on L3 nodes) | Agamemnon store; `state:plan-go/-no-go` per child issue |
 | Executing | Delegated → InProgress | worker `started` (records `agent_id`/`exec_host`) | branch + progress comments |
 | Review gate | InProgress | PR review inside worker | `state:implementation-go/-no-go` on PR |
-| Done | InProgress → Completed | worker `completed`; PR auto-merge (squash) armed only after `state:implementation-go`; body `Closes #N`; signed commits | merged PR |
+| Done | InProgress → Completed | worker `completed`; an enabled live merge method/auto-merge setting is used only after `state:implementation-go`; body `Closes #N`; signed commits | merged PR |
 | Split (overrun) | Completed + new Pending children | `POST /v1/tasks/:id/split` then normal `completed` | checkpoint branch is children's `base_branch` |
 | Failed / Escalated | InProgress → Failed / Escalated | `failed` event → Fail; MaxDeliver exhaustion → Escalated (bottom-up delegation) | `state:skip` on exhaustion |
 | Blocked / parent nodes | Delegated (parked) | child completion → `delegate_unblocked_children` → next burst | Agamemnon `blocked_by` graph — never held by a worker |
@@ -232,16 +246,18 @@ One row per pipeline phase — owner / storage / trigger:
 
 **Positive:**
 
-- Every existing HMAS primitive (state machine, briefs, labels, advise/learn)
-  is connected by an explicit, versioned wire contract.
+- Every existing HMAS primitive (state machine, briefs, labels, review, and
+  contextual knowledge workflows) is connected by an explicit, versioned wire
+  contract.
 - Role-addressed queues make the worker pool horizontally scalable per
-  (domain, role) without touching the subject grammar, including hierarchy
-  levels and model tiers that do not exist yet.
+  (domain, role) without touching the subject grammar; future hierarchy levels
+  and role/stage capacity remain provider-neutral routing concerns.
 - Leases + idempotency preamble give at-least-once execution with safe resume
   after worker death; the split mechanism keeps task sizing honest without
   hard-killing long work.
-- The console's `hi.myrmidon.>` subscription can return (issue #211 is
-  resolved by this ADR documenting the namespace).
+- The console's `hi.myrmidon.>` subscription can return only after an approved,
+  dedicated least-privilege identity exists; documenting the namespace alone
+  does not authorize or configure that subscription.
 
 **Negative:**
 
@@ -257,7 +273,8 @@ One row per pipeline phase — owner / storage / trigger:
 
 - ADR-005's verb list grows by `started`; existing subscribers using `>`
   wildcards are unaffected.
-- The `homeric-pipeline` stream becomes authoritative for `hi.pipeline.>`;
+- If accepted and implemented, the `homeric-pipeline` stream becomes
+  authoritative for `hi.pipeline.>`;
   consumers that used core NATS keep working (stream capture is additive).
 
 ## References
@@ -269,7 +286,7 @@ One row per pipeline phase — owner / storage / trigger:
   all publishers/consumers introduced here
 - [ADR 011](011-extract-python-orchestration-to-agamemnon.md) — Python
   orchestration ownership
-- ProjectAgamemnon `AGENTS.md` — 4-level HMAS instantiation
-- ProjectOdyssey `agents/hierarchy.md` — 6-level/30-agent instantiation
+- Agamemnon `AGENTS.md` — 4-level HMAS instantiation
+- Odyssey `agents/hierarchy.md` — deeper HMAS instantiation
 - Issue [#211](https://github.com/HomericIntelligence/Odysseus/issues/211) —
   console `hi.myrmidon.>` subscription removal

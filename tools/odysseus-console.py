@@ -1,447 +1,414 @@
 #!/usr/bin/env python3
-"""Odysseus Console — NATS event viewer + pipeline entry point for HomericIntelligence.
+"""HTTP research-intake client for HomericIntelligence.
 
-Watch mode (default) subscribes to all hi.* NATS subjects and prints events as
-they arrive, providing real-time visibility into the distributed agent mesh.
-Interview questions published by research myrmidons (ADR-013 §5) are surfaced
-as interactive prompts; answers are published back on the answer subject.
+The only available CLI operation registers a new high-level task with Nestor
+(``POST /v1/research``) and exits. It requires ``submit --no-watch``. A returned
+intake ID proves only that Nestor accepted the request; it is not evidence of a
+research-pool dispatch.
 
-Submit mode registers a new high-level task with Nestor
-(POST /v1/research) and then drops into watch mode so the interview can begin.
-
-Handles NATS connection gracefully: shows [DISCONNECTED] / [CONNECTED] state
-instead of stack traces. Retries indefinitely until Ctrl+C.
+NATS watch and interview handling are unavailable at the current pins because
+the canonical policy has no dedicated least-privilege console identity.
+Proposed ADR-013 section 5 records target design context; the future M5 task
+owns implementing that consumer after its identity and behavior are approved.
 
 Usage:
-    python3 tools/odysseus-console.py                       # watch mode
     python3 tools/odysseus-console.py submit "IDEA TEXT" \
-        [--context TEXT] [--repo OWNER/NAME] [--no-watch]
+        [--context TEXT] [--repo OWNER/NAME] --no-watch
 
 Environment:
-    NATS_URL            NATS server URL (default: nats://localhost:4222)
-    NATS_CLIENT_TOKEN   Client auth token (ADR-009); omit if server has no auth
-    NATS_CA_FILE        CA bundle for TLS verification (ADR-008); required for
-                        nats+tls:// / tls:// URLs with a private CA
-    SUBJECTS            Comma-separated subjects (default: all hi.* subjects)
-    NESTOR_URL          Nestor base URL (default: http://localhost:8081)
+    NESTOR_URL          Nestor base URL (default: http://127.0.0.1:8081)
+                        Plaintext HTTP requires a numeric loopback literal;
+                        redirects fail.
     NESTOR_API_KEY      Bearer token for Nestor, if configured
+    NESTOR_CA_FILE      Optional CA bundle for an HTTPS Nestor endpoint
 """
 
 import argparse
-import asyncio
-import contextlib
+from contextlib import contextmanager
+import ipaddress
 import json
-import logging
+import math
 import os
+from pathlib import Path
 import signal
 import ssl
+import stat
 import sys
+import threading
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
-import uuid
-from datetime import datetime, timezone
 
-# Suppress nats-py's internal traceback logging (it prints full stack traces
-# on every failed connection attempt via logging.error with exc_info=True)
-logging.getLogger("nats").setLevel(logging.CRITICAL)
+NESTOR_URL = os.environ.get("NESTOR_URL", "http://127.0.0.1:8081")
+WATCH_UNAVAILABLE = (
+    "watch mode is unavailable: the canonical NATS policy has no dedicated "
+    "least-privilege NATS identity for the Odysseus console"
+)
 
-NATS_URL = os.environ.get("NATS_URL", "nats://localhost:4222")
-NESTOR_URL = os.environ.get("NESTOR_URL", "http://localhost:8081")
-DEFAULT_SUBJECTS = [
-    "hi.pipeline.>",
-    "hi.tasks.>",
-    "hi.agents.>",
-    "hi.logs.>",
-    "hi.research.>",
-    # Role-addressed dispatch queues (hi.myrmidon.{domain}.{role}.task.>)
-    # are documented in ADR-013, resolving the issue #211 removal.
-    "hi.myrmidon.>",
-]
-
-INTERVIEW_PREFIX = "hi.pipeline.interview."
-
-RETRY_INTERVAL = 3  # seconds between initial connection attempts
-
-# ANSI colors
-COLORS = {
-    "hi.tasks":     "\033[0;32m",   # green
-    "hi.agents":    "\033[0;36m",   # cyan
-    "hi.logs":      "\033[0;33m",   # yellow
-    "hi.pipeline":  "\033[0;34m",   # blue
-    "hi.research":  "\033[0;35m",   # magenta
-    "hi.myrmidon":  "\033[0;31m",   # red
-}
 RESET = "\033[0m"
 BOLD = "\033[1m"
-DIM = "\033[2m"
 GREEN = "\033[0;32m"
 RED = "\033[0;31m"
-YELLOW = "\033[1;33m"
+MAX_RESEARCH_ID_LENGTH = 256
+MAX_NESTOR_RESPONSE_BYTES = 64 * 1024
+MAX_NESTOR_CA_BYTES = 2 * 1024 * 1024
+NESTOR_REQUEST_TIMEOUT_SECONDS = 10.0
+MAX_CONSOLE_ERROR_DETAIL_CHARS = 512
 
 
-def color_for_subject(subject: str) -> str:
-    for prefix, color in COLORS.items():
-        if subject.startswith(prefix):
-            return color
-    return ""
+class NestorResponseError(ValueError):
+    """Report a response that cannot satisfy the Nestor intake contract."""
 
 
-def format_event(subject: str, data: bytes) -> str:
-    color = color_for_subject(subject)
-    ts = datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3]
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Turn every HTTP redirect into a response error instead of following it."""
 
-    try:
-        payload = json.loads(data.decode())
-        body = json.dumps(payload, separators=(",", ":"))
-        if len(body) > 200:
-            body = body[:197] + "..."
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        body = data.decode(errors="replace")[:200]
-
-    return f"{DIM}{ts}{RESET} {color}{BOLD}{subject}{RESET} {body}"
-
-
-def _ts() -> str:
-    return datetime.now(timezone.utc).strftime("%H:%M:%S")
-
-
-# Track whether the last output was an inline status (needs \r overwrite)
-_last_was_inline = False
-
-
-def _term_width() -> int:
-    try:
-        return os.get_terminal_size().columns
-    except OSError:
-        return 80
-
-
-def print_status(state: str, detail: str = "", inline: bool = False):
-    """Print a status line. Inline=True overwrites the current line (for transient states)."""
-    global _last_was_inline
-    colors = {"connected": GREEN, "disconnected": RED, "reconnecting": YELLOW}
-    c = colors.get(state, DIM)
-    line = f"{DIM}{_ts()}{RESET} {c}{BOLD}[{state.upper()}]{RESET} {detail}"
-
-    if inline:
-        # Pad to terminal width to overwrite previous content, then \r back
-        visible_len = len(f"{_ts()} [{state.upper()}] {detail}")
-        padding = max(0, _term_width() - visible_len)
-        print(f"\r{line}{' ' * padding}", end="", flush=True)
-        _last_was_inline = True
-    else:
-        # If previous output was inline, move to a new line first
-        if _last_was_inline:
-            print(flush=True)  # newline
-        print(line, flush=True)
-        _last_was_inline = False
-
-
-def clear_inline():
-    """Emit a newline if the last status was inline, so events print cleanly."""
-    global _last_was_inline
-    if _last_was_inline:
-        print(flush=True)
-        _last_was_inline = False
-
-
-def envelope(**fields) -> dict:
-    """ADR-013 §3 payload envelope."""
-    return {
-        "schema": "hi/v1",
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "msg_id": str(uuid.uuid4()),
-        **fields,
-    }
-
-
-def nats_connect_kwargs() -> dict:
-    """Auth/TLS connect options per ADR-008/009: token + CA-verified TLS."""
-    kwargs = {}
-    token = os.environ.get("NATS_CLIENT_TOKEN")
-    if token:
-        kwargs["token"] = token
-    ca_file = os.environ.get("NATS_CA_FILE")
-    if ca_file:
-        ctx = ssl.create_default_context(cafile=ca_file)
-        kwargs["tls"] = ctx
-    return kwargs
-
-
-# ── Interview panel ─────────────────────────────────────────────────────────
-
-
-class InterviewPanel:
-    """Surfaces interview questions as prompts and publishes answers.
-
-    Questions arrive on hi.pipeline.interview.{intake_id}.question.{q_id};
-    answers go out on hi.pipeline.interview.{intake_id}.answer.{q_id}
-    (ADR-013 §5). Questions are queued so events keep streaming while the
-    user types; one question is prompted at a time.
-    """
-
-    def __init__(self, nc):
-        self._nc = nc
-        self._queue: asyncio.Queue = asyncio.Queue()
-        self._task = asyncio.create_task(self._prompt_loop())
-
-    @staticmethod
-    def parse_question_subject(subject: str):
-        """Return (intake_id, q_id) for a question subject, else None."""
-        if not subject.startswith(INTERVIEW_PREFIX):
-            return None
-        parts = subject.split(".")
-        # hi.pipeline.interview.{intake_id}.question.{q_id}
-        if len(parts) == 6 and parts[4] == "question":
-            return parts[3], parts[5]
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        """Refuse redirects so credentials never cross an unverified origin."""
         return None
 
-    def on_question(self, subject: str, data: bytes) -> bool:
-        """Queue a question event. Returns True if it was an interview question."""
-        parsed = self.parse_question_subject(subject)
-        if parsed is None:
-            return False
-        try:
-            payload = json.loads(data.decode())
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            payload = {}
-        if payload.get("status") == "assumed":
-            # Worker proceeded with assumptions — informational, no prompt.
-            return False
-        self._queue.put_nowait((parsed[0], parsed[1], payload))
-        return True
 
-    async def _prompt_loop(self):
-        loop = asyncio.get_running_loop()
-        while True:
-            intake_id, q_id, payload = await self._queue.get()
-            question = payload.get("question", "(no question text)")
-            clear_inline()
-            print(f"\n{YELLOW}{BOLD}❓ INTERVIEW [{intake_id}/{q_id}]{RESET}")
-            print(f"{YELLOW}{question}{RESET}")
-            try:
-                answer = await loop.run_in_executor(None, input, f"{BOLD}answer> {RESET}")
-            except (EOFError, RuntimeError):
-                print(f"{DIM}stdin unavailable — question left for the GitHub fallback{RESET}")
-                continue
-            answer = answer.strip()
-            if not answer:
-                print(f"{DIM}empty answer skipped — question left for the GitHub fallback{RESET}")
-                continue
-            subject = f"{INTERVIEW_PREFIX}{intake_id}.answer.{q_id}"
-            body = envelope(
-                intake_id=intake_id, q_id=q_id, answer=answer, channel="console"
+def _safe_error_detail(value: object) -> str:
+    """Render an untrusted exception field as one bounded printable record."""
+    try:
+        detail = str(value)
+    except Exception:  # pragma: no cover - defensive against hostile __str__
+        detail = type(value).__name__
+    escaped = ascii(detail)
+    if len(escaped) > MAX_CONSOLE_ERROR_DETAIL_CHARS:
+        escaped = escaped[: MAX_CONSOLE_ERROR_DETAIL_CHARS - 3] + "..."
+    return escaped
+
+
+def _remaining(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise NestorResponseError("Nestor request exceeded its absolute deadline")
+    return remaining
+
+
+@contextmanager
+def _absolute_deadline(seconds: float):
+    """Interrupt every blocking phase at one wall-clock deadline."""
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise NestorResponseError("Nestor request deadline is invalid")
+    if (
+        threading.current_thread() is not threading.main_thread()
+        or not hasattr(signal, "setitimer")
+        or not hasattr(signal, "ITIMER_REAL")
+    ):
+        raise NestorResponseError(
+            "Nestor request deadline enforcement is unavailable"
+        )
+    if signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0):
+        raise NestorResponseError("another process deadline is already active")
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+
+    def deadline_expired(_signum, _frame):  # noqa: ANN001
+        raise NestorResponseError("Nestor request exceeded its absolute deadline")
+
+    signal.signal(signal.SIGALRM, deadline_expired)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    deadline = time.monotonic() + seconds
+    try:
+        yield deadline
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+
+
+def _identity(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _trusted_ca_directory(metadata: os.stat_result) -> bool:
+    return (
+        stat.S_ISDIR(metadata.st_mode)
+        and metadata.st_uid == 0
+        and metadata.st_mode & 0o022 == 0
+    )
+
+
+def _trusted_ca_file(metadata: os.stat_result) -> bool:
+    return (
+        stat.S_ISREG(metadata.st_mode)
+        and metadata.st_uid == 0
+        and metadata.st_nlink == 1
+        and metadata.st_mode & 0o022 == 0
+    )
+
+
+def _read_bound_ca_bundle(path: Path) -> bytes:
+    """Read one stable, direct regular CA file through retained descriptors."""
+    required = ("O_CLOEXEC", "O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK")
+    if any(not hasattr(os, name) for name in required):
+        raise ValueError("NESTOR_CA_FILE cannot be bound safely on this host")
+    if not path.is_absolute():
+        raise ValueError("NESTOR_CA_FILE must be an absolute path")
+
+    directory_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
+    parent = Path(os.path.abspath(path.parent))
+    descriptors: list[int] = []
+    links: list[tuple[int, str, int, tuple[int, ...]]] = []
+    file_descriptor = -1
+    try:
+        root_descriptor = os.open("/", directory_flags)
+        descriptors.append(root_descriptor)
+        if not _trusted_ca_directory(os.fstat(root_descriptor)):
+            raise ValueError("NESTOR_CA_FILE root is not a trusted directory")
+        current = root_descriptor
+        for component in parent.parts[1:]:
+            child = os.open(component, directory_flags, dir_fd=current)
+            metadata = os.fstat(child)
+            if not _trusted_ca_directory(metadata):
+                os.close(child)
+                raise ValueError(
+                    "NESTOR_CA_FILE parent is not a trusted, non-writable directory"
+                )
+            links.append((current, component, child, _identity(metadata)))
+            descriptors.append(child)
+            current = child
+
+        file_descriptor = os.open(path.name, file_flags, dir_fd=current)
+        before = os.fstat(file_descriptor)
+        if not _trusted_ca_file(before):
+            raise ValueError(
+                "NESTOR_CA_FILE must be a root-owned, direct, non-writable file"
             )
-            try:
-                await self._nc.publish(subject, json.dumps(body).encode())
-                await self._nc.flush(timeout=5)
-                print(f"{GREEN}✓ answer published{RESET} {DIM}{subject}{RESET}\n")
-            except Exception as e:  # noqa: BLE001 - console must not crash on publish
-                print(f"{RED}✗ failed to publish answer: {e}{RESET}\n")
+        if before.st_size > MAX_NESTOR_CA_BYTES:
+            raise ValueError(
+                f"NESTOR_CA_FILE exceeds the {MAX_NESTOR_CA_BYTES}-byte limit"
+            )
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(
+                file_descriptor,
+                min(65536, MAX_NESTOR_CA_BYTES + 1 - total),
+            )
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > MAX_NESTOR_CA_BYTES:
+                raise ValueError(
+                    f"NESTOR_CA_FILE exceeds the {MAX_NESTOR_CA_BYTES}-byte limit"
+                )
 
-    def stop(self):
-        self._task.cancel()
+        after = os.fstat(file_descriptor)
+        current_file = os.stat(path.name, dir_fd=current, follow_symlinks=False)
+        if (
+            _identity(before) != _identity(after)
+            or _identity(after) != _identity(current_file)
+            or not _trusted_ca_file(after)
+            or not _trusted_ca_file(current_file)
+        ):
+            raise ValueError("NESTOR_CA_FILE changed while it was read")
+        for parent_fd, name, child_fd, expected in links:
+            current_link = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            if (
+                not _trusted_ca_directory(current_link)
+                or not _trusted_ca_directory(os.fstat(child_fd))
+                or _identity(current_link) != expected
+                or _identity(os.fstat(child_fd)) != expected
+            ):
+                raise ValueError("NESTOR_CA_FILE parent changed while it was read")
+        return b"".join(chunks)
+    except OSError as error:
+        raise ValueError("NESTOR_CA_FILE cannot be opened safely") from error
+    finally:
+        if file_descriptor >= 0:
+            os.close(file_descriptor)
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
 
 
-# ── Submit mode ─────────────────────────────────────────────────────────────
+def _tls_context() -> ssl.SSLContext:
+    explicit = os.environ.get("NESTOR_CA_FILE")
+    if explicit:
+        candidates = [Path(explicit)]
+    else:
+        compiled = ssl.get_default_verify_paths().openssl_cafile
+        candidates = [
+            Path("/private/etc/ssl/cert.pem"),
+            Path("/etc/ssl/certs/ca-certificates.crt"),
+            Path("/etc/pki/tls/certs/ca-bundle.crt"),
+        ]
+        if compiled:
+            candidates.append(Path(os.path.realpath(compiled)))
+
+    last_error: Exception | None = None
+    for ca_path in dict.fromkeys(candidates):
+        try:
+            ca_data = _read_bound_ca_bundle(ca_path)
+            pem_data = ca_data.decode("ascii")
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.load_verify_locations(cadata=pem_data)
+            return context
+        except (OSError, UnicodeError, ssl.SSLError, ValueError) as error:
+            last_error = error
+            if explicit:
+                break
+    label = "NESTOR_CA_FILE" if explicit else "system CA bundle"
+    raise ValueError(f"invalid {label}: cannot load trusted CA bundle") from last_error
+
+
+def validated_nestor_url(value: str) -> str:
+    """Return a safe Nestor base URL or reject it before network use."""
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        _ = parsed.port
+    except ValueError as error:
+        raise ValueError(f"invalid NESTOR_URL: {error}") from error
+
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("NESTOR_URL must use http:// or https:// with a host")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("NESTOR_URL must not contain embedded credentials")
+    if parsed.query or parsed.fragment:
+        raise ValueError("NESTOR_URL must not contain a query or fragment")
+
+    if parsed.scheme == "http":
+        host = parsed.hostname
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError as error:
+            raise ValueError(
+                "plaintext HTTP requires a numeric loopback NESTOR_URL host"
+            ) from error
+        if not address.is_loopback or "%" in host:
+            raise ValueError(
+                "plaintext HTTP requires a numeric loopback NESTOR_URL host"
+            )
+
+    return value.rstrip("/")
 
 
 def submit_research(idea: str, context: str = "", repo: str = "") -> dict:
     """POST the idea to Nestor's intake endpoint and return its response."""
+    base_url = validated_nestor_url(NESTOR_URL)
     body = {"idea": idea}
     if context:
         body["context"] = context
     if repo:
         body["repo"] = repo
 
-    req = urllib.request.Request(
-        f"{NESTOR_URL.rstrip('/')}/v1/research",
+    request = urllib.request.Request(
+        f"{base_url}/v1/research",
         data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
     api_key = os.environ.get("NESTOR_API_KEY")
     if api_key:
-        req.add_header("Authorization", f"Bearer {api_key}")
+        request.add_header("Authorization", f"Bearer {api_key}")
 
-    ca_file = os.environ.get("NATS_CA_FILE")
-    ctx = ssl.create_default_context(cafile=ca_file) if ca_file else None
-    with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
-        return json.loads(resp.read().decode())
-
-
-# ── Watch mode ──────────────────────────────────────────────────────────────
-
-
-async def watch() -> None:
-    try:
-        import nats as nats_mod
-    except ImportError:
-        print("ERROR: nats-py not installed. Run: pip install nats-py", file=sys.stderr)
-        sys.exit(1)
-
-    subjects_env = os.environ.get("SUBJECTS", "")
-    subjects = subjects_env.split(",") if subjects_env else DEFAULT_SUBJECTS
-
-    # Banner
-    print(f"{BOLD}╔══════════════════════════════════════════════════╗{RESET}")
-    print(f"{BOLD}║  Odysseus Console — HomericIntelligence Mesh     ║{RESET}")
-    print(f"{BOLD}╠══════════════════════════════════════════════════╣{RESET}")
-    print(f"{BOLD}║{RESET}  NATS: {NATS_URL}")
-    print(f"{BOLD}║{RESET}  Subjects: {', '.join(subjects)}")
-    print(f"{BOLD}╚══════════════════════════════════════════════════╝{RESET}")
-    print()
-
-    stop = asyncio.Event()
-
-    def _signal_handler():
-        stop.set()
-
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, _signal_handler)
-
-    # nats-py lifecycle callbacks (must be coroutines)
-    async def on_disconnected():
-        print_status("disconnected", NATS_URL, inline=True)
-
-    async def on_reconnected():
-        print_status("connected", f"Reconnected to {NATS_URL}")
-
-    async def on_closed():
-        print_status("disconnected", "Connection closed", inline=True)
-
-    # Outer loop: handles initial connection failures.
-    # Once connected, nats-py handles reconnection internally via callbacks.
-    while not stop.is_set():
-        nc = None
-        panel = None
-        try:
-            print_status("reconnecting", f"Connecting to {NATS_URL}...", inline=True)
-
-            # Use allow_reconnect=False so connect() fails fast on first
-            # attempt. Our outer loop handles retry. Once connected, transient
-            # disconnects are detected via is_connected/is_closed polling.
-            nc = await asyncio.wait_for(
-                nats_mod.connect(
-                    NATS_URL,
-                    disconnected_cb=on_disconnected,
-                    reconnected_cb=on_reconnected,
-                    closed_cb=on_closed,
-                    allow_reconnect=False,
-                    connect_timeout=3,
-                    **nats_connect_kwargs(),
-                ),
-                timeout=5,
-            )
-
-            print_status("connected", NATS_URL)
-
-            panel = InterviewPanel(nc)
-
-            async def on_message(msg):
-                clear_inline()
-                print(format_event(msg.subject, msg.data), flush=True)
-                panel.on_question(msg.subject, msg.data)
-
-            subs = []
-            for subject in subjects:
-                sub = await nc.subscribe(subject, cb=on_message)
-                subs.append(sub)
-                color = color_for_subject(subject)
-                print(f"  {color}listening{RESET} {subject}")
-
-            print(f"\n{DIM}Waiting for events... (Ctrl+C to quit){RESET}\n")
-
-            # Block until user quits or connection is permanently closed
-            while not stop.is_set() and not nc.is_closed:
-                await asyncio.sleep(0.5)
-
-            if stop.is_set():
-                # Graceful shutdown
-                for sub in subs:
-                    with contextlib.suppress(Exception):
-                        await sub.unsubscribe()
-                with contextlib.suppress(Exception):
-                    await nc.drain()
-                break
-
-            # Connection permanently closed — outer loop retries
-            print_status("disconnected", "Connection lost", inline=True)
-
-        except asyncio.TimeoutError:
-            print_status("disconnected", f"Connection timed out ({NATS_URL})", inline=True)
-        except Exception as e:
-            # Initial connection failed — friendly message, no stack trace
-            err_msg = str(e)
-            if not err_msg:
-                err_msg = type(e).__name__
-            print_status("disconnected", err_msg, inline=True)
-
-            # Clean up partial connection
-            if nc is not None:
-                with contextlib.suppress(Exception):
-                    await nc.close()
-        finally:
-            if panel is not None:
-                panel.stop()
-
-        # Wait before retrying, but stop immediately on Ctrl+C
-        if not stop.is_set():
-            print_status("reconnecting", f"Retrying in {RETRY_INTERVAL}s...", inline=True)
-            with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(stop.wait(), timeout=RETRY_INTERVAL)
-
-    clear_inline()
-    print(f"\n{DIM}Disconnected.{RESET}")
+    with _absolute_deadline(NESTOR_REQUEST_TIMEOUT_SECONDS) as deadline:
+        handlers = [urllib.request.ProxyHandler({}), NoRedirectHandler()]
+        if urllib.parse.urlsplit(base_url).scheme == "https":
+            handlers.append(urllib.request.HTTPSHandler(context=_tls_context()))
+        opener = urllib.request.build_opener(*handlers)
+        with opener.open(request, timeout=_remaining(deadline)) as response:
+            response_body = response.read(MAX_NESTOR_RESPONSE_BYTES + 1)
+            _remaining(deadline)
+            if len(response_body) > MAX_NESTOR_RESPONSE_BYTES:
+                raise NestorResponseError(
+                    f"Nestor response exceeds {MAX_NESTOR_RESPONSE_BYTES}-byte limit"
+                )
+            try:
+                return json.loads(response_body.decode())
+            except (ValueError, RecursionError) as error:
+                raise NestorResponseError(
+                    "Nestor response is not valid UTF-8 JSON"
+                ) from error
 
 
 def parse_args(argv):
+    """Parse the HTTP-only console interface."""
     parser = argparse.ArgumentParser(
         prog="odysseus-console",
-        description="NATS event viewer + pipeline entry point for HomericIntelligence.",
+        description=(
+            "HTTP research-intake client; NATS watch is unavailable at current pins."
+        ),
     )
-    sub = parser.add_subparsers(dest="command")
-
-    p_submit = sub.add_parser(
+    commands = parser.add_subparsers(dest="command")
+    submit = commands.add_parser(
         "submit", help="Submit a high-level task to Nestor (POST /v1/research)"
     )
-    p_submit.add_argument("idea", help="High-level task / idea text")
-    p_submit.add_argument("--context", default="", help="Extra context for the researcher")
-    p_submit.add_argument("--repo", default="", help="Target repo (OWNER/NAME), if known")
-    p_submit.add_argument(
+    submit.add_argument("idea", help="High-level task / idea text")
+    submit.add_argument(
+        "--context", default="", help="Extra context for the researcher"
+    )
+    submit.add_argument("--repo", default="", help="Target repo (OWNER/NAME), if known")
+    submit.add_argument(
         "--no-watch",
         action="store_true",
-        help="Exit after submitting instead of dropping into watch mode",
+        help="Required at current pins: exit after the HTTP submission",
     )
-
     return parser.parse_args(argv)
 
 
 def main() -> None:
+    """Submit one HTTP intake request or fail before any unavailable watch path."""
     args = parse_args(sys.argv[1:])
+    if args.command != "submit" or not args.no_watch:
+        print(f"ERROR: {WATCH_UNAVAILABLE}", file=sys.stderr)
+        raise SystemExit(2)
 
-    if args.command == "submit":
-        try:
-            result = submit_research(args.idea, args.context, args.repo)
-        except urllib.error.HTTPError as e:
-            print(f"{RED}✗ Nestor rejected the submission: HTTP {e.code}{RESET}", file=sys.stderr)
-            sys.exit(1)
-        except urllib.error.URLError as e:
-            print(f"{RED}✗ Nestor unreachable at {NESTOR_URL}: {e.reason}{RESET}", file=sys.stderr)
-            sys.exit(1)
-        research_id = result.get("id", "?")
-        print(f"{GREEN}✓ submitted{RESET} research_id={BOLD}{research_id}{RESET}")
-        print(f"{DIM}dispatch: hi.myrmidon.research.chief-architect.task.{research_id}{RESET}")
-        if args.no_watch:
-            return
-        print(f"{DIM}Entering watch mode for the interview... (Ctrl+C to quit){RESET}\n")
+    try:
+        result = submit_research(args.idea, args.context, args.repo)
+    except NestorResponseError as error:
+        print(
+            f"{RED}✗ Nestor response failure: {_safe_error_detail(error)}{RESET}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from error
+    except ValueError as error:
+        print(
+            f"{RED}✗ Invalid console configuration: {_safe_error_detail(error)}{RESET}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from error
+    except urllib.error.HTTPError as error:
+        print(
+            f"{RED}✗ Nestor rejected the submission: "
+            f"HTTP {_safe_error_detail(error.code)}{RESET}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from error
+    except urllib.error.URLError as error:
+        print(
+            f"{RED}✗ Nestor endpoint is unreachable: "
+            f"{_safe_error_detail(error.reason)}{RESET}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from error
 
-    asyncio.run(watch())
+    research_id = result.get("id") if isinstance(result, dict) else None
+    if not isinstance(research_id, str) or not research_id.strip():
+        print("ERROR: Nestor response contained no intake ID", file=sys.stderr)
+        raise SystemExit(1)
+    if (
+        research_id != research_id.strip()
+        or len(research_id) > MAX_RESEARCH_ID_LENGTH
+        or not research_id.isprintable()
+    ):
+        print("ERROR: Nestor response contained an invalid intake ID", file=sys.stderr)
+        raise SystemExit(1)
+    rendered_id = json.dumps(research_id, ensure_ascii=True)
+    print(f"{GREEN}✓ submitted{RESET} research_id={BOLD}{rendered_id}{RESET}")
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        sys.exit(0)
+    main()

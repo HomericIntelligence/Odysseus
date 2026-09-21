@@ -44,11 +44,39 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+          submodules: true
 
-      - name: Install locked lint toolchain
+      - name: Set up pinned Pixi
         uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347  # v0.10.1
         with:
           pixi-version: v0.67.2
+          run-install: false
+
+      - name: Resolve and verify cross-platform dependency lock
+        id: dependency-lock
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This is the existing lint job, not an additional heavy job.
+          # Linux enforces the solver's 5 GiB address-space limit.
+          ulimit -v 5242880
+          git rev-parse HEAD
+          pixi lock
+
+      - name: Preserve generated dependency lock for drift repair
+        if: ${{ steps.dependency-lock.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: dependency-lock-${{ github.run_id }}
+          path: |
+            pixi.toml
+            pixi.lock
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Require checked-in lockfile parity
+        run: git diff --exit-code -- pixi.lock
 
       - name: Run canonical root lint
         run: pixi run --locked just lint
@@ -100,38 +128,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: "Reject silent-failure workaround in shell/YAML/Dockerfile/justfile/HCL"
+      - name: Install policy tools with Linux snapshot support
         run: |
-          # Scans top-level Odysseus sources only — submodules carry their
-          # own copy of this guard. Matches the forbidden idiom at end of
-          # line or before a trailing comment. See
-          # docs/runbooks/no-silent-failures.md.
-          set -euo pipefail
-          mapfile -t files < <(git ls-files \
-            -- \
-            '*.sh' '*.bash' '*.yml' '*.yaml' '*.hcl' \
-            'Dockerfile*' '**/Dockerfile*' \
-            'justfile' '**/justfile' 'Justfile' '**/Justfile')
-          # Skip the runbook (documents the rule and quotes the forbidden idiom)
-          # and this workflow file itself (heredoc would otherwise self-match).
-          declare -a scan_files=()
-          for f in "${files[@]}"; do
-            case "$f" in
-              docs/runbooks/no-silent-failures.md) continue ;;
-              .github/workflows/_required.yml) continue ;;
-            esac
-            scan_files+=("$f")
-          done
-          if [ "${#scan_files[@]}" -eq 0 ]; then
-            echo "No files to scan"
-            exit 0
-          fi
-          if grep -nP '^(?!\s*#).*\|\|\s*true(\s*$|\s*[#);&|])' "${scan_files[@]}"; then
-            echo ""
-            echo '::error::Found silent-failure workarounds above. Refactor per docs/runbooks/no-silent-failures.md.'
-            exit 1
-          fi
-          echo 'OK: no silent-failure workarounds found'
+          python3 -m venv "$RUNNER_TEMP/odysseus-policy"
+          "$RUNNER_TEMP/odysseus-policy/bin/python" -m pip install \
+            'pre-commit==3.8.0' 'PyYAML==6.0.3'
+
+      - name: Reject executable silent-failure controls
+        run: '"$RUNNER_TEMP/odysseus-policy/bin/python" -I scripts/check-ci-silent-failures.py'
 
       - name: "Reject continue-on-error workflow opt-out"
         run: |
@@ -218,7 +222,19 @@ jobs:
           # Run from the tools dir since e2e/tools is not an importable package.
           cd e2e/tools && python3 -m unittest test_gen_test_matrix -v
 
+      - name: Diagnose system interpreter containment capabilities
+        run: python3 -I scripts/diagnose-ci-containment.py
+
+      - name: Verify candidate permission boundary with privileged fixture setup
+        run: |
+          set -euo pipefail
+          cd e2e/tests/unit
+          sudo -n env -i PATH=/usr/bin:/bin DRY_RUN=1 NO_GITHUB=1 ISSUE_NUMBER=0 \
+            /usr/bin/python3 -m unittest \
+            test_legacy_runtime.RuntimeStoreTest.test_candidate_uid_boundary_is_durable_and_denies_state_access -v
+
       - name: Run claude-myrmidon-multi harness unit tests
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           # Salvaged from #369 and ported pytest -> stdlib unittest (the runner
@@ -226,8 +242,34 @@ jobs:
           # via importlib relative to its own __file__, so cwd only affects
           # module discovery. Run from the test dir like the tools suite above.
           # DRY_RUN/NO_GITHUB keep the module import side-effect-free.
-          cd e2e/tests/unit && DRY_RUN=1 NO_GITHUB=1 ISSUE_NUMBER=0 \
-            python3 -m unittest test_claude_myrmidon_multi -v
+          cd e2e/tests/unit
+          DRY_RUN=1 NO_GITHUB=1 ISSUE_NUMBER=0 python3 -c '
+          import unittest
+
+          privileged = (
+              "test_legacy_runtime.RuntimeStoreTest."
+              "test_candidate_uid_boundary_is_durable_and_denies_state_access"
+          )
+
+          def leaves(suite):
+              for test in suite:
+                  if isinstance(test, unittest.TestSuite):
+                      yield from leaves(test)
+                  else:
+                      yield test
+
+          tests = list(leaves(unittest.defaultTestLoader.loadTestsFromName(
+              "test_claude_myrmidon_multi"
+          )))
+          if sum(test.id() == privileged for test in tests) != 1:
+              raise SystemExit("privileged fixture test must occur exactly once")
+          ordinary = [test for test in tests if test.id() != privileged]
+          if not ordinary:
+              raise SystemExit("unprivileged test inventory is empty")
+          print(f"Running {len(ordinary)} unprivileged tests; 1 test belongs to the privileged step")
+          result = unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(ordinary))
+          raise SystemExit(not result.wasSuccessful())
+          '
 
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
@@ -241,7 +283,10 @@ jobs:
   integration-tests:
     name: integration-tests
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The recipe contract now includes the full installer and containment
+    # regression suites. Keep their per-operation deadlines; allow the job to
+    # report all failures instead of terminating mid-suite at ten minutes.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -251,8 +296,15 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
 
-      - name: Install PyYAML (for compose validator)
-        run: pip install --user pyyaml
+      - name: Install Compose and hook-selection test dependencies
+        run: |
+          set -euo pipefail
+          # Tests intentionally isolate HOME and user-site imports. Keep their
+          # tools in a venv whose imports do not depend on the runner's HOME.
+          python3 -m venv "$RUNNER_TEMP/odysseus-integration"
+          "$RUNNER_TEMP/odysseus-integration/bin/python" -m pip install \
+            'PyYAML==6.0.3' 'pre-commit==3.8.0'
+          echo "$RUNNER_TEMP/odysseus-integration/bin" >> "$GITHUB_PATH"
 
       - name: Validate NATS config structure
         run: python3 scripts/validate_nats_config.py
@@ -391,8 +443,42 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
 
+      - name: Install hook containment dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends bubblewrap apparmor-profiles patch
+          # Use the distribution's purpose-built profile. It permits sandbox
+          # setup and restricts child capabilities; do not disable the global
+          # user-namespace restriction or load an unconfined interpreter profile.
+          sudo install -m 0644 \
+            /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
+            /etc/apparmor.d/bwrap-userns-restrict
+          # Upstream compatibility fix for anonymous bind-mounted snapshots:
+          # https://gitlab.com/apparmor/apparmor/-/merge_requests/1272
+          # Mediate deleted files under the existing rules; keep every rule,
+          # profile transition, and child capability denial unchanged.
+          sudo patch --batch --forward --fuzz=0 \
+            /etc/apparmor.d/bwrap-userns-restrict \
+            < configs/ci/bwrap-mediate-deleted.patch
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+          /usr/bin/bwrap --unshare-all --die-with-parent --cap-drop ALL \
+            --ro-bind / / -- /usr/bin/true
+
+      - name: Diagnose Pixi interpreter containment capabilities
+        run: pixi run python -I scripts/diagnose-ci-containment.py
+
       - name: Run validate-configs (canonical build artifact for meta-repo)
         run: just validate-configs
+
+      - name: Report sandbox-specific kernel denials after a build failure
+        if: ${{ failure() }}
+        timeout-minutes: 1
+        run: |
+          set -euo pipefail
+          # Read only this ephemeral runner's recent sandbox denials. Do not
+          # change AppArmor policy or print unrelated kernel/audit records.
+          sudo journalctl --dmesg --since '-10 minutes' --no-pager --output=cat \
+            | awk '/apparmor="DENIED"/ && /bwrap|odysseus-precommit/ { print }'
 
   schema-validation:
     name: schema-validation
