@@ -1340,6 +1340,28 @@ process_is_gone() {
     return 1
 }
 
+info "an unchanged heartbeat cannot prove process extinction"
+oracle_heartbeat="$TMP/extinction-oracle.heartbeat"
+printf '%s\n' unchanged > "$oracle_heartbeat"
+/bin/sleep 30 &
+oracle_child=$!
+oracle_reported_gone=false
+if process_is_gone "$oracle_child" "$oracle_heartbeat"; then
+    oracle_reported_gone=true
+fi
+oracle_child_alive=false
+if kill -0 "$oracle_child" 2>/dev/null; then
+    oracle_child_alive=true
+    kill -TERM "$oracle_child"
+fi
+if ! wait "$oracle_child" 2>/dev/null; then :; fi
+if [ "$oracle_child_alive" = true ] && [ "$oracle_reported_gone" = false ]; then
+    pass "a live child remains live evidence despite an unchanged heartbeat"
+else
+    fail "extinction oracle accepted stalled progress or lacked a live control child"
+fi
+unset oracle_heartbeat oracle_child oracle_reported_gone oracle_child_alive
+
 info "install help limits doctor to safe local-state repairs"
 run_doctor --help
 if [ "$DOCTOR_STATUS" -eq 0 ] \
