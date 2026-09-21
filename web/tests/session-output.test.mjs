@@ -194,9 +194,7 @@ test("exact private text, nonzero exit, null and empty aggregates remain distinc
     calls.every((call) => call.method === "GET" && call.redirect === "error"),
   );
   assert.ok(
-    calls.every(
-      (call) => call.headers.Authorization === "Bearer fixture",
-    ),
+    calls.every((call) => call.headers.Authorization === "Bearer fixture"),
   );
   assert.equal(JSON.stringify(result).includes("Bearer fixture"), false);
 });
