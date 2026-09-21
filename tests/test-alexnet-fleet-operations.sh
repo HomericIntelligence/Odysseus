@@ -2651,7 +2651,7 @@ if run_train train-result-mount-race env \
     ODYSSEUS_TEST_TRAIN_VICTIM_ROOT="$mount_victim"; then
     fail "train accepted a changed result binding after container launch"
 elif [ ! -e "$mount_victim_result/container-result.txt" ] \
-     && grep -Eq ' -v /(?:proc/[0-9]+|dev)/fd/[0-9]+:/results:Z ' \
+     && grep -Eq ' -v /(proc/[0-9]+|dev)/fd/[0-9]+:/results:Z ' \
          "$fixture_root/train-result-mount-race.effects"; then
     pass "train binds the result mount and reports an ancestor replacement"
 else
