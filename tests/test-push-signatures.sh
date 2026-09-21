@@ -5657,7 +5657,7 @@ def independent_git_metadata_behavior(subject, base):
     return True
 
 
-def external_worktree_mount_behavior(subject, base):
+def external_worktree_mount_behavior(subject, base, git):
     """Bind an actual external worktree without replacing the run boundary."""
 
     if not sys.platform.startswith("linux"):
@@ -5923,7 +5923,7 @@ def timeout_and_sigchld_preflight_behavior(subject, base):
     return True
 
 
-def aggregate_budget_behavior(subject, base):
+def aggregate_budget_behavior(subject, base, git):
     """Parent-side discovery has aggregate count/byte limits and one deadline."""
 
     required = (
@@ -6405,12 +6405,12 @@ def main(argv):
             subject, base
         ),
         "external-worktree-mounts": lambda: external_worktree_mount_behavior(
-            subject, base
+            subject, base, git
         ),
         "timeout-sigchld-preflight": lambda: timeout_and_sigchld_preflight_behavior(
             subject, base
         ),
-        "aggregate-budgets": lambda: aggregate_budget_behavior(subject, base),
+        "aggregate-budgets": lambda: aggregate_budget_behavior(subject, base, git),
         "untrusted-interpreter": lambda: untrusted_interpreter_behavior(
             subject, base
         ),
