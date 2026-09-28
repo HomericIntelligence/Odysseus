@@ -325,6 +325,21 @@ and must execute normal Codex tools, return independently reviewed output, and
 show its ownership and observed messages in Odysseus. Research intake is a
 separate entry path and is not a prerequisite for an already-planned issue.
 
+The immediate integration target is that single visible working agent, with
+capacity one. Agamemnon owns registration, durable admission, and the issue
+claim; Keystone and `fleetd` deliver the admitted start and subsequent input;
+Hephaestus executes the model and tools inside the qualified boundary. Odysseus
+projects the canonical owner and actual activity, and displays observed message
+flow. Registering a worker or creating a conversation alone does not demonstrate
+work. Subordinate build offload and cluster allocation are separate capabilities
+and do not precede this checkpoint unless the selected issue requires them.
+
+Hephaestus owns the integration between its contained runtime and execution
+admission. Composing or starting the supervisor, attachment, and provider does
+not authorize a session. The admission path must check the verified owned
+boundary and selected assignment, and normal model/tool routing must be
+measured before claiming a working agent.
+
 The three-site milestone uses one agent on the laptop, one on M1, and one on M2.
 It must demonstrate a dependency handoff between hosts and a tested reconnect
 with durable ownership and replay. These milestones establish evidence for the

@@ -1,6 +1,6 @@
 # Homeric Fleet implementation plan
 
-Updated: 2026-09-18. Status: implementation plan; real-worker acceptance has not run.
+Updated: 2026-09-19. Status: implementation plan; real-worker acceptance has not run.
 
 This plan integrates the laptop/SSH/Slurm operational requirements with the
 [Odysseus architecture](architecture.md) and the subsequently approved Fleet
@@ -518,6 +518,12 @@ pins only after explicit integration sign-off.
 
 ### Immediate delivery order
 
+The immediate priority is **one real agent doing admitted work and visible in
+Odysseus**. Complete only the execution, transport, and dashboard connections
+needed for that result before expanding the fleet. Subordinate build offload,
+additional research flows, cluster deployment, and capacity experiments remain
+later work unless the selected issue actually requires them.
+
 Prove a small working multi-agent system before capacity experiments. Use this
 order to select the next work. The workstreams below remain the full scope;
 research interviews, broader dashboards, and scheduling do not have to precede
@@ -535,6 +541,36 @@ known toolchain. Use Agamemnon's existing planned-issue entry point. Do not requ
 Nestor research intake or Telemachy epic creation for an already-planned issue.
 Retain the research and interactive flows as delivery requirements and validate
 them before final acceptance.
+
+Establish the first visible agent through this sequence:
+
+1. Complete the production integration from verified contained execution to
+   worker admission, with current-commit review and CI. Startup composition
+   alone does not enable execution; the existing worker guard rejects Linux.
+   Qualify capacity one, the pinned Codex runtime, independently established
+   authentication, one isolated workspace, and normal model/tool routing.
+   Admission must check the owned execution boundary and selected assignment;
+   unsupported or unverified execution remains rejected.
+2. Register its pool and worker through Agamemnon. Admit the reviewed issue and
+   retain its confirmed durable task claim, session, execution, and generation.
+3. Deliver the admitted `start` through Keystone and `fleetd`, then deliver a
+   separately admitted `input` to begin work. A start acknowledgment establishes
+   a conversation; actual model and tool events establish activity.
+4. Connect the Odysseus backend to the controller's five complete Fleet resource
+   collections and the gateway's actual observation stream. Reuse the existing
+   ownership view, session controls, and message-flow display.
+5. Observe the same issue, logical agent, worker, host, session, and generation
+   in the dashboard while tools execute. Confirm that activity becomes stale
+   when worker activity facts cease. Separately check that loss of the flow
+   stream is visible and that received message traces correlate with that owner.
+6. Retain the resulting source changes and actual checks, obtain independent
+   review, and reconcile the outcome through Agamemnon. Visibility alone does
+   not establish issue completion or independently approved work.
+
+The first visibility checkpoint does not require remote build offload or a
+cluster allocation. Any required local checks must still run in the qualified
+execution environment. A registered worker card, an idle conversation, or a
+manually inserted activity record does not satisfy the working-agent checkpoint.
 
 Record the tested source commits, image digest, issue and task identifiers, claim
 generation, worker and host identity, conversation identifier, and event cursors.
