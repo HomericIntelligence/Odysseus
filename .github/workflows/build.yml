@@ -41,7 +41,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            sudo git curl ca-certificates bash build-essential libssl-dev pkg-config zlib1g-dev
+            sudo git curl ca-certificates bash python3 build-essential libssl-dev pkg-config zlib1g-dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive

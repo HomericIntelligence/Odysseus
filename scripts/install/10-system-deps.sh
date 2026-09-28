@@ -34,7 +34,8 @@ APT_PKGS=(
 # Detect whether apt-get is available
 if ! has_cmd apt-get; then
     check_warn "apt-get not available — skipping system package installation (non-Debian host)"
-    return 0 2>/dev/null || exit 0
+    if (return 0 2>/dev/null); then return 0; fi
+    exit 0
 fi
 
 # Collect missing packages.

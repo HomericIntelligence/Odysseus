@@ -16,7 +16,8 @@ section "Documentation Tools"
 
 if ! has_cmd pixi; then
     check_fail "pixi not found — install it first (production install phase 20)"
-    return 0 2>/dev/null || exit 0
+    if (return 0 2>/dev/null); then return 0; fi
+    exit 0
 fi
 
 # Repos expected to have docs tooling (mkdocs, sphinx, etc.)

@@ -1,5 +1,5 @@
 # Milestone 4 — full pipeline dogfood across the ecosystem.
-# Epic home: Odysseus (coordination hub). See ADR-020 section 9 step M4.
+# Epic home: Odysseus (coordination hub). See Proposed ADR-020 section 9 step M4.
 
 apiVersion: telemachy/v1
 metadata:
@@ -7,10 +7,28 @@ metadata:
   description: >-
     Mesh drives real HomericIntelligence backlog end to end. Proteus builds
     and pushes both mesh vessel variants on Hephaestus merges; Hermes bridges
-    PR merged webhooks into hi.pipeline to trigger learn. Exit: at least one
-    real issue merged with the mesh only; single-device loop idle.
+    authenticated PR-merged webhooks into bounded hi.pipeline event facts for
+    contextual post-merge processing. Exit: at least one real issue merged
+    with the mesh only; the supported single-device fallback remains available
+    but is not used for the dogfood issue.
   adr: "020"
   epic_home: Odysseus
+  manual_gate_subject: Execute exact-pin mesh-only dogfood and record terminal evidence
+  manual_gate_description: >-
+    Hold this operator gate outside automatic mesh dispatch. First verify M4.2
+    through M4.7: each owning PR has the required review and green CI, and
+    each merge or release SHA is present in the exact integrated Odysseus
+    pins. Record the approval and pin evidence. Then run one real
+    HomericIntelligence backlog issue through the mesh-only path and verify
+    routing, the three-heavy-worker limit, timeouts, isolation, tool scopes,
+    restart and retry behavior, issue binding, and the branch and PR
+    lifecycle. Record actual terminal receipts. A separate legacy-harness
+    retirement PR remains ineligible until this gate is complete. Allowed
+    effects are the approved issue, branch, pull request, and evidence updates
+    required for this dogfood run. A gitlink move is a separate integration
+    event that requires its own exact-commit approval and PR; it is not an
+    effect of this gate. Complete only after one exact-pin mesh-only issue
+    merge has verified terminal evidence.
 agents:
   - name: loop-planner
     program: claude-code
@@ -23,19 +41,85 @@ teams:
       - subject: Requirements and invariants for dogfooded operation
         description: >-
           Capture: every milestone epic from here on is worked BY the mesh
-          (fallback to single-device loop per issue is allowed and must be
-          recorded as a comment marker); CI evidence rules per ADR-014 apply
-          to all mesh-produced PRs; legacy claude-myrmidon harness migrates
-          or retires; cross-host hermes-hub to epimetheus check included.
+          (fallback to the supported single-device loop per issue is allowed
+          and must be recorded as a comment marker); every mesh-produced PR
+          must satisfy its owning repository's binding policies and retained
+          CI gates, while Proposed ADR-014 records broader evidence-integrity
+          rationale; both legacy myrmidon harnesses remain live through
+          exact-pin parity and one real M4 dogfood run, with retirement
+          reserved for a later, separate human-reviewed change. When the
+          dogfood topology spans hosts, require an authenticated,
+          operator-owned cross-host health proof; the retired generic
+          hermes-hub launcher is not evidence. Change only the versioned
+          Odysseus requirements artifact; do not change runtime behavior.
+          Complete when focused validation proves that each safety and
+          evidence boundary is recorded.
         assign_to: loop-planner
-      - subject: Plan rollout decomposition (advise-gated)
+      - subject: Runbook docs/runbooks/operate-mesh-loop.md
         description: >-
-          Run athena:advise planning mode first. Decompose into child issues:
-          Proteus vessel CI plus agamemnon-apply dispatch; Hermes merged
-          webhook bridge publishing the learn trigger; Argus stage-latency,
-          budget-exhaustion, merger-bounce dashboards; runbook
-          operate-mesh-loop.md; deprecation note for the single-device entry
-          point; first real backlog issue selected as dogfood target.
+          Contextual runbook for operating the mesh loop after its exact pins,
+          prerequisites, and operator authority are bound. Change only the
+          focused runbook and its executable examples; do not change runtime
+          defaults. Complete when documentation checks pass and every ordered
+          operation has an explicit prerequisite, allowed effect, success,
+          failure, stopping, and cleanup outcome.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for dogfooded operation
+      - subject: Select and track first real dogfood backlog issue
+        description: >-
+          Select the first real HomericIntelligence backlog issue to be merged
+          with the mesh only and track it as the M4 exit-criterion dogfood
+          target. Limit effects to the selected issue's tracking metadata and
+          evidence links; do not start execution in this task. Complete when
+          one eligible issue is linked and its exact scope, pins, and entry
+          conditions are recorded.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for dogfooded operation
+      - subject: Vessel CI build/push on Hephaestus merges plus agamemnon-apply dispatch
+        description: >-
+          Proteus builds and pushes both mesh vessel variants on Hephaestus
+          merges, then triggers agamemnon-apply so the fleet reconciles.
+          Change only approved Proteus build resources, dispatch integration,
+          and tests; preserve image, model, and lane defaults. Complete when
+          CI proves both builds, one authenticated dispatch, failure
+          propagation, and reconciliation at the emitted pins.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for dogfooded operation
+      - subject: Hermes merged-PR webhook bridge publishing the learn trigger
+        description: >-
+          Bridge authenticated GitHub PR-merged webhooks into a bounded
+          hi.pipeline event fact; the downstream policy selects athena:learn
+          only for a reusable, evidence-backed lesson that is not already
+          present. Change only the Hermes bridge, contextual selector,
+          configuration, and tests; retain HMAC and write-authority boundaries.
+          Complete when controlled tests publish one valid merged-event fact,
+          reject invalid or duplicate webhook events, invoke learn for one
+          eligible lesson, and reject ineligible and already-known lessons.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for dogfooded operation
+      - subject: Stage-latency budget-exhaustion merger-bounce dashboards
+        description: >-
+          Argus dashboards for stage latency, budget exhaustion, and merger
+          bounce during mesh-driven operation. Change only dashboard resources
+          and their validation; do not mutate source telemetry. Complete when
+          fixture-backed queries show all three signals and dashboard checks
+          pass.
+        assign_to: loop-planner
+        blocked_by:
+          - Requirements and invariants for dogfooded operation
+      - subject: Single-device entry-point support and mode-selection note
+        description: >-
+          Document the supported single-device hephaestus-automation-loop
+          fallback and explicit mode selection after mesh parity. Both modes
+          retain their shared labels and journal; Proposed ADR-020 section 9
+          records the target fallback strategy. Change only focused
+          documentation and executable examples; do not change runtime mode
+          defaults. Complete when checks prove that an operator can select
+          either supported mode without changing the shared journal contract.
         assign_to: loop-planner
         blocked_by:
           - Requirements and invariants for dogfooded operation

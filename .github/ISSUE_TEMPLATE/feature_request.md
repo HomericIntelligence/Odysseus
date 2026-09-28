@@ -6,17 +6,45 @@ labels: enhancement
 assignees: ''
 ---
 
-## Objective
-<!-- What should be improved and why -->
+## Outcome
 
-## Motivation
-<!-- Why is this needed? What problem does it solve? -->
+<!-- What observable user, operator, or system outcome should improve? -->
 
-## Deliverables
-- [ ] 
+## Context
 
-## Success Criteria
-- [ ] 
+<!-- What current behavior or evidence motivates the change? -->
 
-## Priority
-LOW / MEDIUM / HIGH — reason
+## Scope
+
+<!-- Identify included deliverables and explicitly excluded adjacent work. -->
+
+## Constraints and protected boundaries
+
+<!--
+List compatibility, security, accepted-governance, workflow, canonical-config,
+gitlink, desired-state, or remote-write boundaries that must remain intact.
+-->
+
+## Allowed effects
+
+<!-- What files, interfaces, systems, or data may implementation change? -->
+
+## Relevant checks
+
+<!-- Which focused behavioral, schema, security, or documentation checks apply? -->
+
+- [ ]
+
+## Observable completion
+
+<!-- State externally verifiable completion conditions, not implementation activity. -->
+
+- [ ]
+
+## Stopping conditions
+
+<!-- What ambiguity, risk, unavailable evidence, or required approval must pause work? -->
+
+## References
+
+<!-- Link related issues, decisions, schemas, or authoritative documentation. -->

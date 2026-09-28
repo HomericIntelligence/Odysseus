@@ -2,6 +2,11 @@
 
 **Status:** Proposed
 
+> **Proposal status:** The lane, placement, client wiring, and router policies
+> below are desired state. They are not a deployed or binding architecture
+> claim; current images, manifests, service configuration, and live readbacks
+> remain authoritative.
+
 ---
 
 ## Context
@@ -11,9 +16,10 @@ component inventory in [architecture.md](../architecture.md)):
 
 - **Myrmidons** are Claude Code sessions that call `api.anthropic.com`
   (`ANTHROPIC_API_KEY` / OAuth); every prompt and every dollar leaves the mesh.
-- **Nestor, Agamemnon, and Keystone** are C++ services that, by
-  [ADR-013](013-hmas-mesh-wire-contracts.md), never run LLM work — LLM work
-  happens in myrmidon agent processes.
+- **Nestor, Agamemnon, and Keystone** have no LLM execution path in their
+  pinned implementations; the current component inventory in
+  [architecture.md](../architecture.md) records their implemented service and
+  transport roles. Proposed ADR-013 describes a possible future mesh boundary.
 - **Odyssey** is a Mojo *training* framework with no serving path — trained
   checkpoints (AlexNet-CIFAR10, MobileNetV1, LeNet-5) have no deployment
   route into the mesh.
@@ -28,10 +34,11 @@ CPU, CUDA, ROCm, Metal, and AMD NPU. It ships as a container
 (`ghcr.io/lemonade-sdk/lemonade-server`), runs as an unprivileged user, and
 supports API-key authentication via `LEMONADE_API_KEY`.
 
-Measured evidence (2026-08-12, epimetheus; see
-[ADR-014](014-runnable-evidence-for-metric-claims.md) for the evidence
-policy): the spike container served `Qwen3-0.6B-GGUF` (364.5 MB, Q4_0) on the
-4-core i5-6600K CPU backend with the following results.
+This proposal records measurements reported from a 2026-08-12 epimetheus
+spike, in which the container served `Qwen3-0.6B-GGUF` (364.5 MB, Q4_0) on the
+4-core i5-6600K CPU backend. The binding evidence-integrity policy is in
+[`AGENTS.md`](../../AGENTS.md); Proposed ADR-014 supplies related design
+context. The recorded results are:
 
 | Metric | Value |
 |---|---|
@@ -42,40 +49,47 @@ policy): the spike container served `Qwen3-0.6B-GGUF` (364.5 MB, Q4_0) on the
 | Auth without `LEMONADE_API_KEY` | HTTP 401 (enforced) |
 | Cross-host over Tailscale (apollo → epimetheus) | HTTP 200 in 1.6 ms |
 
-The spike also surfaced two fleet facts this ADR encodes: rootless podman
-3.4.2 on epimetheus cannot port-publish (`-p` connections reset — the
-known rootlessport issue the [AlexNet fleet runbook](../runbooks/alexnet-mesh-fleet.md)
-already documents), so the working deployment is `--network=host`; and the
-host carries a GTX 1080 that the stock CPU-only image does not use.
+The same historical spike report also recorded that rootless Podman 3.4.2 on
+epimetheus could not port-publish (`-p` connections reset), so that session
+used `--network=host`; it also reported a GTX 1080 that the stock CPU-only
+image did not use. No durable run output was retained for those observations,
+so activation must re-verify the effective runtime, network, and accelerator
+state rather than treating this proposal as operational evidence.
 
 ## Decision
 
-**Lemonade is adopted as the mesh's private inference lane — an optional,
-additive serving substrate for open-weight models and OpenAI-compatible
-client flows.** It does not replace the Anthropic cloud lane for Claude models
-(proprietary weights); it replaces the cloud API for everything that can run
-on open weights, and it gives Odyssey-trained models a deployment path.
+**If accepted, Lemonade becomes the mesh's private inference lane — an
+optional, additive serving substrate for open-weight models and
+OpenAI-compatible client flows.** It does not replace the Anthropic cloud lane
+for Claude models (proprietary weights); it replaces the cloud API for
+everything that can run on open weights, and it gives Odyssey-trained models a
+deployment path.
 
 ### 1. Placement
 
 - **Vessel**: a pinned `ghcr.io/lemonade-sdk/lemonade-server` container in
   AchaeanFleet (digest-pinned per repo convention), one instance per fleet
   host that should serve models, running on the `homeric-mesh` Podman network.
-- **Networking**: `--network=host` where rootless port publishing is broken
-  (verified on epimetheus) — the same pattern the fleet training scripts use;
-  otherwise the standard `-p 127.0.0.1:13305:13305` host binding. The API is
-  reachable **only inside the tailnet**; no host interface is exposed to the
-  public internet (per [architecture.md](../architecture.md) network
-  topology).
-- **Auth**: `LEMONADE_API_KEY` is mandatory on every instance (verified
-  enforced server-side). Keys are supplied via environment at schedule time,
-  never committed.
+- **Networking**: `--network=host` only where an activation-time check proves
+  rootless port publishing is broken; otherwise use an explicit loopback or
+  operator-approved private-interface port binding. Host networking does not
+  imply tailnet-only exposure: activation requires a verified service bind,
+  host firewall rule, and local plus remote reachability readback proving that
+  no public interface accepts the port.
+- **Auth**: `LEMONADE_API_KEY` is mandatory on every instance and its
+  server-side enforcement must be proved at activation. The historical spike
+  report recorded an HTTP 401 without the key, but no durable receipt is
+  retained. Keys are supplied via environment at schedule time, never
+  committed.
 - **Persistence**: named volumes persist the HuggingFace model cache, llama
   binaries, and recipe config (`lemonade-cache`, `lemonade-llama`,
   `lemonade-recipe`) so models survive container recreation.
-- **Backend selection**: CPU backend by default on the current Intel fleet
-  (`config.json` in the recipe volume). When AMD NPU (XDNA2) or GPU-capable
-  hosts join, ROCm/Vulkan/NPU backends are enabled per host, and
+- **Backend selection**: CPU backend by default for the initial lane
+  (`config.json` in the recipe volume). The historical report says epimetheus
+  has a GTX 1080, but the reported stock image did not use it; any GPU path
+  requires separate compatibility and runtime proof. When compatible AMD NPU
+  (XDNA2) or GPU serving paths are established, ROCm/Vulkan/NPU backends are
+  enabled per host, and
   **multi-node VRAM pooling via llama.cpp RPC** (`rpc-server`, port `50053`)
   becomes the mechanism for serving models larger than any single host —
   controller + workers over the tailnet, with the RPC port bound to the
@@ -90,17 +104,19 @@ namespace:
 
 | Subject | Publisher | Consumers | Meaning |
 |---|---|---|---|
-| `hi.agents.{host}.lemonade.created` | Hermes | Argus, Telemachy | Instance registered, healthy |
-| `hi.agents.{host}.lemonade.updated` | Hermes | Argus | Model load / backend / capacity change |
-| `hi.agents.{host}.lemonade.deleted` | Hermes | Argus, Telemachy | Instance removed |
+| `hi.agents.{host}.lemonade.created` | Proposed deployment controller through Hermes | Argus, Telemachy | Instance registered, healthy |
+| `hi.agents.{host}.lemonade.updated` | Proposed deployment controller through Hermes | Argus | Model load / backend / capacity change |
+| `hi.agents.{host}.lemonade.deleted` | Proposed deployment controller through Hermes | Argus, Telemachy | Instance removed |
 | `hi.logs.lemonade.{host}` | Lemonade sidecar | Argus/Loki | Structured serving logs |
 | Prometheus scrape (metrics) | Lemonade exporter | Argus | TTFT, throughput, tokens/s, model-loaded, RPC worker count |
 
-These reuse the existing `hi.agents.{host}.{name}.*` grammar
-([nats-subjects.md](../nats-subjects.md)) and the `hi.logs.>` namespace — no
-new top-level namespace is introduced. Hermes publishes the lifecycle events
-from its existing agent-registration path; metrics are scraped into the Argus
-Grafana dashboards alongside all other components.
+These would reuse the existing `hi.agents.{host}.{name}.*` grammar
+([nats-subjects.md](../nats-subjects.md)) and the `hi.logs.>` namespace—no new
+top-level namespace is proposed. Hermes currently routes supported inbound
+webhook events; it does not discover or register Lemonade instances. An
+implemented deployment controller would own lifecycle observation and submit
+schema-valid events through Hermes's authenticated webhook boundary. Metrics
+would be scraped into Argus only after the exporter and dashboard changes land.
 
 ### 3. Client wiring
 
@@ -118,7 +134,7 @@ Grafana dashboards alongside all other components.
 - **Scylla** gains a local-vs-cloud ablation axis (same prompt, local
   open-weight vs cloud Claude judge) on its T0–T6 tiers.
 
-### 4. ADR-013 alignment (normative)
+### 4. Proposed ADR-013 alignment
 
 Lemonade is a **serving sidecar — compute substrate, not orchestration**. The
 ADR-013 principle that *LLM work never runs inside the C++ services*
@@ -136,8 +152,10 @@ Claude cloud lane remains the default path).
 - **Privacy and sovereignty**: prompts and completions for open-weight
   workloads never leave the mesh; org-trained models can be served from
   in-org hardware.
-- **Latency and cost**: measured ~35 ms TTFT and ~51 tok/s on a 2015-era 4-core
-  CPU with zero marginal per-token cost; no public-internet round trip.
+- **Latency and cost**: an unverified historical spike report estimated about
+  35 ms TTFT and 51 tok/s on a 2015-era 4-core CPU with no marginal per-token
+  charge. Those figures are not current evidence and must be reproduced before
+  use in an operational comparison.
 - **Closes the train → serve loop**: Odyssey checkpoints gain a real
   deployment path (ONNX) instead of dying in `weights/` directories.
 - **New capabilities**: TTS/STT (whisper.cpp, Kokoro) can upgrade the
@@ -156,13 +174,17 @@ Claude cloud lane remains the default path).
   they require a separate ONNX Runtime sidecar vessel. The `.onnx` artifact
   is Lane-ready regardless, so this closes as Lemonade adds generic ONNX
   serving.
-- **Hardware heterogeneity**: the current fleet is Intel CPU-only; the AMD
-  NPU/GPU and RPC-pooling value awaits capable hardware joining the mesh.
+- **Hardware heterogeneity**: no retained evidence proves an active GPU, NPU,
+  or RPC-pooling serving path. The historical report says a GTX 1080 is
+  installed but unused by the tested image; AMD NPU and multi-node RPC
+  capacity remain future work.
 - **Third-party-maintained image**: digest pins and release tracking are
   required (upstream is community/AMD-managed, not in-org).
 - **Security hygiene burden**: an unauthenticated or wide-open instance is a
-  privacy risk; `LEMONADE_API_KEY` + tailnet-only binding are mandatory and
-  should be CI/lint-checked (the vessel defaults to no auth).
+  privacy risk. `LEMONADE_API_KEY` plus an explicit loopback or
+  operator-approved private bind is mandatory; activation also requires live
+  firewall and reachability readback because static validation cannot prove
+  the effective host exposure (the vessel defaults to no auth).
 
 **Neutral:**
 
@@ -204,10 +226,10 @@ the role of *client-side* per-request model selection (no fleet client has
 written that logic yet), keeping model-choice policy server-side. It does not
 overlap NATS routing, Hermes message delivery, Agamemnon planning, or Keystone
 task dispatch — those operate at the infrastructure/event layer, while the
-Router selects a model within a single Lemonade instance. The ADR-013
-*LLM-never-in-C++* principle is unchanged: router policies are authored
+Router selects a model within a single Lemonade instance. This proposal keeps
+LLM execution outside the pinned C++ services: router policies are authored
 configuration, and the lane remains non-gating with the Anthropic lane as
-default.
+default. Proposed ADR-013 describes the related future mesh boundary.
 
 ## References
 
@@ -218,16 +240,20 @@ default.
 - [ADR-008](008-nats-tls-encryption.md) / [ADR-009](009-nats-authentication.md)
   / [ADR-010](010-nats-mtls-subject-scoped-auth.md) — transport security for
   the new lifecycle events
-- [ADR-013](013-hmas-mesh-wire-contracts.md) — wire contracts; the
-  LLM-never-in-C++ principle this ADR preserves
-- [ADR-014](014-runnable-evidence-for-metric-claims.md) — evidence policy for
-  the measured spike numbers
+- [ADR-013](013-hmas-mesh-wire-contracts.md) — proposed wire contracts and
+  future LLM execution boundary
+- [ADR-014](014-runnable-evidence-for-metric-claims.md) — proposed runnable
+  evidence design related to the recorded spike numbers
+- [`AGENTS.md`](../../AGENTS.md) — binding repository evidence-integrity policy
 - [architecture.md](../architecture.md) — component inventory and network
   topology
 - [nats-subjects.md](../nats-subjects.md) — `hi.agents.{host}.{name}.*` grammar
 - [Lemonade docs](https://lemonade-server.ai/docs/) /
   [github.com/lemonade-sdk/lemonade](https://github.com/lemonade-sdk/lemonade) —
   container image, API, backends
-- Spike evidence: 2026-08-12 epimetheus run — `ghcr.io/lemonade-sdk/lemonade-server`,
-  `Qwen3-0.6B-GGUF`, `--network=host`, `LEMONADE_API_KEY` (commands captured
-  in the session's `/tmp/lemonade-*` scripts)
+- Historical spike report: 2026-08-12 epimetheus session using
+  `ghcr.io/lemonade-sdk/lemonade-server`, `Qwen3-0.6B-GGUF`,
+  `--network=host`, and `LEMONADE_API_KEY`. Its commands were described as
+  session-local `/tmp/lemonade-*` scripts; no retained output or independent
+  re-execution receipt is available, so the report carries no evidentiary
+  weight for completion or deployment.

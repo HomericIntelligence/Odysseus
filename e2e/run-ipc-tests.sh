@@ -17,12 +17,75 @@ SINGLE_TEST=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --topology) TOPOLOGY="$2"; shift 2 ;;
-        --category) CATEGORY="$2"; shift 2 ;;
-        --test)     SINGLE_TEST="$2"; shift 2 ;;
+        --topology)
+            if [ "$#" -lt 2 ] || [ -z "${2:-}" ] || [[ "${2:-}" = --* ]]; then
+                echo "ERROR: --topology requires a value" >&2
+                exit 2
+            fi
+            TOPOLOGY="$2"
+            shift 2
+            ;;
+        --category)
+            if [ "$#" -lt 2 ] || [ -z "${2:-}" ] || [[ "${2:-}" = --* ]]; then
+                echo "ERROR: --category requires a value" >&2
+                exit 2
+            fi
+            CATEGORY="$2"
+            shift 2
+            ;;
+        --test)
+            if [ "$#" -lt 2 ] || [ -z "${2:-}" ] || [[ "${2:-}" = --* ]]; then
+                echo "ERROR: --test requires a value" >&2
+                exit 2
+            fi
+            SINGLE_TEST="$2"
+            shift 2
+            ;;
         *) echo "Unknown arg: $1" >&2; exit 1 ;;
     esac
 done
+
+# Discover a non-empty test inventory before any topology effect.
+TESTS_DIR="$SCRIPT_DIR/tests"
+CATEGORIES=()
+case "$CATEGORY" in
+    all) CATEGORIES=(fault perf protocol security chaos) ;;
+    fault|perf|protocol|security|chaos) CATEGORIES=("$CATEGORY") ;;
+    *)
+        echo "ERROR: unknown category '$CATEGORY'" >&2
+        exit 2
+        ;;
+esac
+
+if [ -n "$SINGLE_TEST" ] \
+   && ! [[ "$SINGLE_TEST" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    echo "ERROR: unknown test '$SINGLE_TEST' for category '$CATEGORY'" >&2
+    exit 2
+fi
+
+TEST_SCRIPTS=()
+for category in "${CATEGORIES[@]}"; do
+    cat_dir="$TESTS_DIR/$category"
+    [ -d "$cat_dir" ] || continue
+    if [ -n "$SINGLE_TEST" ]; then
+        script="$cat_dir/${SINGLE_TEST}.sh"
+        [ -f "$script" ] && TEST_SCRIPTS+=("$script")
+    else
+        for script in "$cat_dir"/*.sh; do
+            [ -f "$script" ] || continue
+            TEST_SCRIPTS+=("$script")
+        done
+    fi
+done
+
+if [ "${#TEST_SCRIPTS[@]}" -eq 0 ]; then
+    if [ -n "$SINGLE_TEST" ]; then
+        echo "ERROR: unknown test '$SINGLE_TEST' for category '$CATEGORY'" >&2
+    else
+        echo "ERROR: no test scripts found for category '$CATEGORY'" >&2
+    fi
+    exit 1
+fi
 
 export IPC_TOPOLOGY="$TOPOLOGY"
 
@@ -37,9 +100,28 @@ echo "╚═══════════════════════�
 
 # ─── Start topology ───────────────────────────────────────────────────────────
 
+cleanup_topology_on_exit() {
+    local prior_status="$1" cleanup_status=0
+    trap - EXIT
+    if topology_stop "$TOPOLOGY"; then
+        cleanup_status=0
+    else
+        cleanup_status=$?
+        printf 'ERROR: topology cleanup failed for %s (status %d)\n' \
+            "$TOPOLOGY" "$cleanup_status" >&2
+    fi
+    if [ "$prior_status" -ne 0 ]; then
+        exit "$prior_status"
+    fi
+    if [ "$cleanup_status" -ne 0 ]; then
+        exit "$cleanup_status"
+    fi
+    exit 0
+}
+
 # T4 expects the stack to already be running (via just e2e-up)
 if [ "$TOPOLOGY" != "t4" ]; then
-    trap 'topology_stop "$TOPOLOGY"' EXIT
+    trap 'cleanup_topology_on_exit "$?"' EXIT
     topology_start "$TOPOLOGY" || { echo "Failed to start topology $TOPOLOGY" >&2; exit 1; }
 fi
 
@@ -49,7 +131,6 @@ topology_wait_healthy "$TOPOLOGY" || { echo "Topology not healthy" >&2; exit 1; 
 export AGAMEMNON_PORT NATS_PORT NATS_MONITOR_PORT HERMES_PORT IPC_TOPOLOGY
 
 # ─── Discover and run tests ──────────────────────────────────────────────────
-TESTS_DIR="$SCRIPT_DIR/tests"
 TOTAL_PASS=0
 TOTAL_FAIL=0
 
@@ -67,29 +148,16 @@ run_test_script() {
     fi
 }
 
-# Collect test scripts
-CATEGORIES=()
-if [ "$CATEGORY" = "all" ]; then
-    CATEGORIES=(fault perf protocol security chaos)
-else
-    CATEGORIES=("$CATEGORY")
-fi
-
-for cat in "${CATEGORIES[@]}"; do
-    cat_dir="$TESTS_DIR/$cat"
-    [ -d "$cat_dir" ] || continue
-
-    info "Category: $cat"
-
-    if [ -n "$SINGLE_TEST" ]; then
-        script="$cat_dir/${SINGLE_TEST}.sh"
-        [ -f "$script" ] && run_test_script "$script"
-    else
-        for script in "$cat_dir"/*.sh; do
-            [ -f "$script" ] || continue
-            run_test_script "$script"
-        done
+# Run only the inventory that was validated before topology startup.
+current_category=""
+for script in "${TEST_SCRIPTS[@]}"; do
+    category_path="${script%/*}"
+    script_category="${category_path##*/}"
+    if [ "$script_category" != "$current_category" ]; then
+        info "Category: $script_category"
+        current_category="$script_category"
     fi
+    run_test_script "$script"
 done
 
 # ─── Summary ──────────────────────────────────────────────────────────────────

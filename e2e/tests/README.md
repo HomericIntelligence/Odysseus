@@ -69,4 +69,4 @@ Maps each scenario test in `e2e/tests/` to the scenario IDs and the system prope
 | `malformed-nats.sh` | Malformed NATS Messages | D11, D12 | services ignore garbage NATS messages gracefully | Any |
 | `malformed-rest.sh` | Malformed REST API Payloads | D01, D02, D03, D06 | server gracefully rejects bad input | Any |
 | `resource-exhaustion.sh` | Resource Exhaustion | D10 | 10000 rapid tasks — Agamemnon doesn't OOM | Any |
-| `test-apikey-not-on-cmdline.sh` | API Key Not On Command Line | — | the ANTHROPIC_API_KEY value never appears on the container command line | Any |
+| `test-apikey-not-on-cmdline.sh` | Reusable API Key Stays Host-Only | — | that containers receive only expiring broker tokens, never reusable API keys. | Any |

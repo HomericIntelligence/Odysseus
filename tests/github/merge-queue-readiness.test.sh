@@ -68,6 +68,7 @@ ruleset_files=(
   configs/github/repo-ruleset-active.json
   configs/github/repo-ruleset-evaluate.json
 )
+expected_enforcements=(active active evaluate)
 
 policy_file=configs/github/fleet-ruleset-policy.json
 
@@ -179,13 +180,9 @@ else
   pass "no organization-wide ruleset artifact can target the excluded fork"
 fi
 
-declare -A expected_enforcement=(
-  [configs/github/repo-ruleset.json]=active
-  [configs/github/repo-ruleset-active.json]=active
-  [configs/github/repo-ruleset-evaluate.json]=evaluate
-)
-
-for ruleset in "${ruleset_files[@]}"; do
+for ruleset_index in "${!ruleset_files[@]}"; do
+  ruleset="${ruleset_files[$ruleset_index]}"
+  expected_enforcement="${expected_enforcements[$ruleset_index]}"
   if jq -e '
       .target == "branch" and
       .conditions.ref_name.include == ["~DEFAULT_BRANCH"] and
@@ -197,7 +194,7 @@ for ruleset in "${ruleset_files[@]}"; do
     fail "$ruleset must target only the default branch with no bypass actors"
   fi
 
-  if jq -e --arg expected "${expected_enforcement[$ruleset]}" \
+  if jq -e --arg expected "$expected_enforcement" \
       '.enforcement == $expected' "$ruleset" >/dev/null; then
     pass "$ruleset keeps its intended enforcement mode"
   else

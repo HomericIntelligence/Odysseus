@@ -1,25 +1,52 @@
-## Atlas Milestone PR — M1: Skeleton
+# Atlas Milestone PR — M1: Skeleton
 
 **Part of Epic**: #151
 **Milestone issues**: #152, #153, #154
 
-## Checklist
+## Outcome
 
-- [ ] CI passing (lint + unit + build + e2e)
-- [ ] `templ generate` no-op check passes (`templ generate ./... && git diff --exit-code`)
-- [ ] Review wave dispatched: `just atlas-review-dispatch M1 <PR_URL>`
-- [ ] Review wave team_id: `<!-- paste TEAM_ID= output here -->`
-- [ ] Review wave status: `just atlas-review-aggregate M1 <TEAM_ID>`
-- [ ] All 6 dimensions approved (see [review charter](infrastructure/Argus/dashboard/docs/review-charter.md))
-- [ ] Odysseus submodule pin updated after merge
+<!-- What observable Atlas milestone outcome does this PR deliver? -->
 
-## Review Wave
+## Scope
 
-| Dimension | Status | Notes |
-|-----------|--------|-------|
-| arch | ⏳ pending | |
-| code | ⏳ pending | |
-| security | ⏳ pending | |
-| ux | ⏳ pending | |
-| ops | ⏳ pending | |
-| docs | ⏳ pending | |
+<!--
+Identify the milestone-issue outcomes included in this PR and any deliberately
+excluded or deferred work.
+-->
+
+## Changes
+
+-
+
+## Allowed effects and protected boundaries
+
+<!--
+State the intended effects. Identify any workflow, accepted-ADR, canonical-config,
+gitlink, production, remote-write, secret, or destructive boundary and its approval.
+Write "None" when no protected boundary is involved.
+-->
+
+## Relevant checks
+
+<!--
+List checks selected for the changed surfaces, with actual results or evidence.
+Explain why a normally relevant check was not run.
+-->
+
+| Check | Result or evidence |
+|---|---|
+|  |  |
+
+## Observable completion
+
+- [ ] The included milestone-issue outcomes are present and traceable.
+- [ ] Relevant checks pass and every live required CI/CD check is green on this exact head.
+- [ ] `$athena:pr-review` has delivered terminal `GO` for this exact head.
+- [ ] No request-scoped failure or protected-boundary approval remains unresolved.
+
+## Stopping conditions and follow-up
+
+<!--
+List any missing approval, conflicting desired state, unresolved required check,
+or milestone scope gap. Any listed blocker stops merge.
+-->

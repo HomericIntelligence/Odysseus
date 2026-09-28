@@ -52,7 +52,8 @@ CPP_REPOS=(
 
 if ! has_cmd cmake; then
     check_warn "cmake not found — skipping debug preset configuration"
-    return 0 2>/dev/null || exit 0
+    if (return 0 2>/dev/null); then return 0; fi
+    exit 0
 fi
 
 for repo in "${CPP_REPOS[@]}"; do

@@ -1,0 +1,20 @@
+--- bwrap-userns-restrict
++++ bwrap-userns-restrict
+@@ -17,7 +17,7 @@
+ 
+ include <tunables/global>
+ 
+-profile bwrap /usr/bin/bwrap flags=(attach_disconnected) {
++profile bwrap /usr/bin/bwrap flags=(attach_disconnected,mediate_deleted) {
+   allow capability,
+   # not allow all, to allow for pix stack
+   # sadly we have to allow  m every where to allow children to work under
+@@ -42,7 +42,7 @@
+   include if exists <local/bwrap-userns-restrict>
+ }
+ 
+-profile unpriv_bwrap flags=(attach_disconnected) {
++profile unpriv_bwrap flags=(attach_disconnected,mediate_deleted) {
+   # not allow all, to allow for pix stack
+   allow file rwlkm /{**,},
+   allow network,

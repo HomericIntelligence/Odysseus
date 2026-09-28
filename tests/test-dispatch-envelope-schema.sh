@@ -9,10 +9,32 @@ cd "$ROOT" || exit 1
 
 SCHEMA="configs/schemas/dispatch-envelope.hi-v1.schema.json"
 
-if ! python3 -c "import jsonschema" >/dev/null 2>&1; then
-    info "python jsonschema module unavailable — skipping schema validation tests"
+# The hi/v1 artifact includes the description-only governance corrections from
+# merged PR #514, commit 5cc09e7d6611d2edbfa664f17097d345aba50aa6.
+# Its validation rules are unchanged from the original frozen contract.
+# This byte oracle protects the reviewed versioned wire artifact independently
+# of the optional jsonschema package.
+EXPECTED_SCHEMA_SHA256="09d3d7693ce04933a2245e1bb8754d347a200fd02b8c69b66df257943084c912"
+
+info "frozen hi/v1 schema bytes"
+actual_schema_sha256="$(python3 - "$SCHEMA" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+
+print(hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest())
+PY
+)"
+if [ "$actual_schema_sha256" = "$EXPECTED_SCHEMA_SHA256" ]; then
+    pass "dispatch-envelope.hi-v1 matches its frozen origin/main bytes"
+else
+    fail "dispatch-envelope.hi-v1 differs from its frozen origin/main bytes"
+fi
+
+if ! python3 -c "import jsonschema, rfc3339_validator" >/dev/null 2>&1; then
+    fail "python jsonschema and RFC 3339 format validation are required"
     summary
-    exit 0
+    exit 1
 fi
 
 TMP="$(mktemp -d)"
@@ -28,7 +50,11 @@ with open(sys.argv[1]) as f:
     schema = json.load(f)
 with open(sys.argv[2]) as f:
     payload = json.load(f)
-jsonschema.Draft202012Validator(schema).validate(payload)
+validator = jsonschema.Draft202012Validator(
+    schema,
+    format_checker=jsonschema.FormatChecker(),
+)
+validator.validate(payload)
 PY
 }
 
@@ -37,6 +63,25 @@ if python3 -c "import json, jsonschema as j; j.Draft202012Validator.check_schema
     pass "dispatch-envelope.hi-v1 passes Draft202012Validator.check_schema"
 else
     fail "dispatch-envelope.hi-v1 fails check_schema"
+fi
+
+if python3 - <<'PY'
+import jsonschema
+
+checker = jsonschema.FormatChecker()
+raise SystemExit(
+    0
+    if checker.conforms("2026-08-25T12:00:00Z", "date-time")
+    and not checker.conforms("not-a-timestamp", "date-time")
+    and checker.conforms("0b9e6cde-1111-4a2a-8d3e-000000000001", "uuid")
+    and not checker.conforms("not-a-uuid", "uuid")
+    else 1
+)
+PY
+then
+    pass "date-time and UUID format checkers are active"
+else
+    fail "date-time or UUID format checker is unavailable"
 fi
 
 info "positive fixtures"
@@ -141,6 +186,19 @@ for k in ("schema", "ts", "msg_id"):
 json.dump(p, open(f"{sys.argv[1]}/missing_envelope.json", "w"))
 PY
 if validate "$TMP/missing_envelope.json" 2>/dev/null; then fail "schema MISSED missing envelope fields"; else pass "missing envelope fields rejected"; fi
+
+# Invalid date-time and UUID formats must not pass as ordinary strings.
+python3 - "$TMP" <<'PY'
+import json, sys
+p = json.load(open(f"{sys.argv[1]}/planning.json"))
+p["ts"] = "not-a-timestamp"
+json.dump(p, open(f"{sys.argv[1]}/bad_timestamp.json", "w"))
+p = json.load(open(f"{sys.argv[1]}/planning.json"))
+p["msg_id"] = "not-a-uuid"
+json.dump(p, open(f"{sys.argv[1]}/bad_message_id.json", "w"))
+PY
+if validate "$TMP/bad_timestamp.json" 2>/dev/null; then fail "schema MISSED invalid date-time"; else pass "invalid date-time rejected"; fi
+if validate "$TMP/bad_message_id.json" 2>/dev/null; then fail "schema MISSED invalid UUID"; else pass "invalid UUID rejected"; fi
 
 # Invalid verdict value
 python3 - "$TMP" <<'PY'

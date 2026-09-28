@@ -1,0 +1,56 @@
+{
+  "schema_id": "odysseus.athena-release-fixture",
+  "schema_version": 1,
+  "source": {
+    "repository": "https://github.com/HomericIntelligence/Athena.git",
+    "tag": "v0.5.3",
+    "commit": "8c72148529a38efb4dd97e8e78c1b2193d852403"
+  },
+  "license": {
+    "spdx": "BSD-3-Clause",
+    "copyright": "Copyright (c) 2025, Micah Villmow",
+    "member": "release/LICENSE",
+    "sha256": "52bb32c868723e6af9b495282c7244e0b1dceccfd7ce854716dca5d36014b0fd"
+  },
+  "archive": {
+    "file": "athena-v0.5.3-minimal.tar.gz",
+    "sha256": "6da769b1c5abec21732f8742ede2f76e050206da3d572292aa5661f9aae9cf51"
+  },
+  "members": {
+    "release/.codex-marketplace-install.json": "1d1d0d693dc4b93b688ebb6463a636fa5008d52703f4616661373d86b4d1eead",
+    "release/.codex-plugin/plugin.json": "dd4c5f7eccbc919d34936f8514ba0de5acf37f46ab3432a7058b2750dab319f5",
+    "release/LICENSE": "52bb32c868723e6af9b495282c7244e0b1dceccfd7ce854716dca5d36014b0fd",
+    "release/skills/_cli.py": "80e6189d94f7e7f0d7cc32d57d3e0d1cb11093fb2aed30209624c5939cf2d7d9",
+    "release/skills/pr-review/scripts/anchor_proofs.py": "388b1d167bc3eb44ffcd07cc50ec0f6f19f0e6ab4f309d3bd8d0c0c8491975d1",
+    "release/skills/pr-review/scripts/collect_evidence.py": "961f1af29296763fb1f0297d9dcf873001f0008a93dfcd4a2bf2044c049777a0",
+    "release/skills/pr-review/scripts/deliver_go.py": "6c12b7c953980ec703e154d8f98989fb2fb1d155f61584768f0ad70c174cfa06",
+    "release/skills/pr-review/scripts/materialize_snapshot.py": "f560d2ef785bb1a8fd604373e65268cdfaeb1d3360778dfe73bc83dce45e37f2",
+    "release/skills/pr-review/scripts/pr_identity.py": "274f6fff920f5a8d970a8018e3c8cee7d93af26e9aea3fa869e78cbeb32a5a3a",
+    "release/skills/pr-review/scripts/resolve_pr.py": "978b71a2c79b1fe4a66489c899876403d7ef3d79b589f9128499772e97cb5222",
+    "release/skills/review-exchange/scripts/review_exchange.py": "7f6db45e9d4e9364441c0ac8f3c9ab303b165fd9ac8cd54fbdca6585dad0d693",
+    "overlays/v0.5.2/.codex-plugin/plugin.json": "cda2d6b6f9275e3dc12d9c5210cbdf506c7fd41d1ebe93d4e91f6f81dc148a17",
+    "overlays/v0.5.2/skills/pr-review/scripts/collect_evidence.py": "ccc20f532973ef6aa44a69da6c27e6648da348712024f331c78e4828702a168e",
+    "overlays/v0.5.2/skills/pr-review/scripts/deliver_go.py": "4f286b4379c0d611fc7b757cea9565ff75b086e376586f4227ea8a044cabb979",
+    "overlays/intermediate/.codex-plugin/plugin.json": "cda2d6b6f9275e3dc12d9c5210cbdf506c7fd41d1ebe93d4e91f6f81dc148a17",
+    "overlays/intermediate/skills/pr-review/scripts/collect_evidence.py": "bbb1afacb2080822fa64335e643a1485f3a7b98185567afb022e8ad1e8fc1a2f",
+    "overlays/intermediate/skills/pr-review/scripts/deliver_go.py": "ca5b049c3a8f9c187977a6e88cdb2498d5627719024dbd7d0fc31ac356dd1975",
+    "overlays/intermediate/skills/review-exchange/scripts/review_exchange.py": "21ea56f54dcb38b2f96d099fd62b910eb657bca991640a373500c448535a6674"
+  },
+  "reject_overlays": {
+    "520b83a31e9cfa931e58dec0a193a4882e3dff28": {
+      "directory": "overlays/v0.5.2",
+      "deletions": [
+        "skills/pr-review/scripts/anchor_proofs.py",
+        "skills/review-exchange/scripts/review_exchange.py"
+      ]
+    },
+    "673568640e417fc08fae6cdab9734a307944f550": {
+      "directory": "overlays/intermediate",
+      "deletions": []
+    }
+  },
+  "notes": {
+    "scope": "Minimum files loaded by the exact-pin adapter, plus license and changed historical rejection overlays.",
+    "install_manifest": "The Codex plugin installer generated release/.codex-marketplace-install.json for the source commit above."
+  }
+}

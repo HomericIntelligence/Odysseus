@@ -1,4 +1,5 @@
-# Canonical lane model pin (ADR-020 §4) — issue #465, operator-confirmed.
+# Canonical current lane-model pin — issue #465, operator-confirmed.
+# Proposed ADR-020 §4 supplies target-state design context.
 #
 # Single source of truth for the four automation-lane model IDs. Changing a
 # lane model is a one-line edit here; consumers (loop launch shells via

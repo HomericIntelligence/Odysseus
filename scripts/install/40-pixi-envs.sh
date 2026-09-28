@@ -30,7 +30,8 @@ if ! has_cmd pixi; then
     # somehow still missing at real-install time, the downstream pixi env checks
     # surface it — see issue #393.
     check_warn "pixi not found — will be installed by phase 20 (Hephaestus)"
-    return 0 2>/dev/null || exit 0
+    if (return 0 2>/dev/null); then return 0; fi
+    exit 0
 fi
 
 check_pass "pixi $(pixi --version 2>&1 | grep -oP '\d+\.\d+[\.\d]*' | head -1)"

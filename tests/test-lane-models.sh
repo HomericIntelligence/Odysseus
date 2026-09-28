@@ -13,21 +13,36 @@ cd "$ROOT" || exit 1
 LOADER="tools/lane_models.py"
 CONFIG="configs/lane-models.yaml"
 
+# Prefer the repository environment on its supported platform. Use uv as the
+# portable fallback when Pixi cannot execute this Linux-only workspace.
+if pixi run python -c 'import yaml' >/dev/null 2>&1; then
+    LOADER_RUNNER=(pixi run python)
+elif command -v uv >/dev/null 2>&1 \
+    && uv run --with pyyaml -- python -c 'import yaml' >/dev/null 2>&1; then
+    LOADER_RUNNER=(uv run --with pyyaml -- python)
+else
+    fail_exit "no Python environment with PyYAML is available"
+fi
+
+run_loader() {
+    "${LOADER_RUNNER[@]}" "$LOADER" "$@"
+}
+
 info "loader accepts the real config (positive)"
-if pixi run python "$LOADER" >/dev/null; then
+if run_loader >/dev/null; then
     pass "loader validates $CONFIG"
 else
     fail "loader rejected the real config"
 fi
 
-TABLE="$(pixi run python "$LOADER" 2>/dev/null)"
+TABLE="$(run_loader 2>/dev/null)"
 if grep -q "opencode/x-preview-f-free-high" <<<"$TABLE"; then
     pass "--table shows the planning lane ID"
 else
     fail "--table missing planning lane ID"
 fi
 
-ENV_OUT="$(pixi run python "$LOADER" --env 2>/dev/null)"
+ENV_OUT="$(run_loader --env 2>/dev/null)"
 ENV_COUNT="$(grep -c '^export HEPH_' <<<"$ENV_OUT")"
 if [ "$ENV_COUNT" -eq 5 ]; then
     pass "--env emits exactly 5 HEPH_*_MODEL exports"
@@ -41,7 +56,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 # Malformed model ID (no provider/ prefix)
 printf 'lanes:\n  planning: just-a-model\n  implementation: opencode/x-preview-f-free-medium\n  review: opencode/x-preview-f-free-low\n  mechanical: opencode/x-preview-f-free-low\n' > "$TMP/bad-id.yaml"
-if pixi run python "$LOADER" --config "$TMP/bad-id.yaml" >/dev/null 2>&1; then
+if run_loader --config "$TMP/bad-id.yaml" >/dev/null 2>&1; then
     fail "loader MISSED malformed model ID"
 else
     pass "loader rejects malformed model ID"
@@ -49,7 +64,7 @@ fi
 
 # Missing lane
 printf 'lanes:\n  planning: opencode/x-preview-f-free-high\n  implementation: opencode/x-preview-f-free-medium\n  review: opencode/x-preview-f-free-low\n' > "$TMP/missing-lane.yaml"
-if pixi run python "$LOADER" --config "$TMP/missing-lane.yaml" >/dev/null 2>&1; then
+if run_loader --config "$TMP/missing-lane.yaml" >/dev/null 2>&1; then
     fail "loader MISSED missing mechanical lane"
 else
     pass "loader rejects config with a missing lane"
@@ -57,7 +72,7 @@ fi
 
 # Extra unknown lane
 printf 'lanes:\n  planning: opencode/x-preview-f-free-high\n  implementation: opencode/x-preview-f-free-medium\n  review: opencode/x-preview-f-free-low\n  mechanical: opencode/x-preview-f-free-low\n  sneaky: opencode/foo\n' > "$TMP/extra-lane.yaml"
-if pixi run python "$LOADER" --config "$TMP/extra-lane.yaml" >/dev/null 2>&1; then
+if run_loader --config "$TMP/extra-lane.yaml" >/dev/null 2>&1; then
     fail "loader MISSED unexpected extra lane"
 else
     pass "loader rejects config with an extra lane"
@@ -65,7 +80,7 @@ fi
 
 info "one-line-edit property (AC3): editing one lane line changes the output"
 sed 's|^  review:.*|  review: opencode/other-model-x|' "$CONFIG" > "$TMP/edited.yaml"
-EDITED_ENV="$(pixi run python "$LOADER" --env --config "$TMP/edited.yaml" 2>/dev/null)"
+EDITED_ENV="$(run_loader --env --config "$TMP/edited.yaml" 2>/dev/null)"
 if grep -q "^export HEPH_REVIEWER_MODEL=opencode/other-model-x$" <<<"$EDITED_ENV" \
     && grep -q "^export HEPH_PLANNER_MODEL=opencode/x-preview-f-free-high$" <<<"$EDITED_ENV"; then
     pass "single-line edit changes only that lane's export"

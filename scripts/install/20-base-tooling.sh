@@ -23,7 +23,8 @@ HEPHAESTUS_INSTALLER="$HEPHAESTUS/scripts/shell/install.sh"
 if [[ ! -f "$HEPHAESTUS_INSTALLER" ]]; then
     check_fail "Hephaestus installer not found at $HEPHAESTUS_INSTALLER"
     check_warn "Run phase 30 (submodule init) first, then re-run phase 20."
-    return 0 2>/dev/null || exit 0
+    if (return 0 2>/dev/null); then return 0; fi
+    exit 0
 fi
 
 # Build argument list to forward

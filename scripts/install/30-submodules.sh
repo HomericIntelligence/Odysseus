@@ -81,12 +81,14 @@ for mod in "${!SENTINEL_FILES[@]}"; do
 done
 
 if [[ ${#UNINITIALIZED[@]} -eq 0 ]]; then
-    return 0 2>/dev/null || exit 0
+    if (return 0 2>/dev/null); then return 0; fi
+    exit 0
 fi
 
 if [[ "${INSTALL:-false}" != "true" ]]; then
     check_warn "Run with --install to initialize submodules (git submodule update --init --recursive)"
-    return 0 2>/dev/null || exit 0
+    if (return 0 2>/dev/null); then return 0; fi
+    exit 0
 fi
 
 # Use --depth 1 --recommend-shallow so submodule fetches work correctly

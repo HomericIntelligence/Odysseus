@@ -2,13 +2,18 @@
 
 Welcome to the HomericIntelligence documentation hub. This page serves as a table of contents for all architecture, decisions, and operational guides.
 
+The [modernization disposition ledger](agent-instruction-modernization-ledger.md)
+tracks ownership, protected boundaries, dependencies, and verification still
+required. Proposed ADR-022 remains the governance gate for dependent ecosystem
+instruction changes; merging a proposal does not accept it.
+
 ---
 
 ## Architecture Overview
 
 Start here to understand the HomericIntelligence system as a whole:
 
-- **[System Architecture](architecture.md)** — Complete overview of all components, their roles, and how they interact. Post-ADR-006 architecture with Agamemnon as the coordination hub.
+- **[System Architecture](architecture.md)** — Overview of the 16 canonical repositories, their roles, and current interfaces versus Proposed ADR target state.
 - **[Homeric Fleet Implementation Plan](homeric-fleet-plan.md)** — Consolidated Odysseus integration, laptop/SSH/Slurm operations, and the 108-agent acceptance gates.
 - **[Fleet Web Application](../web/README.md)** — Run the local ownership, message-flow, and session-control interface; configure backend sources and private input.
 

@@ -2,28 +2,55 @@
 
 **Status:** Proposed
 
+> **Proposal status:** The identity and authorization contract below becomes
+> binding only if this ADR is accepted and implemented. The checked-in NATS
+> configuration and verified live-state readbacks remain the authorities for
+> current behavior.
+
 ---
 
 ## Context
 
-ADR-008 added TLS encryption to all NATS listeners (`server.conf` and `leaf.conf`), protecting
-message payloads in transit. However, both configs omit `verify` / `verify_and_map` on every TLS
-block, and neither config includes an `accounts {}` or `authorization {}` block. As a result:
+When this ADR was proposed, the checked-in `server.conf` and `leaf.conf`
+already configured TLS on the NATS listeners, which protected message payloads
+in transit when those files were deployed with valid certificates. Proposed
+ADR-008 documented the intended TLS requirement but was not the source of that
+runtime state. The hub configuration already used shared-token bootstrap
+authentication on its client, leafnode, and cluster listeners, and the
+outbound leaf remote supplied the leaf token. The leaf node's local client
+listener remained unauthenticated. TLS still omitted peer verification and
+identity mapping, and the configuration had no named accounts or
+subject-scoped permissions. The proposal addressed these risks in that earlier
+checked-in state:
 
-- Any process that can reach port 4222 over Tailscale can connect and pub/sub all `hi.*` subjects,
-  including agent commands and research results.
-- Any peer that can reach port 6222 can join the NATS cluster (`0.0.0.0:6222`, no auth).
-- Leaf nodes present no client certificate to the hub; any TLS connection from port 7422 is
-  accepted.
+- A holder of the shared client token could publish or subscribe across the
+  full `hi.*` subject space, including agent commands and research results.
+- Any process able to reach a leaf node's local client listener could connect
+  without authentication.
+- A holder of the shared cluster token could join the NATS cluster without a
+  distinct peer identity.
+- Leaf nodes used a shared token and did not present client certificates, so
+  the hub could not bind a connection to a unique leaf identity.
 
-Tailscale provides host-level isolation but is not a substitute for application-layer authentication
-— a single compromised host exposes the full mesh. Issue #175 identifies this as CRITICAL.
+Tailscale provides host-level isolation but is not a substitute for
+application-layer authentication. A single compromised host could otherwise
+expose the full mesh. Issue #175 identified that proposal-time condition as
+CRITICAL.
 
-No operator, NKey, or JWT scaffolding exists in the repository. ADR-008 already established a
-mutual-cert PKI under `/etc/nats/certs/` with `ca.pem` as the trust anchor. This ADR extends that
-PKI to enforce identity and least-privilege authorization using NATS's built-in `verify_and_map`
-mechanism. AID v0.2.0 (Ed25519 + scoped JWT) is the documented future path and is deferred to a
-subsequent ADR.
+The current checked-in `configs/nats/server.conf` and `configs/nats/leaf.conf`
+now include certificate verification, named accounts, subject permissions, and
+listener or route authentication. Those files define repository configuration;
+they do not prove the configuration deployed on any host. This ADR remains
+Proposed and does not itself establish current live state.
+
+Only commented operator, NKey, and JWT migration examples existed in that
+snapshot; there was no active operator/NKey/JWT configuration. The checked-in
+configuration and repository history established the TLS certificate/key and
+CA bundle path convention under `/etc/nats/certs/`; Proposed ADR-008 records
+related design context. This ADR proposes extending that foundation to enforce
+identity and least-privilege authorization using NATS's built-in
+`verify_and_map` mechanism. AID v0.2.0 (Ed25519 + scoped JWT) is the documented
+future path and is deferred to a subsequent ADR.
 
 ## Decision
 
@@ -36,9 +63,9 @@ subsequent ADR.
 - **Leaf remote (outbound):** leaf nodes present a client cert+key when connecting to the hub, so
   the hub can authenticate the leaf.
 
-### 2. Cert identity convention (binding contract for `verify_and_map`)
+### 2. Proposed cert identity convention for `verify_and_map`
 
-Every client and leaf node certificate **MUST** carry:
+If this ADR is accepted, every client and leaf node certificate **MUST** carry:
 
 1. A Common Name of the form `CN=<role>.homeric`
 2. A DNS Subject Alternative Name equal to `<role>.homeric`
@@ -97,34 +124,27 @@ to a subsequent ADR and tracked in the HomericIntelligence roadmap.
 ## Consequences
 
 **Positive:**
-- Closes #175: anonymous connections to port 4222 are rejected fail-closed.
-- Cluster port 6222 now requires a CA-signed peer cert; arbitrary peers cannot join.
-- Leaf remotes authenticate to the hub; unauthenticated leaf connections are rejected.
-- Least-privilege subject scoping: AGENTS cannot subscribe to `hi.tasks.>` (allow-list enforced);
-  KEYSTONE cannot publish arbitrary `hi.*` subjects.
-- `AuthorizationError` is already classified as non-retryable in the Hermes publish retry loop, so
-  auth failures surface immediately rather than burning retry budget.
-- The SAN-DNS convention is a hard, testable contract: `step ca certificate` enforces it at
-  issuance time.
+- If implemented, the proposal would address #175 by rejecting anonymous
+  client connections fail-closed.
+- Cluster peers and leaf remotes would authenticate with CA-signed identities.
+- Least-privilege subject scoping would prevent an AGENT identity from
+  subscribing to all tasks and a KEYSTONE identity from publishing arbitrary
+  `hi.*` subjects.
+- The proposed SAN-DNS convention would be an issuance-time, testable contract.
 
 **Negative:**
-- Every client and leaf must present a valid role cert before enforcement is enabled. Enforcement is
-  fail-closed: plain `nats://` connections are rejected once `verify_and_map` is active.
-- Three downstream clients default to plain `nats://` today and must be reconfigured before NATS
-  is restarted with the new config:
-  - `ProjectHermes` (`infrastructure/ProjectHermes/src/hermes/config.py:34`) — already mTLS-capable
-    via `TLS_CERT_FILE`/`TLS_KEY_FILE`/`TLS_CA_BUNDLE` env vars; needs configuration only.
-  - `ProjectTelemachy` (`provisioning/ProjectTelemachy/src/telemachy/config.py:21`) — has a
-    `require_tls` gate but no client-cert wiring; tracked in follow-up issue
-    "ProjectTelemachy: add NATS client-cert (mTLS) wiring".
-  - `docker-compose.crosshost.yml:45` — `NATS_URL: nats://nats:4222`; must be updated and a client
-    cert mounted before enforcement is enabled.
+- Every client and leaf would need a valid role certificate before enforcement
+  could be enabled. Plain connections would be rejected once
+  `verify_and_map` became active.
+- Before implementation, the current Hermes, Telemachy, Compose, and other
+  NATS clients would require a fresh exact-pin capability and configuration
+  inventory. Proposal-time client paths and defaults are not deployment facts.
 - Cert provisioning and distribution adds operational overhead. See
   `docs/runbooks/enable-nats-auth.md` for the step-by-step procedure.
 
 **Neutral:**
 - The HTTP monitoring endpoint (`127.0.0.1:8222`) is unchanged; it remains plain HTTP on loopback.
-- Cert issuance stays out-of-band (ProjectKeystone / Myrmidons), consistent with ADR-008.
+- Cert issuance would stay out-of-band (Keystone / Myrmidons), consistent with ADR-008.
 - Cert rotation (NATS `nats-server --signal reload`) is standard TLS operational overhead,
   unchanged from ADR-008.
 

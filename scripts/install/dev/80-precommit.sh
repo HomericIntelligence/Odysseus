@@ -1,53 +1,107 @@
-#!/usr/bin/env bash
-# Phase 80 — Pre-commit Hook Installation
+#!/bin/bash
+# Phase 80 — install or verify every repository's configured pre-commit hooks.
 #
-# Finds every .pre-commit-config.yaml within the Odysseus tree (max depth 3)
-# and runs `pre-commit install` in that directory.
-#
-# Failures are warnings — a missing hook is inconvenient but not fatal.
-#
-# shellcheck disable=SC2015
+# The Python helper owns the security boundary.  This wrapper only selects the
+# explicitly requested tools, translates structured results into the shared
+# installer counters, and preserves sourced-versus-executed behavior.
+# shellcheck disable=SC1091
 set -uo pipefail
 
+wrapper_source=${BASH_SOURCE[0]}
+case "$wrapper_source" in
+    */*) wrapper_dir=${wrapper_source%/*} ;;
+    *) wrapper_dir=. ;;
+esac
+if ! wrapper_dir=$(builtin cd -P -- "$wrapper_dir" && builtin pwd -P); then
+    printf 'ERROR: cannot resolve the pre-commit installer directory\n' >&2
+    exit 1
+fi
+if [[ -z "${ODYSSEUS_ROOT:-}" ]]; then
+    if ! ODYSSEUS_ROOT=$(builtin cd -P -- "$wrapper_dir/../../.." && builtin pwd -P); then
+        printf 'ERROR: cannot resolve the Odysseus repository root\n' >&2
+        exit 1
+    fi
+    export ODYSSEUS_ROOT
+fi
+
 # shellcheck source=../lib.sh
-source "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
+builtin source "$wrapper_dir/../lib.sh"
 
 section "Pre-commit Hooks"
 
-if ! has_cmd pre-commit; then
+finish_precommit_phase() {
+    local result=0
+    [[ "${_FAIL:-0}" -gt 0 ]] && result=1
+    if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+        exit "$result"
+    fi
+    return 0
+}
+
+python_binary=/usr/bin/python3
+git_binary=/usr/bin/git
+pre_commit_binary=${ODYSSEUS_PRECOMMIT_BINARY:-}
+if [[ -z "$pre_commit_binary" ]]; then
+    if ! pre_commit_binary=$(builtin command -v pre-commit 2>/dev/null); then
+        pre_commit_binary=""
+    fi
+fi
+helper_path="$wrapper_dir/precommit_hooks.py"
+
+if [[ -z "$pre_commit_binary" ]]; then
     check_fail "pre-commit not found — install it first (pip install pre-commit)"
-    return 0 2>/dev/null || exit 0
+    finish_precommit_phase
+    return 0
+fi
+if [[ ! -x "$python_binary" ]]; then
+    check_fail "python3 not found — it is required to install hooks safely"
+    finish_precommit_phase
+    return 0
+fi
+if [[ ! -x "$git_binary" ]]; then
+    check_fail "git not found — it is required to locate repository hooks"
+    finish_precommit_phase
+    return 0
+fi
+if [[ ! -e "$helper_path" ]]; then
+    check_fail "pre-commit helper is missing: $helper_path"
+    finish_precommit_phase
+    return 0
+fi
+if [[ ! -f "$helper_path" || -L "$helper_path" ]]; then
+    check_fail "pre-commit helper is not one direct regular file: $helper_path"
+    finish_precommit_phase
+    return 0
 fi
 
-check_pass "pre-commit $(pre-commit --version 2>&1 | grep -oP '\d+\.\d+[\.\d]*' | head -1)"
-
-# Find all pre-commit config files
-mapfile -t CONFIGS < <(find "$ODYSSEUS_ROOT" -maxdepth 3 -name ".pre-commit-config.yaml" 2>/dev/null | sort)
-
-if [[ ${#CONFIGS[@]} -eq 0 ]]; then
-    check_warn "No .pre-commit-config.yaml files found under $ODYSSEUS_ROOT"
-    return 0 2>/dev/null || exit 0
+mode=check
+[[ "${INSTALL:-false}" == "true" ]] && mode=install
+helper_args=(
+    --root "$ODYSSEUS_ROOT"
+    --pre-commit "$pre_commit_binary"
+    --git "$git_binary"
+    --mode "$mode"
+)
+if [[ -n "${ODYSSEUS_PRECOMMIT_EXPECTED_VERSION:-}" ]]; then
+    helper_args+=(--expected-version "$ODYSSEUS_PRECOMMIT_EXPECTED_VERSION")
 fi
 
-for cfg in "${CONFIGS[@]}"; do
-    repo_dir="$(dirname "$cfg")"
-    label="${repo_dir#"$ODYSSEUS_ROOT/"}"
-    [[ "$label" == "$ODYSSEUS_ROOT" ]] && label="."
+helper_output=$(/usr/bin/env -i PATH=/usr/bin:/bin \
+    "$python_binary" -I -S "$helper_path" "${helper_args[@]}" 2>&1)
+helper_status=$?
+reported_failure=false
+while IFS=$'\t' read -r result_kind result_message; do
+    [[ -z "$result_kind$result_message" ]] && continue
+    case "$result_kind" in
+        PASS) check_pass "$result_message" ;;
+        FAIL) check_fail "$result_message"; reported_failure=true ;;
+        WARN) check_warn "$result_message" ;;
+        ACTION) echo -e "    ${BLUE}→${NC} $result_message" ;;
+        *) check_warn "pre-commit helper: $result_kind${result_message:+ $result_message}" ;;
+    esac
+done <<< "$helper_output"
+if [[ "$helper_status" -ne 0 && "$reported_failure" != true ]]; then
+    check_fail "pre-commit hook setup failed without a structured diagnostic"
+fi
 
-    if [[ "${INSTALL:-false}" != "true" ]]; then
-        # Check-only: verify .git/hooks/pre-commit exists
-        if [[ -f "$repo_dir/.git/hooks/pre-commit" ]]; then
-            check_pass "pre-commit: $label — hooks installed"
-        else
-            check_warn "pre-commit: $label — hooks not installed (run with --install)"
-        fi
-        continue
-    fi
-
-    echo -e "    ${BLUE}→${NC} pre-commit install: $label"
-    if (cd "$repo_dir" && pre-commit install --install-hooks >/dev/null 2>&1); then
-        check_pass "pre-commit: $label — hooks installed"
-    else
-        check_warn "pre-commit install failed: $label (non-fatal)"
-    fi
-done
+finish_precommit_phase

@@ -38,9 +38,10 @@ Before starting, ensure you have these tools installed:
    sudo dnf install podman
    ```
 
-### Highly Recommended (for local testing and multi-host scenarios)
+### Optional (for operator-approved multi-host scenarios)
 
-5. **Tailscale** — VPN mesh for cross-host communication. [Installation](https://tailscale.com/download)
+1. **Tailscale** — VPN mesh for cross-host communication. It is not required
+   for local development or CI. [Installation](https://tailscale.com/download)
 
    ```bash
    curl -fsSL https://tailscale.com/install.sh | sh
@@ -59,7 +60,11 @@ podman --version
 
 ## Ecosystem Overview: The Repositories
 
-HomericIntelligence is a distributed system built from a coordinated set of specialized repositories. **Odysseus** is the top-level meta-repo that coordinates them all. The subset below is the canonical quick-reference — see [`docs/architecture.md`](architecture.md) for the full component inventory and system diagram. (The repository count fluctuates as new components are carved out under ADR-015/ADR-016; the diagram and table below are authoritative.)
+HomericIntelligence is a distributed system built from 16 canonical
+repositories: Odysseus plus the 15 component gitlinks in `.gitmodules`.
+**Odysseus** is the top-level meta-repo that coordinates them all. The list
+below is complete at this revision; see [`docs/architecture.md`](architecture.md)
+for the component roles and current-versus-proposed architecture boundary.
 
 ### The Big Picture
 
@@ -68,40 +73,42 @@ User
   ↓ (bidirectional interaction)
 Odysseus (meta-repo, orchestration hub)
   ├─→ Agamemnon (control plane, task coordination)
-  ├─→ Nestor (research & ideation)
-  ├─→ Keystone (transport/event bus)
+  ├─→ Nestor (research-request intake & status)
+  ├─→ Keystone (in-process MessageBus and optional NATS bridge)
   ├─→ Argus (observability)
-  ├─→ Hermes (external integrations)
-  ├─→ AchaeanFleet (container images)
+  ├─→ Hermes (signed webhook ingestion)
+  ├─→ AchaeanFleet (AI-agent base/vessel images)
   ├─→ Myrmidons (agent fleet & GitOps)
   ├─→ Telemachy (workflow engine)
   ├─→ Proteus (CI/CD pipelines)
   ├─→ Charybdis (chaos testing)
   ├─→ Scylla (ablation benchmarks)
+  ├─→ Odyssey (standalone Mojo ML research)
   ├─→ Mnemosyne (shared memory)
-  ├─→ Athena (agentic plugins & skills)
-  └─→ Hephaestus (shared utilities)
+  ├─→ Athena (public athena@Athena plugin; pinned revision has 14 skills)
+  └─→ Hephaestus (shared runtime and automation utilities)
 ```
 
 ### Quick Reference: What Each Repo Does
 
 | Repo | Category | Role | Language | Status |
 |------|----------|------|----------|--------|
-| **Odysseus** | meta | User interface, observability hub, meta-repo | Markdown, Bash | You are here |
-| **Agamemnon** | control | Task planning, HMAS orchestration, GitHub-backed | C++, Python | Core system |
-| **Nestor** | control | Research, ideation, multi-step workflows | Python, C++ | Core system |
-| **Keystone** | transport | Event bus (BlazingMQ intra-host, NATS cross-host) | C++ | Core system |
-| **Argus** | infrastructure | Metrics (Prometheus), logs (Loki), dashboards (Grafana) | TypeScript, Python | Observability |
-| **Hermes** | infrastructure | Slack, GitHub, email integrations | Python | Bridge |
-| **AchaeanFleet** | infrastructure | Container image registry and definitions | Dockerfile, OCI | Build artifacts |
+| **Odysseus** | meta | User interface, observability hub, meta-repo | Markdown, Bash, Python | You are here |
+| **Agamemnon** | control | Task planning and HMAS orchestration; in-memory store by default, optional GitHub Issues write-through | C++, Python | Core system |
+| **Nestor** | control | C++20 research-request intake and status service | C++ | Core system |
+| **Keystone** | transport | In-process MessageBus and optional NATS bridge | C++ | Core system |
+| **Argus** | infrastructure | Metrics (Prometheus), logs (Loki), dashboards (Grafana) | Go, Python | Observability |
+| **Hermes** | infrastructure | Signed webhook ingestion and NATS publication; no outbound or email implementation | Python | Bridge |
+| **AchaeanFleet** | infrastructure | AI-agent base and vessel image definitions | Dockerfile, OCI | Build artifacts |
 | **Myrmidons** | provisioning | Agent fleet YAML manifests (GitOps source of truth) | YAML | Config |
-| **Telemachy** | provisioning | Declarative workflow engine | Python, C++ | Internal tool |
+| **Telemachy** | provisioning | Declarative workflow engine | Python | Internal tool |
 | **Proteus** | ci-cd | Build pipelines (Dagger TypeScript) | TypeScript | Automation |
-| **Charybdis** | testing | Chaos and resilience testing | Python | Testing |
+| **Charybdis** | testing | Chaos and resilience testing | C++, Python | Testing |
 | **Scylla** | testing | AI agent ablation and benchmarking | Python, Mojo | Research |
-| **Mnemosyne** | shared | Memory store for `advise` and `learn` plugins | Python | Utility |
-| **Hephaestus** | shared | Shared utilities (Python library + TS tooling) | Python, TypeScript | Utility |
-| **Athena** | agentic | Agentic plugins & skills (hosts `athena@Athena` marketplace entry per ADR-016) | Python | Utility |
+| **Odyssey** | research | Standalone Mojo ML training framework | Mojo | Research |
+| **Mnemosyne** | shared | Knowledge store/backend for Athena `advise` and `learn` | Python | Utility |
+| **Hephaestus** | shared | Shared runtime utilities and optional automation product layer | Python, TypeScript | Utility |
+| **Athena** | agentic | Public `athena@Athena` plugin; pinned revision has 14 root skill routers, while the planned release preserves 17 IDs | Python | Utility |
 
 ---
 
@@ -125,7 +132,8 @@ cd Odysseus
 
 ### 2. Initialize Submodules
 
-All 12 repos are checked in as git submodules. Initialize them:
+All 15 component repositories are checked in as git submodules. Initialize
+them:
 
 ```bash
 just bootstrap
@@ -136,22 +144,23 @@ This runs `git submodule update --init --recursive`. **Always do this after clon
 You can verify submodules are present:
 
 ```bash
-ls -la control/ provisioning/ infrastructure/ ci-cd/ research/ testing/ shared/
+ls -la agentic/ control/ provisioning/ infrastructure/ ci-cd/ research/ testing/ shared/
 ```
 
 ### 3. Install Project Dependencies
 
-Install Python environment and dependencies:
+Install the Odysseus root toolchain:
 
 ```bash
 pixi install
 ```
 
-This creates a project-local Python environment with all transitive dependencies resolved.
+This creates the root Pixi environment. Each component owns its own dependency
+setup; follow that component's README and lockfile.
 
 ### 4. Build (Optional, but Recommended)
 
-Build all compilable submodules:
+Build the targets selected by the root `build` recipe:
 
 ```bash
 just build
@@ -161,33 +170,45 @@ Artifacts land in `build/<submodule-name>/`. This is useful for testing locally 
 
 ### 5. Make Changes
 
-Edit files in any submodule. Most day-to-day changes happen in the individual submodule repos, not in Odysseus itself.
+Make component changes in an isolated worktree of the component's own
+repository. Treat the component worktrees inside Odysseus as read-only
+integration references.
 
 Examples:
 
-- Fixing a bug in Agamemnon → edit `control/Agamemnon/src/...`
+- Fixing a bug in Agamemnon → edit `/path/to/Agamemnon/src/...`
 - Adding a runbook → edit `docs/runbooks/...` in Odysseus
-- Adding an agent template → edit `provisioning/Myrmidons/templates/...`
+- Adding an agent template → edit `/path/to/Myrmidons/agents/_templates/...` in
+  an isolated Myrmidons worktree
 
 ### 6. Test Locally
 
-Use the individual submodule test suites. See each repo's README for testing instructions.
-
-For integration testing, use `just` tasks or the e2e scripts in `e2e/`.
+Use the individual component test suites. Start with `just --list` and the
+component README. Prefer a checked-in `just` or `pixi run` entry point when one
+exists; invoke a script directly only when the repository documents that path
+or has no wrapper for it.
 
 ### 7. Commit and Push
 
-Create a branch and push:
+Start from the component's freshly fetched remote commit, record the immutable
+SHA, and create a separate worktree. Do not implement inside the component
+checkout embedded in Odysseus. For example:
 
 ```bash
-git checkout -b feature/my-feature
+git -C /path/to/Agamemnon fetch origin main
+git -C /path/to/Agamemnon rev-parse --verify 'origin/main^{commit}'
+git -C /path/to/Agamemnon worktree add \
+  -b 123-fix-agent-startup \
+  /path/to/worktrees/Agamemnon-123 \
+  <verified-origin-main-SHA>
+cd /path/to/worktrees/Agamemnon-123
 git add <specific-files>
 git commit -m "feat: description of change
 
 Details...
 
 Co-Authored-By: Your Name <your.email@example.com>"
-git push -u origin feature/my-feature
+git push -u origin 123-fix-agent-startup
 ```
 
 **Important:** Never use `git add .` or `git add -A`. Always stage specific files to avoid committing sensitive configs or build artifacts.
@@ -202,21 +223,31 @@ See `docs/adr/` for architectural decisions and ADR format if your change crosse
 
 ### 9. Code Review
 
-A maintainer reviews your PR. Address feedback and push additional commits (do not force-push).
+A maintainer reviews your PR. Address feedback and push additional commits (do
+not force-push). Before merge, the exact current head must complete the bounded
+`athena:pr-review` exchange with terminal `GO`, and every live required CI/CD
+check must succeed.
 
 ### 10. Merge
 
-Once approved, the PR is merged via rebase:
+Once the exact-head Athena and CI/CD gates above pass, read the live repository
+settings and select a method that is enabled at that time. Add `--auto` only
+when the readback says auto-merge is enabled:
 
 ```bash
-gh pr merge --auto --rebase
+gh api repos/HomericIntelligence/Odysseus \
+  --jq '{allow_auto_merge,allow_merge_commit,allow_rebase_merge,allow_squash_merge}'
+PR_URL=https://github.com/HomericIntelligence/Odysseus/pull/NUMBER
+MERGE_FLAG=--squash  # example only: select the flag authorized by the readback
+gh pr merge "$PR_URL" "$MERGE_FLAG"
 ```
 
 ---
 
 ## Key Commands
 
-All tasks are orchestrated via `just`. See the full list:
+The root `justfile` is the front door for the tasks it exposes. See the full
+list:
 
 ```bash
 just --list
@@ -226,19 +257,17 @@ just --list
 
 | Command | What It Does |
 |---------|--------------|
-| `just bootstrap` | Initialize all 12 git submodules |
+| `just bootstrap` | Initialize all 15 component git submodules |
 | `just status` | Show git status across all submodules |
-| `just build` | Build all C++/CMake/Mojo components |
+| `just build` | Build the root-supported component and example targets |
 | `just setup` | One-command setup (bootstrap + build) |
-| `just update-submodules` | Pull latest from all upstream submodule remotes |
-| `just start-agamemnon` | Start Agamemnon (control plane) |
-| `just start-nestor` | Start Nestor (research service) |
-| `just keystone-start` | Start Keystone (event bus) |
-| `just hermes-start` | Start Hermes (external bridge) |
-| `just argus-start` | Start Argus (observability stack) |
-| `just apply-all` | Deploy Myrmidons YAML manifests via Agamemnon |
-| `just telemachy-run WORKFLOW=<name>` | Execute a named workflow |
-| `just install PREFIX=/usr/local` | Install all binaries to a prefix |
+| `just argus-start` | Report why pinned Argus activation is unavailable |
+| `just install /usr/local` | Install the four CMake server/library targets to a prefix |
+
+Component-owned build, test, workflow, and deployment recipes run from an
+isolated checkout of that component after its own contract and exact revision
+have been verified. Odysseus does not proxy mutable submodule `justfile`
+content.
 
 ---
 
@@ -247,7 +276,8 @@ just --list
 ### Architecture & Design
 
 - **System Overview** → `docs/architecture.md`
-- **Architectural Decisions** → `docs/adr/` (numbered ADRs, append-only, never edited)
+- **Architectural Decisions** → `docs/adr/` (numbered ADRs; Accepted ADRs are
+  append-only and never edited)
 - **Component Relationships** → `docs/architecture.md` (component inventory and system diagram)
 
 ### Deployment & Operations
@@ -261,7 +291,8 @@ just --list
 
 ### Development
 
-- **Project Structure** → `AGENTS.md` (repo layout and development guidelines)
+- **Project Structure** → root `README.md` and this guide
+- **Agent operating boundaries** → `AGENTS.md`
 - **CI/CD Pipelines** → `ci-cd/Proteus/` (Dagger TypeScript)
 - **E2E Tests** → `e2e/` (integration and topology tests)
 - E2E scenario coverage is mapped in [`e2e/tests/README.md`](../e2e/tests/README.md)
@@ -290,58 +321,51 @@ Each submodule has its own `README.md`. Start there for specifics:
 ### Scenario 1: Fix a Bug in Agamemnon
 
 ```bash
-# Clone and setup
-git clone https://github.com/HomericIntelligence/Odysseus.git
-cd Odysseus
-just bootstrap
-just build
-
-# Create a feature branch
-git checkout -b fix/agamemnon-bug
-
-# Edit the source (it's checked in as a submodule)
-cd control/Agamemnon
+# From a separate Agamemnon clone, bind the current remote commit and create
+# an isolated component worktree as described in Step 7.
+git -C /path/to/Agamemnon fetch origin main
+git -C /path/to/Agamemnon rev-parse --verify 'origin/main^{commit}'
+git -C /path/to/Agamemnon worktree add \
+  -b 123-fix-agamemnon-bug \
+  /path/to/worktrees/Agamemnon-123 \
+  <verified-origin-main-SHA>
+cd /path/to/worktrees/Agamemnon-123
 # ... make changes ...
-cd ../..
 
 # Test it (see Agamemnon's README for test commands)
 # ... run tests ...
 
-# Commit the submodule update
-git add control/Agamemnon
+# Commit the component change on its own branch
+git add <specific-files>
 git commit -m "fix(agamemnon): describe the bug fix"
-git push -u origin fix/agamemnon-bug
+git push -u origin 123-fix-agamemnon-bug
 
 # Create PR
 gh pr create --title "fix(agamemnon): ..." --body "..."
+
+# Pinning the merged component in Odysseus is a separate integration PR
 ```
 
 ### Scenario 2: Add a New Runbook
 
 ```bash
-# Create a feature branch
-git checkout -b docs/new-runbook
+# From the Odysseus clone, bind the current remote commit and create an
+# isolated root worktree.
+git fetch origin main
+git rev-parse --verify 'origin/main^{commit}'
+git worktree add \
+  -b 124-add-operator-runbook \
+  /path/to/worktrees/Odysseus-124 \
+  <verified-origin-main-SHA>
+cd /path/to/worktrees/Odysseus-124
 
 # Add the runbook
-cat > docs/runbooks/my-runbook.md << 'EOF'
-# Runbook: My Operation
-
-## Prerequisites
-...
-
-## Steps
-
-### 1. Do this
-
-### 2. Do that
-
-...
-EOF
+$EDITOR docs/runbooks/my-runbook.md
 
 # Commit
 git add docs/runbooks/my-runbook.md
 git commit -m "docs: add runbook for my operation"
-git push -u origin docs/new-runbook
+git push -u origin 124-add-operator-runbook
 
 # Create PR
 gh pr create --title "docs: add runbook for my operation"
@@ -349,25 +373,11 @@ gh pr create --title "docs: add runbook for my operation"
 
 ### Scenario 3: Update a Submodule Pin (After a Release)
 
-```bash
-# Create a feature branch
-git checkout -b chore/bump-submodules
-
-# Pull latest upstream
-just update-submodules
-
-# Verify everything still works
-just build
-just status
-
-# Commit the new pins
-git add control/ provisioning/ infrastructure/ ci-cd/ research/ testing/ shared/
-git commit -m "chore: bump submodule pins to latest origin/main"
-git push -u origin chore/bump-submodules
-
-# Create PR
-gh pr create --title "chore: bump submodule pins to latest origin/main"
-```
+Submodule pin changes are cross-repository integration events. Do not move a
+component checkout inside Odysseus as part of ordinary component work. After
+the component change has merged, the integration owner obtains explicit
+approval for the exact commit, updates the gitlink in a dedicated
+`<issue-number>-<short-slug>` Odysseus branch, and runs the integration checks.
 
 ---
 
@@ -381,24 +391,34 @@ Most changes happen in the individual submodule repos, not in Odysseus. Odysseus
 - Runbooks (operational procedures)
 - Canonical configs (NATS, Nomad)
 - Submodule pins (as git submodules)
+- Integration scripts, E2E harnesses, and the operator console
 
-**Application code lives in the submodules.**
+Component service implementations live in the component repositories.
 
 ### 2. ADRs Are Append-Only
 
-Once an ADR is merged, it is never edited. If a decision changes, write a new ADR that references the old one. See `docs/adr/006-decouple-from-ai-maestro.md` for an example.
+Once an ADR is Accepted, it is never edited. Proposed ADRs are not binding and
+may change during review. If an accepted decision changes, write a new ADR that
+references the old one. See `docs/adr/006-decouple-from-ai-maestro.md` for an
+example.
 
 ### 3. Configs Are Canonical
 
-The NATS and Nomad configs in `configs/` are the authoritative source. Hosts copy or symlink from here, never diverge locally.
+The NATS and Nomad source configs in `configs/` are canonical. Deployment may
+render or copy them to host-specific locations; compare live state with the
+source rather than assuming a host mount or symlink is current.
 
 ### 4. Submodule Pins Matter
 
 The git submodule SHAs checked into this repo represent the last known-good cross-repo integration point. Update them deliberately and test the full system before committing.
 
-### 5. Use Just, Not Direct Scripts
+### 5. Use the Checked-In Task Front Door
 
-Always use `just` tasks instead of running scripts directly. This ensures consistency and documentation.
+Run `just --list` first and use a repository-owned `just` recipe when it covers
+the task. Use `pixi run` where the checked-in Pixi environment owns the tool.
+Some maintained operations intentionally expose only a direct script; follow
+the local README or runbook in that case. Never invent a wrapper or claim a
+recipe succeeded when it is absent.
 
 ---
 
@@ -418,7 +438,7 @@ All repos are well-commented. Search before asking:
 
 ```bash
 git log --all --grep="<keyword>"
-grep -r "<term>" control/ provisioning/ infrastructure/
+rg "<term>" control/ provisioning/ infrastructure/
 ```
 
 ### Ask in Issues
@@ -447,7 +467,7 @@ If you're stuck, open an issue on GitHub describing:
 ```
 control/
 ├── Agamemnon          # Task planning, orchestration
-└── Nestor             # Research, ideation
+└── Nestor             # Research-request intake and status
 
 provisioning/
 ├── Telemachy          # Workflow engine
@@ -455,9 +475,9 @@ provisioning/
 └── Myrmidons                 # Agent fleet (GitOps)
 
 infrastructure/
-├── AchaeanFleet              # Container images
+├── AchaeanFleet              # AI-agent base/vessel images
 ├── Argus              # Observability
-└── Hermes             # External integrations
+└── Hermes             # Signed webhook ingestion
 
 ci-cd/
 └── Proteus            # Build pipelines
@@ -470,15 +490,15 @@ testing/
 └── Charybdis          # Chaos testing
 
 agentic/
-└── Athena                     # Agentic plugins & skills (CLAUDE Code marketplace)
+└── Athena                     # Public athena@Athena plugin and skill routers
 
 shared/
-├── Mnemosyne          # Memory store
-└── Hephaestus                # Shared utilities (Python library; `hephaestus` Python pkg + `hephaestus.automation` orchestrator)
+├── Mnemosyne                  # Knowledge store/backend
+└── Hephaestus                 # Shared runtime + automation utilities
 ```
 
 ---
 
-## Welcome!
+## Welcome
 
 You're now ready to contribute to HomericIntelligence. Start small, ask questions, and enjoy building distributed AI systems!
