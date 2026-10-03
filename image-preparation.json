@@ -1,0 +1,25 @@
+{
+  "root": "/Users/mvillmow/.codex/homeric-fleet/agam505-candidate-image-20260920-01",
+  "config": {
+    "root": "/var/home/core/.local/share/homeric-fleet/agam505-candidate-image-20260920-01",
+    "head": "6fdc12ceb4d01b2d277504f7217abdb08499ed16",
+    "tree": "477adff9d7f11d0a341fe937f665dd588d3e3138",
+    "sourceSha256": "ee47a1ce96280f00ddd524b628cbde7986980df2e676426646dfc59139b461c7",
+    "token": "e1a45d3cb0f7498dde6255fd218f17d9",
+    "imageTag": "localhost/homeric-fleet-agamemnon-ci:e1a45d3cb0f7498dde6255fd218f17d9",
+    "platform": "linux/arm64",
+    "engineHostPlatform": "linux/arm64",
+    "emulated": false
+  },
+  "manifest": {
+    "source.tar": "ee47a1ce96280f00ddd524b628cbde7986980df2e676426646dfc59139b461c7",
+    "source.bundle": "d9a11f34f4ab1b999b6b5321a338dfb26ce12355de4a3eed403afeda0de3f29e",
+    "source-manifest.json": "b915caae7af7f1cbbee5e84fc8c38912a294bd5dce84437440d4bec58c9eb4e0",
+    "config.json": "49ed68aff63d1b441de0ac641dc4de52416c8e41a6085e159b0ca49b512700d4",
+    "just": "3437a086b9a51b4a8baef33fbca83e78f6ffd0bb774e0d0fbe950e4a9e136531",
+    "podman-shim.py": "1ec50a8fff4d2d43824bc3a25a0d0ce4585d930a3514261c97d668d9bc428f00",
+    "input.tar": "93325aa7a236865fdcf4f6d5f1a26dd5ff4d26f4d896cd1f45f47ec762b89a4c",
+    "guest-wrapper.py": "4906d0a3399f30da80b26067f62c7d6d9b964bb401600af2c79f9c15c34aa5bd",
+    "execute.py": "ce2950fc844feab35422eb0fb2d1fd0c964c1b7472b5942c937696c33b6a8cbc"
+  }
+}
