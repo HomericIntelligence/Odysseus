@@ -1,0 +1,31 @@
+{
+  "id": 12345,
+  "node_id": "RRS_test",
+  "name": "homeric-main-baseline",
+  "target": "branch",
+  "source": "Odysseus",
+  "source_type": "Repository",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/heads/main"],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          {"context": "lint", "integration_id": 15368}
+        ]
+      }
+    }
+  ],
+  "bypass_actors": []
+}

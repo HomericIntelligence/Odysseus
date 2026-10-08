@@ -49,6 +49,37 @@ gh api "repos/HomericIntelligence/<repo>/rulesets/rule-suites?ref=refs/heads/mai
 ./tools/github/apply-repo-rulesets.sh --active
 ```
 
+## Merge queue rollout
+
+After the repository's required workflows handle the `merge_group` event and
+the implementation PR passes review, preview the queue rule without changing
+GitHub:
+
+```bash
+just merge-queue-rulesets-dry-run
+```
+
+The patcher reads each live `homeric-main-baseline` ruleset and preserves its
+repository-specific checks and unrelated rules. It adds or replaces only the
+`merge_queue` rule with the approved policy: `SQUASH`, `HEADGREEN`, maximum 10
+queue builds, maximum 5 merged entries per group, minimum 1 entry, a 5-minute
+minimum wait, and a 180-minute check timeout (#475; supersedes the earlier
+ALLGREEN/60-minute proposals). It discovers active non-fork repos
+by default and supports `--repos RepoName` for a staged rollout.
+
+Apply one repository in evaluate mode first:
+
+```bash
+just merge-queue-ruleset-evaluate <RepoName>
+```
+
+After the smoke check and strict PR review pass, activate the queue rule across
+the approved set:
+
+```bash
+just merge-queue-rulesets-activate
+```
+
 ## Verify a repo's ruleset state
 
 ```bash

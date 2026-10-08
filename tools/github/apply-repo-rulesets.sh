@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # apply-repo-rulesets.sh [--active|--evaluate] [--repos repo1,repo2,...]
-# Creates or updates the homeric-main-baseline branch ruleset on every repo.
+# Creates or updates the homeric-main-baseline branch ruleset on every active,
+# non-fork repository unless --repos is supplied explicitly.
 # Usage:
 #   ./tools/github/apply-repo-rulesets.sh                    # canonical (active) mode, all repos
 #   ./tools/github/apply-repo-rulesets.sh --active           # active (enforcing) mode, all repos
@@ -42,9 +43,9 @@ if [[ -n "$REPOS_OVERRIDE" ]]; then
   IFS=',' read -ra REPOS <<< "$REPOS_OVERRIDE"
   echo "Targeting ${#REPOS[@]} repo(s) from --repos override: ${REPOS[*]}"
 else
-  mapfile -t REPOS < <(gh repo list "$ORG" --json name,isArchived --limit 100 \
-    --jq '[.[] | select(.isArchived == false) | .name] | sort | .[]')
-  echo "Discovered ${#REPOS[@]} active repo(s) via gh repo list"
+  mapfile -t REPOS < <(gh repo list "$ORG" --json name,isFork,isArchived --limit 100 \
+    --jq '[.[] | select(.isFork == false and .isArchived == false) | .name] | sort | .[]')
+  echo "Discovered ${#REPOS[@]} active non-fork repo(s) via gh repo list"
 fi
 
 if [[ ${#REPOS[@]} -eq 0 ]]; then

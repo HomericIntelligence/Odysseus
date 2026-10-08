@@ -741,13 +741,13 @@ hermes-hub-logs SERVICE="":
 # GitHub Org Ruleset Management
 # ===========================================================================
 
-# Snapshot all 15 repos' current classic branch protection to a timestamped backup file
+# Snapshot all 16 first-party non-fork repos' current classic branch protection to a timestamped backup file
 ruleset-backup:
     mkdir -p configs/github/backups
     ./tools/github/snapshot-protection.sh > "configs/github/backups/rulesets-$(date +%Y%m%d-%H%M%S).json"
     @echo "Backup written."
 
-# Snapshot all 15 repos' classic branch protection to the canonical pre-ruleset backup file
+# Snapshot all 16 first-party non-fork repos' classic branch protection to the canonical pre-ruleset backup file
 protection-snapshot:
     mkdir -p configs/github/backups
     ./tools/github/snapshot-protection.sh > configs/github/backups/branch-protection-pre-ruleset.json
@@ -757,13 +757,26 @@ protection-snapshot:
 ruleset-apply FILE="configs/github/org-ruleset.json":
     ./tools/github/apply-org-ruleset.sh "{{FILE}}"
 
-# Create or update the per-repo branch ruleset on all 15 repos (evaluate mode)
+# Create or update the per-repo branch ruleset on all 16 first-party non-fork repos (evaluate mode)
 repo-rulesets-apply:
     ./tools/github/apply-repo-rulesets.sh
 
-# Create or update the per-repo branch ruleset on all 15 repos (active/enforcing mode)
+# Create or update the per-repo branch ruleset on all 16 first-party non-fork repos (active/enforcing mode)
 repo-rulesets-activate:
     ./tools/github/apply-repo-rulesets.sh --active
+
+# Preview the merge_queue patch against every active, non-fork repository.
+merge-queue-rulesets-dry-run:
+    ./tools/github/merge-queue-ruleset.sh --dry-run
+
+# Add/update the approved merge queue rule without replacing live repo-specific
+# required checks. Run only after the corresponding workflow PRs are merged.
+merge-queue-rulesets-activate:
+    ./tools/github/merge-queue-ruleset.sh --activate
+
+# Apply the merge queue rule to one repository in evaluate mode.
+merge-queue-ruleset-evaluate REPO:
+    ./tools/github/merge-queue-ruleset.sh --evaluate --repos "{{REPO}}"
 
 # Validate the live org ruleset against the canonical JSON and print current enforcement + checks
 ruleset-validate:
@@ -815,7 +828,7 @@ ruleset-enforcement-check:
     [ "$fail" -eq 0 ] || { echo "FAILED: ruleset enforcement drift detected" >&2; exit 1; }
     echo "PASSED: all 4 ruleset configs hold their intended enforcement"
 
-# Remove classic branch protection from ALL 15 repos (requires confirmation; run after ruleset is active)
+# Remove classic branch protection from ALL 16 first-party non-fork repos (requires confirmation; run after ruleset is active)
 protection-remove-all:
     ./tools/github/remove-classic-protection.sh --all
 
