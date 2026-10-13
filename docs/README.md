@@ -73,6 +73,7 @@ Step-by-step guides for common operational tasks. Execute each runbook top-to-bo
 
 ## Additional Resources
 
+- **[Ecosystem Governance Dependency Graph](ecosystem-governance-graph.md)** — Pilot DAG, written blockedBy relations, live ruleset audit annex, and wave plan for the #386 governance-convergence line.
 - **[Architecture Analysis: ai-maestro Migration](odysseus-ai-maestro-analysis.md)** — Historical analysis of the ai-maestro integration and subsequent decoupling.
 - **[Architecture Analysis: Ruflo Integration](odysseus-ruflo-analysis.md)** — Analysis of Ruflo system integration patterns.
 - **[E2E Walkthrough Report](e2e-walkthrough-report.md)** — End-to-end system test results and topology validation.
