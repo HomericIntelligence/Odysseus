@@ -19,6 +19,7 @@ set -Eeuo pipefail
 AGENT_CONTRACT_TAG="agent-contract-v1.0.0"
 AGENT_CONTRACT_PATH="HomericIntelligence/Athena/.github/workflows/_agent-contract.yml"
 AGENT_CONTRACT_TAG_SCOPE="refs/tags/agent-contract-v*"
+EVENT_SPECIFIC_POLICY_JOBS_JSON='["pr-policy"]'
 MAX_EVIDENCE_AGE_SECONDS=86400
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -1462,6 +1463,10 @@ verify_github_evidence() {
   local run_file jobs_file checks_file check_suite_id
   local pull_request_jobs_file=""
   local merge_group_jobs_file=""
+  local self_adoption=false
+  if [[ "$repo" == "Athena" ]]; then
+    self_adoption=true
+  fi
 
   if ! gh api "repos/$ORG/$repo" >"$repository_file"; then
     echo "ERROR: GitHub evidence verification failed for $repo: repository read failed" >&2
@@ -1549,6 +1554,7 @@ verify_github_evidence() {
         --arg agent_contract_path "$AGENT_CONTRACT_PATH" \
         --arg agent_contract_tag "$AGENT_CONTRACT_TAG" \
         --arg agent_contract_tag_object_sha "$AGENT_CONTRACT_TAG_OBJECT_SHA" \
+        --argjson self_adoption "$self_adoption" \
         --argjson observed_epoch "$EVIDENCE_OBSERVED_EPOCH" \
         --argjson max_age "$MAX_EVIDENCE_AGE_SECONDS" '
       .id == $run_id
@@ -1574,11 +1580,34 @@ verify_github_evidence() {
         | select((.path | type) == "string")
         | select(.path == $agent_contract_path or
           (.path | startswith($agent_contract_path + "@")))] | length) == 1
-      and ([.referenced_workflows[]
-        | select(.path ==
-          ($agent_contract_path + "@" + $agent_contract_tag))
-        | select(.ref == ("refs/tags/" + $agent_contract_tag))
-        | select(.sha == $agent_contract_tag_object_sha)] | length) == 1
+      and (
+        ([.referenced_workflows[]
+          | select(.path ==
+            ($agent_contract_path + "@" + $agent_contract_tag))
+          | select(.ref == ("refs/tags/" + $agent_contract_tag))
+          | select(.sha == $agent_contract_tag_object_sha)] | length) == 1
+        or
+        ($self_adoption == true
+          and ([.referenced_workflows[]
+            | select((.path | type) == "string")
+            | select(.sha | type == "string" and test("^[0-9a-f]{40}$"))
+            | select(.path == ($agent_contract_path + "@" + .sha))
+            | . as $entry
+            | if $proof == "pull_request" then
+                ($entry.ref | type == "string"
+                  and test("^refs/pull/[0-9]+/merge$"))
+              elif $proof == "merge_group" then
+                (($entry.ref | type) == "string"
+                  and ($entry.ref |
+                    startswith("refs/heads/gh-readonly-queue/"
+                      + $default_branch + "/"))
+                  and $entry.sha == $sha)
+              else
+                $entry.ref == ("refs/heads/" + $default_branch)
+                and $entry.sha == $sha
+              end
+          ] | length) == 1)
+      )
       and (
         if $proof == "main"
         then .head_branch == $default_branch
@@ -1592,6 +1621,58 @@ verify_github_evidence() {
       return 1
     fi
     check_suite_id=$(jq -r '.check_suite_id' "$run_file")
+
+    # Identify which evidence mode satisfied the referenced-workflows
+    # predicate. Self-adoption exists only for Athena.
+    if jq -e \
+        --arg agent_contract_path "$AGENT_CONTRACT_PATH" \
+        --arg agent_contract_tag "$AGENT_CONTRACT_TAG" \
+        --arg agent_contract_tag_object_sha "$AGENT_CONTRACT_TAG_OBJECT_SHA" '
+        [.referenced_workflows[]
+          | select(.path == ($agent_contract_path + "@" + $agent_contract_tag))
+          | select(.ref == ("refs/tags/" + $agent_contract_tag))
+          | select(.sha == $agent_contract_tag_object_sha)] | length == 1
+      ' "$run_file" >/dev/null; then
+      provider_mode=external
+    else
+      provider_mode=self_adoption
+    fi
+
+    # Self-adoption for pull_request must bind the local reusable workflow
+    # to the reviewed pull request: the referenced revision is the GitHub
+    # merge result, so confirm it is the merge of the run head into the
+    # base via the live pulls API.
+    if [[ "$provider_mode" == self_adoption && "$proof_name" == pull_request ]]; then
+      local pulls_file="$tmp_dir/$repo-pull-request-proof.json"
+      local referenced_ref referenced_sha pr_number
+      referenced_ref=$(jq -er --arg agent_contract_path "$AGENT_CONTRACT_PATH" '
+        [.referenced_workflows[]
+          | select(.path == ($agent_contract_path + "@" + .sha))
+          | .ref][0]
+        | select(type == "string" and test("^refs/pull/[0-9]+/merge$"))
+      ' "$run_file") || {
+        echo "ERROR: GitHub evidence verification failed for $repo: pull_request self-adoption reference is missing or malformed" >&2
+        return 1
+      }
+      pr_number=${referenced_ref#refs/pull/}
+      pr_number=${pr_number%/merge}
+      referenced_sha=$(jq -er --arg agent_contract_path "$AGENT_CONTRACT_PATH" '
+        [.referenced_workflows[]
+          | select(.path == ($agent_contract_path + "@" + .sha))
+          | .sha][0]
+      ' "$run_file") || {
+        echo "ERROR: GitHub evidence verification failed for $repo: pull_request self-adoption revision is missing" >&2
+        return 1
+      }
+      if ! gh api "repos/$ORG/$repo/pulls/$pr_number" >"$pulls_file" ||
+          ! jq -e --arg head "$evidence_sha" --arg merge "$referenced_sha" '
+            (.head.sha | type == "string" and . == $head)
+            and (.merge_commit_sha | type == "string" and . == $merge)
+          ' "$pulls_file" >/dev/null; then
+        echo "ERROR: GitHub evidence verification failed for $repo: pull_request self-adoption binding mismatch" >&2
+        return 1
+      fi
+    fi
 
     jobs_pages="$jobs_file.pages"
     if ! gh api --paginate --slurp \
@@ -1636,6 +1717,15 @@ verify_github_evidence() {
       echo "ERROR: GitHub evidence verification failed for $repo: $proof_name aggregate job mismatch" >&2
       return 1
     fi
+    if [[ "$provider_mode" == self_adoption ]] && ! jq -e '
+          [.jobs[] | select(.name == "agent-contract / validate-agent-contract")]
+          | length == 1
+          and .[0].status == "completed"
+          and .[0].conclusion == "success"
+        ' "$jobs_file" >/dev/null; then
+      echo "ERROR: GitHub evidence verification failed for $repo: $proof_name agent-contract validation job is missing, duplicated, or not successful" >&2
+      return 1
+    fi
 
     checks_pages="$checks_file.pages"
     if ! gh api --paginate --slurp \
@@ -1678,13 +1768,30 @@ merge_group:merge_group
 main:push
 EOF
 
+  # Pull-request and merge-group runs must show identical required
+  # producers. Documented event-specific policy jobs are excluded from
+  # the comparison, but only in the proven success/skipped shape:
+  # success on pull_request, skipped on merge_group, present in both.
   if [[ -z "$pull_request_jobs_file" || -z "$merge_group_jobs_file" ]] ||
-      ! jq -e --slurpfile pull_request "$pull_request_jobs_file" '
-        def job_results:
-          [.jobs[] | {name, status, conclusion}]
+      ! jq -e --slurpfile pull_request "$pull_request_jobs_file" \
+        --argjson event_specific_policy_jobs "$EVENT_SPECIFIC_POLICY_JOBS_JSON" '
+        def is_event_specific:
+          .name as $n | ($event_specific_policy_jobs | index($n)) != null;
+        def required_results($jobs):
+          [$jobs[] | select(is_event_specific | not)
+           | {name, status, conclusion}]
           | sort_by(.name, .status, .conclusion);
-        .total_count == $pull_request[0].total_count
-        and job_results == ($pull_request[0] | job_results)
+        def excluded_results($jobs):
+          [$jobs[] | select(is_event_specific)
+           | {name, conclusion}]
+          | sort_by(.name);
+        (.total_count == $pull_request[0].total_count)
+        and ((excluded_results(.jobs) | map(.name))
+          == (excluded_results($pull_request[0].jobs) | map(.name)))
+        and (all(excluded_results($pull_request[0].jobs)[];
+          .conclusion == "success"))
+        and (all(excluded_results(.jobs)[]; .conclusion == "skipped"))
+        and (required_results(.jobs) == required_results($pull_request[0].jobs))
       ' "$merge_group_jobs_file" >/dev/null; then
     echo "ERROR: GitHub evidence verification failed for $repo: pull-request and merge-group job/result parity mismatch" >&2
     return 1
