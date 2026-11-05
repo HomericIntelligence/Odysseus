@@ -2353,7 +2353,7 @@ assert_athena_self_adoption_rejected() {
   cp "$state_file" "$pre_file"
   export GH_SELF_ADOPTION=true
   while (($#)); do
-    export "$1"
+    export "${1?}"
     shift
   done
   if run_live_update "$athena_fixture" Athena "$state_file" \
