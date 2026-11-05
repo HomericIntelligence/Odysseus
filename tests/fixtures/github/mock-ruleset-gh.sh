@@ -592,6 +592,17 @@ case "$suffix" in
       jq -n --arg sha "$sha" '{sha: $sha}'
     fi
     ;;
+  /pulls/*)
+    pull_number=${suffix#/pulls/}
+    head_sha=${GH_PULLS_HEAD_SHA:-${GH_ACTION_SHA:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}}
+    merge_sha=${GH_PULLS_MERGE_SHA:-${GH_SELF_ADOPTION_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}}
+    jq -n --arg head "$head_sha" --arg merge "$merge_sha" --argjson number "$pull_number" '{
+      number: $number,
+      state: "open",
+      head: {sha: $head},
+      merge_commit_sha: $merge
+    }'
+    ;;
   /branches/*/protection)
     protection_get_count=1
     if [[ -n "${GH_PROTECTION_GET_COUNT_FILE:-}" ]]; then
@@ -664,6 +675,83 @@ case "$suffix" in
     run_id=${run_id%%/*}
     attempt=${suffix#*/attempts/}
     attempt=${attempt%%/*}
+    if [[ "${GH_SELF_ADOPTION:-false}" == true ]]; then
+      pr_policy_pr=${GH_SELF_ADOPTION_PR_POLICY_PR:-success}
+      pr_policy_mg=${GH_SELF_ADOPTION_PR_POLICY_MG:-skipped}
+      agent_contract_mode=${GH_SELF_ADOPTION_AGENT_CONTRACT:-success}
+      if [[ "$run_id" == 101 ]]; then
+        pr_policy_conclusion=$pr_policy_pr
+      else
+        pr_policy_conclusion=$pr_policy_mg
+      fi
+      jobs_file="${TMPDIR:-/tmp}/mock-jobs-$$.json"
+      jq -n \
+        --argjson run_id "$run_id" \
+        --argjson attempt "$attempt" \
+        --arg pr_policy_conclusion "$pr_policy_conclusion" \
+        --arg agent_contract_mode "$agent_contract_mode" \
+        --arg gate_conclusion "${GH_GATE_CONCLUSION_OVERRIDE:-success}" '
+        def agent_contract($n):
+          if $n == "missing" then []
+          elif $n == "duplicate" then [0, 1] | map({
+            id: (900000 + .),
+            run_id: $run_id,
+            run_attempt: $attempt,
+            name: "agent-contract / validate-agent-contract",
+            status: "completed",
+            conclusion: "success"
+          })
+          elif $n == "failure" then [{
+            id: 900010,
+            run_id: $run_id,
+            run_attempt: $attempt,
+            name: "agent-contract / validate-agent-contract",
+            status: "completed",
+            conclusion: "failure"
+          }]
+          else [{
+            id: 900000,
+            run_id: $run_id,
+            run_attempt: $attempt,
+            name: "agent-contract / validate-agent-contract",
+            status: "completed",
+            conclusion: "success"
+          }]
+          end;
+        (agent_contract($agent_contract_mode))
+        + [{
+            id: ($run_id * 10 + 1),
+            run_id: $run_id,
+            run_attempt: $attempt,
+            name: "pr-policy",
+            status: "completed",
+            conclusion: $pr_policy_conclusion
+          },
+          {
+            id: ($run_id * 10 + 2),
+            run_id: $run_id,
+            run_attempt: $attempt,
+            name: "worker-2",
+            status: "completed",
+            conclusion: "success"
+          },
+          {
+            id: ($run_id * 10 + 3),
+            run_id: $run_id,
+            run_attempt: $attempt,
+            name: "required-checks-gate",
+            status: "completed",
+            conclusion: $gate_conclusion
+          }]
+        | {total_count: length, jobs: .}
+      ' >"$jobs_file"
+      if [[ "$slurp" == true ]]; then
+        jq -s . "$jobs_file"
+      else
+        jq . "$jobs_file"
+      fi
+      rm -f "$jobs_file"
+    else
     conclusion=${GH_GATE_CONCLUSION_OVERRIDE:-success}
     gate_count=${GH_GATE_TOTAL_COUNT_OVERRIDE:-1}
     non_gate_count=${GH_NON_GATE_JOB_COUNT:-3}
@@ -720,6 +808,7 @@ case "$suffix" in
       jq . "$jobs_file"
     fi
     rm -f "$jobs_file"
+    fi
     ;;
   /actions/runs/*/attempts/*)
     run_id=${suffix#/actions/runs/}
@@ -746,6 +835,24 @@ case "$suffix" in
     provider_sha=${GH_ACTION_REFERENCED_WORKFLOW_SHA_OVERRIDE:-dddddddddddddddddddddddddddddddddddddddd}
     provider_path=${GH_ACTION_REFERENCED_WORKFLOW_PATH_OVERRIDE:-HomericIntelligence/Athena/.github/workflows/_agent-contract.yml@agent-contract-v1.0.0}
     provider_ref=${GH_ACTION_REFERENCED_WORKFLOW_REF_OVERRIDE:-refs/tags/agent-contract-v1.0.0}
+    if [[ "${GH_SELF_ADOPTION:-false}" == true ]]; then
+      self_adoption_merge_sha=${GH_SELF_ADOPTION_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}
+      case "$run_id" in
+        101)
+          provider_sha=${GH_SELF_ADOPTION_REFERENCED_SHA:-$self_adoption_merge_sha}
+          provider_ref=${GH_SELF_ADOPTION_REFERENCED_REF:-refs/pull/209/merge}
+          ;;
+        102)
+          provider_sha=${GH_SELF_ADOPTION_REFERENCED_SHA:-$sha}
+          provider_ref=${GH_SELF_ADOPTION_REFERENCED_REF:-refs/heads/gh-readonly-queue/main/pr-209-dddddddddddddddddddddddddddddddddddddddd}
+          ;;
+        103)
+          provider_sha=${GH_SELF_ADOPTION_REFERENCED_SHA:-$sha}
+          provider_ref=${GH_SELF_ADOPTION_REFERENCED_REF:-refs/heads/main}
+          ;;
+      esac
+      provider_path="HomericIntelligence/Athena/.github/workflows/_agent-contract.yml@$provider_sha"
+    fi
     provider_count=${GH_ACTION_REFERENCED_WORKFLOW_COUNT_OVERRIDE:-1}
     extra_provider_ref=${GH_ACTION_EXTRA_REFERENCED_WORKFLOW_REF_OVERRIDE:-}
     run_updated_at=${GH_ACTION_RUN_UPDATED_AT_OVERRIDE:-${GH_EVIDENCE_OBSERVED_AT:-2026-08-27T19:00:00Z}}

@@ -1314,6 +1314,15 @@ run_live_update() {
     GH_FAIL_SETTINGS_PATCH_AFTER_WRITE_AT="${GH_FAIL_SETTINGS_PATCH_AFTER_WRITE_AT:-}" \
     GH_ACTION_EVENT_OVERRIDE="${GH_ACTION_EVENT_OVERRIDE:-}" \
     GH_ACTION_CONCLUSION_OVERRIDE="${GH_ACTION_CONCLUSION_OVERRIDE:-}" \
+    GH_SELF_ADOPTION="${GH_SELF_ADOPTION:-}" \
+    GH_SELF_ADOPTION_PR_POLICY_PR="${GH_SELF_ADOPTION_PR_POLICY_PR:-}" \
+    GH_SELF_ADOPTION_PR_POLICY_MG="${GH_SELF_ADOPTION_PR_POLICY_MG:-}" \
+    GH_SELF_ADOPTION_AGENT_CONTRACT="${GH_SELF_ADOPTION_AGENT_CONTRACT:-}" \
+    GH_SELF_ADOPTION_MERGE_SHA="${GH_SELF_ADOPTION_MERGE_SHA:-}" \
+    GH_SELF_ADOPTION_REFERENCED_REF="${GH_SELF_ADOPTION_REFERENCED_REF:-}" \
+    GH_SELF_ADOPTION_REFERENCED_SHA="${GH_SELF_ADOPTION_REFERENCED_SHA:-}" \
+    GH_PULLS_HEAD_SHA="${GH_PULLS_HEAD_SHA:-}" \
+    GH_PULLS_MERGE_SHA="${GH_PULLS_MERGE_SHA:-}" \
     GH_ACTION_REPO_OVERRIDE="${GH_ACTION_REPO_OVERRIDE:-}" \
     GH_ACTION_SHA_OVERRIDE="${GH_ACTION_SHA_OVERRIDE:-}" \
     GH_ACTION_ID_OVERRIDE="${GH_ACTION_ID_OVERRIDE:-}" \
@@ -2302,6 +2311,120 @@ assert_remote_evidence_rejected bypassable-agent-contract-tag-protection \
   GH_AGENT_CONTRACT_TAG_RULESET_MODE bypass
 assert_remote_evidence_rejected retargetable-agent-contract-tag-protection \
   GH_AGENT_CONTRACT_TAG_RULESET_MODE retargetable
+
+# Athena local self-adoption evidence: the local reusable workflow path
+# @<revision> with the matching ref, plus exactly one successful
+# agent-contract validation job, is accepted. Everything else fails closed.
+athena_fixture="$tmp_dir/athena-baseline-only.json"
+jq '.rulesets |= map(select(.name == "homeric-main-baseline"))' \
+  tests/fixtures/github/argus-ruleset-contract.json >"$athena_fixture"
+
+athena_success_state="$tmp_dir/athena-self-adoption-state.json"
+athena_success_pre="$tmp_dir/athena-self-adoption-pre.json"
+athena_success_snapshots="$tmp_dir/athena-self-adoption-snapshots"
+athena_put_count="$tmp_dir/athena-self-adoption-put-count"
+athena_get_count="$tmp_dir/athena-self-adoption-get-count"
+mkdir -p "$athena_success_snapshots"
+seed_ruleset_state "$athena_fixture" "$athena_success_state"
+cp "$athena_success_state" "$athena_success_pre"
+if ! GH_SELF_ADOPTION=true run_live_update \
+    "$athena_fixture" Athena "$athena_success_state" \
+    "$athena_success_snapshots" "$tmp_dir/athena-self-adoption.log" \
+    "$athena_put_count" "$athena_get_count"; then
+  cat "$tmp_dir/athena-self-adoption.log" >&2
+  fail "Athena self-adoption evidence was rejected"
+fi
+[[ $(<"$athena_put_count") -eq 1 ]] || \
+  fail "Athena self-adoption must issue exactly one ruleset PUT"
+echo "PASS: Athena self-adoption evidence reaches mutation planning"
+
+assert_athena_self_adoption_rejected() {
+  local name=$1
+  shift
+  local state_file="$tmp_dir/athena-evidence-$name-state.json"
+  local pre_file="$tmp_dir/athena-evidence-$name-pre.json"
+  local evidence_snapshots="$tmp_dir/athena-evidence-$name-snapshots"
+  local output_file="$tmp_dir/athena-evidence-$name.log"
+  local put_count="$tmp_dir/athena-evidence-$name-put-count"
+  local get_count="$tmp_dir/athena-evidence-$name-get-count"
+  local accepted=false
+
+  seed_ruleset_state "$athena_fixture" "$state_file"
+  cp "$state_file" "$pre_file"
+  export GH_SELF_ADOPTION=true
+  while (($#)); do
+    export "$1"
+    shift
+  done
+  if run_live_update "$athena_fixture" Athena "$state_file" \
+      "$evidence_snapshots" "$output_file" "$put_count" "$get_count"; then
+    accepted=true
+  fi
+  unset GH_SELF_ADOPTION GH_SELF_ADOPTION_PR_POLICY_PR \
+    GH_SELF_ADOPTION_PR_POLICY_MG GH_SELF_ADOPTION_AGENT_CONTRACT \
+    GH_SELF_ADOPTION_MERGE_SHA GH_SELF_ADOPTION_REFERENCED_REF \
+    GH_SELF_ADOPTION_REFERENCED_SHA GH_PULLS_HEAD_SHA GH_PULLS_MERGE_SHA \
+    GH_GATE_CONCLUSION_OVERRIDE
+
+  if [[ "$accepted" == true ]]; then
+    cat "$output_file" >&2
+    fail "GitHub evidence verifier accepted $name"
+  fi
+  grep -qF 'GitHub evidence verification failed' "$output_file" || {
+    cat "$output_file" >&2
+    fail "$name did not report an evidence-verification failure"
+  }
+  jq -e --slurpfile expected "$pre_file" '. == $expected[0]' \
+    "$state_file" >/dev/null || fail "$name changed ruleset state"
+  [[ ! -s "$put_count" ]] || fail "$name issued a ruleset PUT"
+  echo "PASS: GitHub evidence verifier rejects $name"
+}
+
+assert_athena_self_adoption_rejected self-adoption-missing-agent-contract-job \
+  GH_SELF_ADOPTION_AGENT_CONTRACT=missing
+assert_athena_self_adoption_rejected self-adoption-failed-agent-contract-job \
+  GH_SELF_ADOPTION_AGENT_CONTRACT=failure
+assert_athena_self_adoption_rejected self-adoption-duplicate-agent-contract-job \
+  GH_SELF_ADOPTION_AGENT_CONTRACT=duplicate
+assert_athena_self_adoption_rejected self-adoption-failed-gate \
+  GH_GATE_CONCLUSION_OVERRIDE=failure
+assert_athena_self_adoption_rejected self-adoption-pr-policy-fails-on-pr \
+  GH_SELF_ADOPTION_PR_POLICY_PR=failure
+assert_athena_self_adoption_rejected self-adoption-pr-policy-not-skipped-on-merge-group \
+  GH_SELF_ADOPTION_PR_POLICY_MG=success
+assert_athena_self_adoption_rejected self-adoption-merge-group-binding-mismatch \
+  GH_SELF_ADOPTION_REFERENCED_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+assert_athena_self_adoption_rejected self-adoption-merge-group-ref-mismatch \
+  GH_SELF_ADOPTION_REFERENCED_REF=refs/heads/main
+assert_athena_self_adoption_rejected self-adoption-pull-request-binding-mismatch \
+  GH_PULLS_MERGE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+assert_athena_self_adoption_rejected self-adoption-pull-request-head-mismatch \
+  GH_PULLS_HEAD_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+assert_athena_self_adoption_rejected self-adoption-pull-request-ref-mismatch \
+  GH_SELF_ADOPTION_REFERENCED_REF=refs/pull/209/head
+
+# Tag-pinned external evidence remains acceptable for Athena.
+athena_external_state="$tmp_dir/athena-external-state.json"
+athena_external_pre="$tmp_dir/athena-external-pre.json"
+athena_external_snapshots="$tmp_dir/athena-external-snapshots"
+athena_external_put="$tmp_dir/athena-external-put-count"
+athena_external_get="$tmp_dir/athena-external-get-count"
+mkdir -p "$athena_external_snapshots"
+seed_ruleset_state "$athena_fixture" "$athena_external_state"
+cp "$athena_external_state" "$athena_external_pre"
+if ! run_live_update \
+    "$athena_fixture" Athena "$athena_external_state" \
+    "$athena_external_snapshots" "$tmp_dir/athena-external.log" \
+    "$athena_external_put" "$athena_external_get"; then
+  cat "$tmp_dir/athena-external.log" >&2
+  fail "Athena tag-pinned external evidence was rejected"
+fi
+echo "PASS: Athena accepts tag-pinned external evidence"
+
+# Self-adoption is Athena-only: an external repository must be rejected
+# with self-adoption-shaped evidence.
+assert_remote_evidence_rejected self-adoption-shaped-evidence-on-myrmidons \
+  GH_SELF_ADOPTION true
 
 evaluate_preview="$tmp_dir/evaluate-preview.log"
 run_dry_run "$myrmidons_fixture" Myrmidons "$evaluate_preview" --evaluate || {
